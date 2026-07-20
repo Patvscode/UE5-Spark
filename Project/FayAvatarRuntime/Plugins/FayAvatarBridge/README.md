@@ -26,6 +26,40 @@ including the `aarch64-unknown-linux-gnueabi` Linux ARM64 target.
 5. Keep the component `Username` identical to the user used when submitting a
    request to Fay. The default is `User`.
 
+### Runtime endpoint overrides
+
+Packaged builds can select the deployment endpoints without rebuilding the
+project. Command-line values take precedence over environment variables, which
+take precedence over the component properties:
+
+```bash
+./FayAvatarRuntime-Arm64.sh \
+  -FayWsUrl=ws://spark-tailnet.example:10002 \
+  -FayAudioBaseUrl=http://spark-tailnet.example:5000/audio/
+```
+
+Or use nonempty environment variables:
+
+```bash
+export FAY_WS_URL=ws://spark-tailnet.example:10002
+export FAY_AUDIO_BASE_URL=http://spark-tailnet.example:5000/audio/
+./FayAvatarRuntime-Arm64.sh
+```
+
+The audio base receives a trailing slash when one is omitted. Both resolved
+endpoints are validated before the first connection; malformed values fail
+closed and do not silently fall back to another host. The ordinary component
+defaults remain `ws://127.0.0.1:10002` and
+`http://127.0.0.1:5000/audio/` for a loopback-bound all-on-Spark deployment.
+Plaintext `ws://` and `http://` should be used only on loopback or an
+authenticated encrypted overlay such as Tailscale. Use `wss://` and `https://`
+for other networks because avatar metadata and audio traverse these links.
+
+The `LogFayAvatarBridge` category emits positive markers for endpoint-source
+selection, connection and registration, accepted audio-message metadata, decoded WAV
+metadata, and speech start/finish. Those markers deliberately omit usernames,
+endpoint URLs, conversation identifiers, message text, and audio contents.
+
 The component sends this registration after the socket opens:
 
 ```json

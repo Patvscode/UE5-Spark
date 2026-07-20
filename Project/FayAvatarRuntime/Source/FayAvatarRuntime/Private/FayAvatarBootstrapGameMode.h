@@ -5,14 +5,19 @@
 #include "FayAvatarBootstrapGameMode.generated.h"
 
 class UCameraComponent;
+class AActor;
 class UFayAvatarBridgeComponent;
+class UFayMetaHumanSpeechDriverComponent;
+class UPointLightComponent;
+class USkeletalMeshComponent;
 
 /**
- * Asset-free ARM64 smoke scene for the DGX Spark.
+ * ARM64 MetaHuman scene with an asset-free diagnostic fallback for DGX Spark.
  *
- * The actor supplies a camera, owns the Fay bridge, and draws a simple
- * wireframe avatar with Unreal's debug line renderer. It proves the Vulkan
- * viewport and the live bridge without requiring cooked project content.
+ * The actor supplies a camera, owns the Fay bridge and learned speech driver,
+ * and spawns the locally assembled Ada MetaHuman when that licensed content is
+ * available. A wireframe avatar keeps the Vulkan and bridge tests useful before
+ * MetaHuman content is generated or whenever loading fails.
  */
 UCLASS()
 class FAYAVATARRUNTIME_API AFayAvatarBootstrapGameMode final : public AGameModeBase
@@ -22,10 +27,14 @@ class FAYAVATARRUNTIME_API AFayAvatarBootstrapGameMode final : public AGameModeB
 public:
     AFayAvatarBootstrapGameMode();
 
+    virtual void BeginPlay() override;
     virtual void Tick(float DeltaSeconds) override;
 
 private:
     void DrawSmokeScene() const;
+    void TrySpawnMetaHuman();
+    void ResolveFaceAndJawMorph();
+    void DriveJawFallback() const;
 
     UPROPERTY(VisibleAnywhere, Category = "Spark Smoke Test")
     TObjectPtr<UCameraComponent> Camera;
@@ -33,5 +42,30 @@ private:
     UPROPERTY(VisibleAnywhere, Category = "Spark Smoke Test")
     TObjectPtr<UFayAvatarBridgeComponent> Bridge;
 
+    UPROPERTY(VisibleAnywhere, Category = "MetaHuman")
+    TObjectPtr<UFayMetaHumanSpeechDriverComponent> SpeechDriver;
+
+    UPROPERTY(VisibleAnywhere, Category = "MetaHuman|Lighting")
+    TObjectPtr<UPointLightComponent> KeyLight;
+
+    UPROPERTY(VisibleAnywhere, Category = "MetaHuman|Lighting")
+    TObjectPtr<UPointLightComponent> FillLight;
+
+    UPROPERTY(VisibleAnywhere, Category = "MetaHuman|Lighting")
+    TObjectPtr<UPointLightComponent> RimLight;
+
+    UPROPERTY(EditDefaultsOnly, Category = "MetaHuman")
+    TSoftClassPtr<AActor> MetaHumanClass;
+
+    UPROPERTY(Transient)
+    TObjectPtr<AActor> MetaHumanActor;
+
+    UPROPERTY(Transient)
+    TObjectPtr<USkeletalMeshComponent> FaceMesh;
+
+    FName JawMorphTarget = NAME_None;
+
     bool bViewClaimed = false;
+    bool bLiveLinkConfigurationRequested = false;
+    bool bLiveLinkConfigured = false;
 };

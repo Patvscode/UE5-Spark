@@ -9,9 +9,12 @@
 #include "Dom/JsonValue.h"
 #include "Engine/World.h"
 #include "GameFramework/Actor.h"
+#include "HAL/PlatformMisc.h"
 #include "HttpModule.h"
 #include "Interfaces/IHttpRequest.h"
 #include "Interfaces/IHttpResponse.h"
+#include "Misc/CommandLine.h"
+#include "Misc/Parse.h"
 #include "Misc/ScopeLock.h"
 #include "IWebSocket.h"
 #include "Serialization/JsonReader.h"
@@ -27,6 +30,51 @@ constexpr int32 HardMaximumRememberedMessageKeys = 65536;
 constexpr int32 ProceduralSafetySilenceSamples = DEFAULT_PROCEDURAL_SOUNDWAVE_BUFFER_SIZE;
 constexpr int32 MaximumTrustedUrlCharacters = 2048;
 constexpr int32 MaximumWaveFilenameCharacters = 255;
+
+enum class EFayEndpointSource : uint8
+{
+    Component,
+    Environment,
+    CommandLine
+};
+
+const TCHAR* EndpointSourceName(const EFayEndpointSource Source)
+{
+    switch (Source)
+    {
+    case EFayEndpointSource::Environment:
+        return TEXT("environment");
+    case EFayEndpointSource::CommandLine:
+        return TEXT("command-line");
+    case EFayEndpointSource::Component:
+    default:
+        return TEXT("component");
+    }
+}
+
+EFayEndpointSource ResolveEndpointValue(
+    const TCHAR* CommandLineKey,
+    const TCHAR* EnvironmentVariable,
+    const FString& ComponentValue,
+    FString& OutValue)
+{
+    FString CommandLineValue;
+    if (FParse::Value(FCommandLine::Get(), CommandLineKey, CommandLineValue))
+    {
+        OutValue = MoveTemp(CommandLineValue);
+        return EFayEndpointSource::CommandLine;
+    }
+
+    FString EnvironmentValue = FPlatformMisc::GetEnvironmentVariable(EnvironmentVariable);
+    if (!EnvironmentValue.IsEmpty())
+    {
+        OutValue = MoveTemp(EnvironmentValue);
+        return EFayEndpointSource::Environment;
+    }
+
+    OutValue = ComponentValue;
+    return EFayEndpointSource::Component;
+}
 
 struct FStrictUrl
 {
@@ -312,12 +360,71 @@ void UFayAvatarBridgeComponent::BeginPlay()
 {
     Super::BeginPlay();
     bEndingPlay = false;
+    ApplyRuntimeEndpointOverrides();
     EnsureAudioComponent();
 
     if (bConnectOnBeginPlay)
     {
         Connect();
     }
+}
+
+void UFayAvatarBridgeComponent::ApplyRuntimeEndpointOverrides()
+{
+    if (bRuntimeEndpointOverridesApplied)
+    {
+        return;
+    }
+
+    bRuntimeEndpointOverridesApplied = true;
+    FString ResolvedWebSocketUrl;
+    const EFayEndpointSource WebSocketSource = ResolveEndpointValue(
+        TEXT("FayWsUrl="),
+        TEXT("FAY_WS_URL"),
+        WebSocketUrl,
+        ResolvedWebSocketUrl);
+
+    FString ResolvedAudioBaseUrl;
+    const EFayEndpointSource AudioSource = ResolveEndpointValue(
+        TEXT("FayAudioBaseUrl="),
+        TEXT("FAY_AUDIO_BASE_URL"),
+        AudioBaseUrl,
+        ResolvedAudioBaseUrl);
+
+    WebSocketUrl = MoveTemp(ResolvedWebSocketUrl);
+    AudioBaseUrl = MoveTemp(ResolvedAudioBaseUrl);
+    UE_LOG(LogFayAvatarBridge, Display,
+        TEXT("Resolved Fay endpoints (WebSocket source=%s, audio source=%s)."),
+        EndpointSourceName(WebSocketSource),
+        EndpointSourceName(AudioSource));
+}
+
+bool UFayAvatarBridgeComponent::ValidateRuntimeEndpoints(FString& OutError)
+{
+    OutError.Reset();
+    FStrictUrl ParsedWebSocketUrl;
+    if (!TryParseStrictUrl(WebSocketUrl, false, true, ParsedWebSocketUrl))
+    {
+        OutError = TEXT("The resolved Fay WebSocket endpoint must be a strict ws:// or wss:// URL without userinfo, escapes, a query, or a fragment.");
+        return false;
+    }
+
+    FString NormalizedAudioBaseUrl = AudioBaseUrl;
+    if (!NormalizedAudioBaseUrl.EndsWith(TEXT("/")))
+    {
+        NormalizedAudioBaseUrl.AppendChar(TEXT('/'));
+    }
+
+    FStrictUrl ParsedAudioBaseUrl;
+    if (!TryParseStrictUrl(NormalizedAudioBaseUrl, true, false, ParsedAudioBaseUrl) ||
+        !ParsedAudioBaseUrl.Path.EndsWith(TEXT("/")))
+    {
+        OutError = TEXT("The resolved Fay audio base must be a strict http:// or https:// URL without userinfo, escapes, a query, or a fragment.");
+        return false;
+    }
+
+    AudioBaseUrl = MoveTemp(NormalizedAudioBaseUrl);
+    return true;
 }
 
 void UFayAvatarBridgeComponent::EndPlay(const EEndPlayReason::Type EndPlayReason)
@@ -440,16 +547,18 @@ void UFayAvatarBridgeComponent::Connect()
     bManualDisconnect = false;
     CancelReconnect();
 
+    ApplyRuntimeEndpointOverrides();
     if (Socket.IsValid() && Socket->IsConnected())
     {
         return;
     }
 
-    FStrictUrl ParsedWebSocketUrl;
-    if (!TryParseStrictUrl(WebSocketUrl, false, true, ParsedWebSocketUrl))
+    FString EndpointError;
+    if (!ValidateRuntimeEndpoints(EndpointError))
     {
+        ReleaseSocket();
         SetConnectionState(EFayAvatarBridgeState::Error);
-        ReportError(TEXT("WebSocket"), TEXT("WebSocketUrl must be a strict ws:// or wss:// URL without userinfo, escapes, a query, or a fragment."));
+        ReportError(TEXT("Configuration"), EndpointError);
         return;
     }
 
@@ -598,6 +707,7 @@ void UFayAvatarBridgeComponent::HandleSocketConnected(const uint64 Generation)
         return;
     }
 
+    UE_LOG(LogFayAvatarBridge, Display, TEXT("Connected to the Fay avatar WebSocket."));
     SendRegistration();
 }
 
@@ -686,6 +796,9 @@ void UFayAvatarBridgeComponent::SendRegistration()
     }
 
     Socket->Send(Payload);
+    UE_LOG(LogFayAvatarBridge, Display,
+        TEXT("Sent Fay avatar registration (output_requested=%s)."),
+        bRequestOutput ? TEXT("true") : TEXT("false"));
 }
 
 void UFayAvatarBridgeComponent::ScheduleReconnect()
@@ -917,6 +1030,13 @@ void UFayAvatarBridgeComponent::StartNextAudio()
 
     CurrentMessage = MoveTemp(PendingAudioMessages[0]);
     PendingAudioMessages.RemoveAt(0, 1, EAllowShrinking::No);
+    UE_LOG(LogFayAvatarBridge, Display,
+        TEXT("Accepted a Fay avatar audio message (sequence=%d, first=%s, end=%s, action=%s, visemes=%d)."),
+        CurrentMessage.MessageNumber,
+        CurrentMessage.bIsFirst ? TEXT("true") : TEXT("false"),
+        CurrentMessage.bIsEnd ? TEXT("true") : TEXT("false"),
+        CurrentMessage.Action.bIsValid ? TEXT("true") : TEXT("false"),
+        CurrentMessage.Visemes.Num());
     const int32 PendingLimit = FMath::Clamp(MaximumPendingAudioMessages, 1, HardMaximumPendingAudioMessages);
     if (PendingAudioMessages.Num() < PendingLimit)
     {
@@ -1084,6 +1204,13 @@ void UFayAvatarBridgeComponent::HandleAudioDownloadResult(
         return;
     }
 
+    UE_LOG(LogFayAvatarBridge, Display,
+        TEXT("Downloaded and decoded Fay audio (encoded_bytes=%d, sample_rate=%d, channels=%d, duration_seconds=%.3f)."),
+        Content.Num(),
+        Wave.SampleRate,
+        Wave.NumChannels,
+        Wave.DurationSeconds);
+
     StartProceduralPlayback(
         MoveTemp(Wave.Pcm16),
         Wave.SampleRate,
@@ -1224,9 +1351,15 @@ void UFayAvatarBridgeComponent::StartProceduralPlayback(
     bPlaybackStopRequested = false;
     bSpeechPlaying = true;
 
+    OnDecodedPcm.Broadcast(CurrentMessage, CurrentPcm16, CurrentSampleRate, CurrentNumChannels);
     VoiceAudioComponent->Play();
     if (bSpeechPlaying)
     {
+        UE_LOG(LogFayAvatarBridge, Display,
+            TEXT("Started Fay speech playback (sample_rate=%d, channels=%d, duration_seconds=%.3f)."),
+            CurrentSampleRate,
+            CurrentNumChannels,
+            CurrentDurationSeconds);
         OnSpeechStarted.Broadcast(CurrentMessage, CurrentDurationSeconds);
     }
 }
@@ -1235,6 +1368,7 @@ void UFayAvatarBridgeComponent::FinishCurrentPlayback(const bool bCompletedNorma
 {
     const uint64 CompletionGeneration = SpeechGeneration;
     const bool bWasPlaying = bSpeechPlaying;
+    const float FinishedDurationSeconds = CurrentDurationSeconds;
     const FFayAvatarMessage FinishedMessage = CurrentMessage;
 
     bSpeechPlaying = false;
@@ -1269,6 +1403,9 @@ void UFayAvatarBridgeComponent::FinishCurrentPlayback(const bool bCompletedNorma
     if (bWasPlaying && bCompletedNormally && !bEndingPlay &&
         CompletionGeneration == SpeechGeneration)
     {
+        UE_LOG(LogFayAvatarBridge, Display,
+            TEXT("Finished Fay speech playback (duration_seconds=%.3f)."),
+            FinishedDurationSeconds);
         OnSpeechFinished.Broadcast(FinishedMessage);
     }
 }

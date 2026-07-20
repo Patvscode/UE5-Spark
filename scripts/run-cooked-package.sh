@@ -2,7 +2,8 @@
 set -euo pipefail
 
 if [[ $# -lt 1 ]]; then
-    printf 'Usage: %s /path/to/FayAvatarRuntime.sh [Unreal arguments...]\n' "${0##*/}" >&2
+    printf 'Usage: %s /path/to/FayAvatarRuntime-Arm64.sh [Unreal arguments...]\n' \
+        "${0##*/}" >&2
     exit 64
 fi
 
@@ -24,13 +25,14 @@ fi
 
 launcher_dir=$(cd "$(dirname "$launcher_input")" && pwd -P)
 launcher="$launcher_dir/$(basename "$launcher_input")"
-if [[ $(basename "$launcher") != 'FayAvatarRuntime.sh' || ! -x "$launcher" ]]; then
-    printf 'error: expected an executable FayAvatarRuntime.sh launcher: %s\n' "$launcher" >&2
+if [[ $(basename "$launcher") != 'FayAvatarRuntime-Arm64.sh' || ! -x "$launcher" ]]; then
+    printf 'error: expected an executable FayAvatarRuntime-Arm64.sh launcher: %s\n' \
+        "$launcher" >&2
     exit 77
 fi
 
 game_root="$launcher_dir/FayAvatarRuntime"
-game_binary="$game_root/Binaries/Linux/FayAvatarRuntime"
+game_binary="$game_root/Binaries/LinuxArm64/FayAvatarRuntime"
 if [[ ! -x "$game_binary" ]]; then
     printf 'error: expected packaged game executable is missing: %s\n' "$game_binary" >&2
     exit 65
@@ -42,10 +44,7 @@ if [[ "$description" != *"ELF 64-bit"* || "$description" != *"ARM aarch64"* ]]; 
     printf '  %s\n' "$description" >&2
     exit 65
 fi
-if ! find "$game_root/Content/Paks" -type f \( -name '*.pak' -o -name '*.utoc' \) -print -quit 2>/dev/null | grep -q .; then
-    printf 'error: no cooked .pak or .utoc exists under %s/Content/Paks\n' "$game_root" >&2
-    exit 65
-fi
+"$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)/verify-cooked-package.sh" "$launcher_dir"
 
 printf 'Launcher: %s\n' "$launcher"
 printf 'ARM64 game executable: %s\n' "$game_binary"

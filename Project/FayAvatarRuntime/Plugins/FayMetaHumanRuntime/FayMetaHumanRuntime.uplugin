@@ -1,0 +1,41 @@
+{
+  "FileVersion": 3,
+  "Version": 1,
+  "VersionName": "0.1.0",
+  "FriendlyName": "Fay MetaHuman Runtime",
+  "Description": "Linux ARM64 speech-animation and Live Link adapter for Fay and UE 5.8 MetaHumans.",
+  "Category": "AI",
+  "CreatedBy": "UE5-Spark contributors",
+  "CanContainContent": false,
+  "IsBetaVersion": true,
+  "Installed": false,
+  "Modules": [
+    {
+      "Name": "FayMetaHumanRuntime",
+      "Type": "Runtime",
+      "LoadingPhase": "Default"
+    }
+  ],
+  "Plugins": [
+    {
+      "Name": "FayAvatarBridge",
+      "Enabled": true
+    },
+    {
+      "Name": "LiveLink",
+      "Enabled": true
+    },
+    {
+      "Name": "StreamingADA",
+      "Enabled": true
+    },
+    {
+      "Name": "MetaHumanCoreTech",
+      "Enabled": true
+    },
+    {
+      "Name": "MetaHumanCharacter",
+      "Enabled": true
+    }
+  ]
+}

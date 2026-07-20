@@ -9,10 +9,24 @@
 Archives/
 Builds/
 Releases/
+Packages/
+Screenshots/
+Captures/
 *.pak
 *.utoc
 *.ucas
 *.sig
+*.ushaderbytecode
+*.zip
+*.tar
+*.tar.gz
+*.tar.xz
+*.tgz
+*.txz
+*.7z
+*.rar
+*.deb
+*.rpm
 
 # Epic-licensed Engine work stays in an authorized private workspace
 Engine/
@@ -20,17 +34,94 @@ UnrealEngine/
 spark-engine/
 engine-patches/
 *.patch
+*.diff
+*.rej
+*.orig
+
+# This public kit is source-only. Project content is generated locally by each
+# licensed user and belongs only in that user's private cook/package workspace.
+Project/FayAvatarRuntime/Content/
+Project/FayAvatarRuntime/Plugins/*/Content/
 
 # MetaHuman, Fab, and Marketplace content is acquired by each licensed user
 **/Content/MetaHumans/
 **/Content/MetaHumanCommon/
+**/Content/FayMetaHumans/
 **/Content/Megascans/
 **/Plugins/Marketplace/
+
+# Unreal assets, third-party models, native binaries, and private media
+*.uasset
+*.umap
+*.uexp
+*.ubulk
+*.uptnl
+*.onnx
+*.pt
+*.pth
+*.safetensors
+*.dll
+*.dylib
+*.so
+*.a
+*.lib
+*.exe
+*.bin
+*.AppImage
+*.node
+*.o
+*.fbx
+*.gltf
+*.glb
+*.obj
+*.blend
+*.ma
+*.mb
+*.stl
+*.usd
+*.usda
+*.usdc
+*.abc
+*.dna
+*.png
+*.jpg
+*.jpeg
+*.webp
+*.svg
+*.gif
+*.bmp
+*.tga
+*.tif
+*.tiff
+*.exr
+*.hdr
+*.wav
+*.mp3
+*.mp4
+*.mov
+*.pdf
+*.docx
+*.pptx
+*.xlsx
 
 # Credentials and machine-local configuration
 .env
 .env.*
+*.env
+*.env.*
 !.env.example
+credentials*.json
+secrets.*
+.netrc
+.npmrc
+.pypirc
+.git-credentials
+.ssh/
+*.token
+*.keystore
+*.jks
+*.p8
+*.mobileprovision
 *.key
 *.pem
 *.p12
@@ -54,4 +145,6 @@ __pycache__/
 .pytest_cache/
 .DS_Store
 *.log
+*.dmp
+*.core
 crashinfo-*/

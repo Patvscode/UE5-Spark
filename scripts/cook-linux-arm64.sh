@@ -28,6 +28,7 @@ fi
 engine_root=$(cd "$engine_input" && pwd -P)
 run_uat="$engine_root/Engine/Build/BatchFiles/RunUAT.sh"
 build_version="$engine_root/Engine/Build/Build.version"
+unrealpak="$engine_root/Engine/Binaries/Linux/UnrealPak"
 
 script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)
 repo_root=$(cd "$script_dir/.." && pwd -P)
@@ -36,6 +37,10 @@ plugin="$repo_root/Project/FayAvatarRuntime/Plugins/FayAvatarBridge/FayAvatarBri
 
 if [[ ! -x "$run_uat" ]]; then
     printf 'error: RunUAT.sh is missing or not executable: %s\n' "$run_uat" >&2
+    exit 66
+fi
+if [[ ! -x "$unrealpak" ]]; then
+    printf 'error: UnrealPak is missing or not executable: %s\n' "$unrealpak" >&2
     exit 66
 fi
 if [[ ! -f "$project" || ! -f "$plugin" ]]; then
@@ -62,7 +67,7 @@ printf 'Engine:  %s\n' "$engine_root"
 printf 'Project: %s\n' "$project"
 printf 'Archive: %s\n' "$archive_root"
 
-exec "$run_uat" BuildCookRun \
+"$run_uat" BuildCookRun \
     -project="$project" \
     -target=FayAvatarRuntime \
     -platform=LinuxArm64 \
@@ -76,3 +81,7 @@ exec "$run_uat" BuildCookRun \
     -unattended \
     -nop4 \
     -utf8output
+
+"$script_dir/verify-cooked-package.sh" "$archive_root" \
+    --unrealpak "$unrealpak" --seal
+printf 'Deep-verified and sealed LinuxArm64 archive: %s\n' "$archive_root"

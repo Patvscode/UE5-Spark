@@ -1,10 +1,24 @@
 #include "FayAvatarBootstrapGameMode.h"
 
 #include "Camera/CameraComponent.h"
+#include "Components/PointLightComponent.h"
 #include "Components/SceneComponent.h"
+#include "Components/SkeletalMeshComponent.h"
 #include "DrawDebugHelpers.h"
+#include "Engine/SkeletalMesh.h"
+#include "Engine/World.h"
 #include "FayAvatarBridgeComponent.h"
+#include "FayMetaHumanSpeechDriverComponent.h"
 #include "GameFramework/PlayerController.h"
+#include "UObject/SoftObjectPath.h"
+
+DEFINE_LOG_CATEGORY_STATIC(LogFayAvatarRuntime, Log, All);
+
+namespace
+{
+constexpr TCHAR DefaultMetaHumanClassPath[] =
+    TEXT("/Game/FayMetaHumans/Built/AdaFay/BP_AdaFay.BP_AdaFay_C");
+}
 
 AFayAvatarBootstrapGameMode::AFayAvatarBootstrapGameMode()
 {
@@ -22,12 +36,46 @@ AFayAvatarBootstrapGameMode::AFayAvatarBootstrapGameMode()
 
     Camera = CreateDefaultSubobject<UCameraComponent>(TEXT("Camera"));
     Camera->SetupAttachment(SceneRoot);
-    Camera->SetRelativeLocation(FVector(-850.0, 0.0, 170.0));
+    Camera->SetRelativeLocation(FVector(-300.0, 0.0, 165.0));
     Camera->SetRelativeRotation(FRotator::ZeroRotator);
-    Camera->FieldOfView = 55.0f;
+    Camera->FieldOfView = 42.0f;
     Camera->SetActive(true);
 
     Bridge = CreateDefaultSubobject<UFayAvatarBridgeComponent>(TEXT("FayAvatarBridge"));
+    SpeechDriver = CreateDefaultSubobject<UFayMetaHumanSpeechDriverComponent>(TEXT("FayMetaHumanSpeechDriver"));
+
+    KeyLight = CreateDefaultSubobject<UPointLightComponent>(TEXT("KeyLight"));
+    KeyLight->SetupAttachment(SceneRoot);
+    KeyLight->SetRelativeLocation(FVector(-150.0, -130.0, 230.0));
+    KeyLight->SetIntensity(2200.0f);
+    KeyLight->SetLightColor(FLinearColor(1.0f, 0.78f, 0.62f));
+    KeyLight->AttenuationRadius = 650.0f;
+
+    FillLight = CreateDefaultSubobject<UPointLightComponent>(TEXT("FillLight"));
+    FillLight->SetupAttachment(SceneRoot);
+    FillLight->SetRelativeLocation(FVector(-100.0, 160.0, 190.0));
+    FillLight->SetIntensity(900.0f);
+    FillLight->SetLightColor(FLinearColor(0.55f, 0.72f, 1.0f));
+    FillLight->AttenuationRadius = 600.0f;
+
+    RimLight = CreateDefaultSubobject<UPointLightComponent>(TEXT("RimLight"));
+    RimLight->SetupAttachment(SceneRoot);
+    RimLight->SetRelativeLocation(FVector(90.0, 0.0, 235.0));
+    RimLight->SetIntensity(1500.0f);
+    RimLight->SetLightColor(FLinearColor(1.0f, 0.52f, 0.34f));
+    RimLight->AttenuationRadius = 500.0f;
+
+    MetaHumanClass = TSoftClassPtr<AActor>(FSoftObjectPath(DefaultMetaHumanClassPath));
+}
+
+void AFayAvatarBootstrapGameMode::BeginPlay()
+{
+    Super::BeginPlay();
+    if (SpeechDriver != nullptr)
+    {
+        SpeechDriver->AttachBridge(Bridge);
+    }
+    TrySpawnMetaHuman();
 }
 
 void AFayAvatarBootstrapGameMode::Tick(const float DeltaSeconds)
@@ -43,7 +91,137 @@ void AFayAvatarBootstrapGameMode::Tick(const float DeltaSeconds)
         }
     }
 
-    DrawSmokeScene();
+    if (bLiveLinkConfigurationRequested && !bLiveLinkConfigured && SpeechDriver != nullptr)
+    {
+        if (SpeechDriver->IsAvatarConfigured())
+        {
+            bLiveLinkConfigured = true;
+            bLiveLinkConfigurationRequested = false;
+            UE_LOG(LogFayAvatarRuntime, Display,
+                TEXT("Ada MetaHuman's exact Fay Live Link source is enabled and evaluable."));
+        }
+        else if (!SpeechDriver->IsAvatarConfigurationPending())
+        {
+            bLiveLinkConfigurationRequested = false;
+            UE_LOG(LogFayAvatarRuntime, Warning,
+                TEXT("Ada MetaHuman Live Link configuration ended without a verified consumer; "
+                     "retaining the jaw fallback when available."));
+        }
+    }
+
+    if (IsValid(MetaHumanActor))
+    {
+        DriveJawFallback();
+    }
+    else
+    {
+        DrawSmokeScene();
+    }
+}
+
+void AFayAvatarBootstrapGameMode::TrySpawnMetaHuman()
+{
+    UWorld* World = GetWorld();
+    UClass* LoadedClass = MetaHumanClass.LoadSynchronous();
+    if (World == nullptr || LoadedClass == nullptr || !LoadedClass->IsChildOf(AActor::StaticClass()))
+    {
+        UE_LOG(LogFayAvatarRuntime, Display,
+            TEXT("The assembled Ada MetaHuman is unavailable; retaining the diagnostic avatar."));
+        return;
+    }
+
+    FActorSpawnParameters SpawnParameters;
+    SpawnParameters.SpawnCollisionHandlingOverride =
+        ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+    MetaHumanActor = World->SpawnActor<AActor>(
+        LoadedClass,
+        FVector::ZeroVector,
+        FRotator(0.0f, 180.0f, 0.0f),
+        SpawnParameters);
+    if (!IsValid(MetaHumanActor))
+    {
+        UE_LOG(LogFayAvatarRuntime, Warning,
+            TEXT("The assembled Ada class loaded but could not be spawned."));
+        return;
+    }
+
+    ResolveFaceAndJawMorph();
+    bLiveLinkConfigured = false;
+    bLiveLinkConfigurationRequested = SpeechDriver != nullptr &&
+        SpeechDriver->IsSolverReady();
+    if (bLiveLinkConfigurationRequested)
+    {
+        bLiveLinkConfigured = SpeechDriver->ConfigureAvatar(MetaHumanActor);
+        bLiveLinkConfigurationRequested =
+            !bLiveLinkConfigured && SpeechDriver->IsAvatarConfigurationPending();
+    }
+    UE_LOG(LogFayAvatarRuntime, Display,
+        TEXT("Spawned Ada MetaHuman (speech_live_link=%s)."),
+        bLiveLinkConfigured
+            ? TEXT("configured")
+            : (bLiveLinkConfigurationRequested ? TEXT("pending exact-source verification")
+                                               : TEXT("jaw fallback")));
+}
+
+void AFayAvatarBootstrapGameMode::ResolveFaceAndJawMorph()
+{
+    if (!IsValid(MetaHumanActor))
+    {
+        return;
+    }
+
+    TInlineComponentArray<USkeletalMeshComponent*> SkeletalMeshes(MetaHumanActor);
+    for (USkeletalMeshComponent* Mesh : SkeletalMeshes)
+    {
+        FString StableName = Mesh != nullptr ? Mesh->GetName() : FString();
+        StableName.RemoveFromEnd(TEXT("_GEN_VARIABLE"));
+        if (StableName == TEXT("Face"))
+        {
+            FaceMesh = Mesh;
+            break;
+        }
+    }
+    if (FaceMesh == nullptr || FaceMesh->GetSkeletalMeshAsset() == nullptr)
+    {
+        UE_LOG(LogFayAvatarRuntime, Warning,
+            TEXT("The assembled Ada actor did not expose its expected Face skeletal mesh."));
+        return;
+    }
+
+    static const FName Candidates[] = {
+        TEXT("CTRL_expressions_jawOpen"),
+        TEXT("JawOpen"),
+        TEXT("jawOpen"),
+        TEXT("jaw_open"),
+        TEXT("mouthOpen")};
+    for (const FName Candidate : Candidates)
+    {
+        if (FaceMesh->GetSkeletalMeshAsset()->FindMorphTarget(Candidate) != nullptr)
+        {
+            JawMorphTarget = Candidate;
+            FaceMesh->AddTickPrerequisiteActor(this);
+            UE_LOG(LogFayAvatarRuntime, Display,
+                TEXT("Resolved diagnostic jaw morph %s."),
+                *JawMorphTarget.ToString());
+            return;
+        }
+    }
+
+    UE_LOG(LogFayAvatarRuntime, Display,
+        TEXT("No direct jaw morph is exposed; the learned Live Link face path is required."));
+}
+
+void AFayAvatarBootstrapGameMode::DriveJawFallback() const
+{
+    if (bLiveLinkConfigured || Bridge == nullptr || FaceMesh == nullptr ||
+        JawMorphTarget.IsNone())
+    {
+        return;
+    }
+    FaceMesh->SetMorphTarget(
+        JawMorphTarget,
+        FMath::Clamp(Bridge->GetMouthAmplitude(), 0.0f, 1.0f),
+        false);
 }
 
 void AFayAvatarBootstrapGameMode::DrawSmokeScene() const

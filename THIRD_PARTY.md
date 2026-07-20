@@ -17,6 +17,12 @@ Users obtain and assemble their own MetaHuman through Epic. Do not commit
 MetaHuman meshes, DNA, textures, grooms, animations, or paid/free Fab assets to
 this repository unless their specific license expressly permits redistribution.
 
+The runtime facial adapter also depends on Epic's StreamingADA model from the
+authorized Unreal installation. The generated Ada assets and that model may be
+cooked into the user's local application, but neither the source assets/model
+nor a package containing them is distributed by this repository. Do not attach
+such a package to a public GitHub release.
+
 - [MetaHuman licensing](https://www.metahuman.com/license?lang=en-US)
 - [Getting started with MetaHuman Creator](https://dev.epicgames.com/documentation/en-us/metahuman/getting-started-with-metahuman-creator)
 

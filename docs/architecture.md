@@ -5,6 +5,10 @@
 ```text
                            DGX Spark
 
+  x86 UE Editor/Cooker --rootless FEX--> LinuxArm64 cooked package
+                                                |
+                                                v
+
   microphone --> ASR --> Fay conversation/runtime --> local LLM
                             |         |
                             |         +--> MCP clients and MCP server
@@ -17,12 +21,31 @@
                                   Packaged Unreal LinuxArm64
                                   - FayAvatarBridge
                                   - audio playback
-                                  - face/body animation
+                                  - FayMetaHumanRuntime
                                   - MetaHuman rendering
 ```
 
-The one-time x86-64 builder is outside this runtime diagram. It produces the
-cooked Linux ARM64 package whenever project or character assets change.
+The x86 Editor/cooker is a development-time process on the Spark. The packaged
+runtime below it is native ARM64 and does not use FEX. A separate x86-64 Linux
+builder can still produce the same package when preferred.
+
+The implemented facial source path is:
+
+```text
+Fay WAV
+  -> FayAvatarBridge PCM16 decode
+  -> 16 kHz mono samples
+  -> StreamingADA with NNERuntimeORTCpu
+  -> learned GUI controls
+  -> 251 MetaHuman raw controls
+  -> local Live Link Basic subject: FayAudio
+  -> assembled MetaHuman face
+```
+
+This is the intended direct, local runtime path; it does not use a microphone
+or a cloud solve during playback. The adapter now compiles for the x86-64 Editor
+and native LinuxArm64 Game targets. LinuxArm64 cooking/packaging, Spark model
+runtime, and visual checks remain pending.
 
 ## Responsibility split
 
@@ -31,8 +54,13 @@ cooked Linux ARM64 package whenever project or character assets change.
 | Fay | Conversation state, memory, tool use, LLM routing, ASR/TTS coordination, sentiment and action metadata |
 | MCP layer | Connections between Fay and external tools/systems |
 | FayAvatarBridge | Socket registration/reconnect, bounded JSON/audio queues, WAV download/decoding, normalized Blueprint events |
-| Unreal runtime | Avatar, camera, lighting, rendering, audio output, facial curves, gestures, LOD/performance |
-| x86-64 cooker | Shader compilation and platform data for maps, textures, materials, meshes, rigs and MetaHuman assets |
+| FayMetaHumanRuntime | 16 kHz mono conversion, local StreamingADA solve, 251 raw-control conversion, and `FayAudio` Live Link publishing; x86 Editor and ARM64 Game compilation verified, runtime/visual pending |
+| Unreal runtime | Avatar, camera, lighting, rendering, audio output, facial curves, and LOD/performance |
+| x86-64 Editor/cooker through FEX | Asset editing plus LinuxArm64 shader/platform data for maps, textures, materials, meshes, rigs and MetaHumans |
+| Native ARM build/package tools | LinuxArm64 Game compilation, staging, UnrealPak/IoStore, and archive verification |
+
+Fay semantic body actions already cross the bridge, but no body montage/control
+mapping is implemented. Body gestures remain a separate future layer.
 
 ## Why MCP does not belong inside the avatar plugin
 

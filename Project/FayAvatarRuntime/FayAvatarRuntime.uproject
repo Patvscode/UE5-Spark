@@ -15,6 +15,21 @@
     {
       "Name": "FayAvatarBridge",
       "Enabled": true
+    },
+    {
+      "Name": "FayMetaHumanRuntime",
+      "Enabled": true
+    },
+    {
+      "Name": "MetaHumanCharacter",
+      "Enabled": true
+    },
+    {
+      "Name": "FayMetaHumanEditorTools",
+      "Enabled": true,
+      "TargetAllowList": [
+        "Editor"
+      ]
     }
   ]
 }
