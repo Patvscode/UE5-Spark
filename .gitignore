@@ -1,0 +1,57 @@
+# Unreal generated output
+**/Binaries/
+**/DerivedDataCache/
+**/Intermediate/
+**/Saved/
+**/StagedBuilds/
+
+# Cooked/package output must not be published from this repository
+Archives/
+Builds/
+Releases/
+*.pak
+*.utoc
+*.ucas
+*.sig
+
+# Epic-licensed Engine work stays in an authorized private workspace
+Engine/
+UnrealEngine/
+spark-engine/
+engine-patches/
+*.patch
+
+# MetaHuman, Fab, and Marketplace content is acquired by each licensed user
+**/Content/MetaHumans/
+**/Content/MetaHumanCommon/
+**/Content/Megascans/
+**/Plugins/Marketplace/
+
+# Credentials and machine-local configuration
+.env
+.env.*
+!.env.example
+*.key
+*.pem
+*.p12
+*.pfx
+id_rsa*
+id_ed25519*
+
+# Generated IDE/platform files
+.vs/
+.idea/
+*.sln
+*.suo
+*.opensdf
+*.sdf
+*.VC.db
+*.xcodeproj/
+
+# Python/editor/cache output
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.DS_Store
+*.log
+crashinfo-*/

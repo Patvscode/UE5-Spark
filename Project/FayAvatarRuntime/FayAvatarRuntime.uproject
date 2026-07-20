@@ -1,0 +1,20 @@
+{
+  "FileVersion": 3,
+  "EngineAssociation": "5.8",
+  "Category": "Digital Human",
+  "Description": "Minimal Linux ARM64 compile target for the Fay Avatar Bridge.",
+  "DisableEnginePluginsByDefault": true,
+  "Modules": [
+    {
+      "Name": "FayAvatarRuntime",
+      "Type": "Runtime",
+      "LoadingPhase": "Default"
+    }
+  ],
+  "Plugins": [
+    {
+      "Name": "FayAvatarBridge",
+      "Enabled": true
+    }
+  ]
+}
