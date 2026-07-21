@@ -18,6 +18,7 @@ duration=$4
 turn_count=$5
 max_tail_rss_growth_kb=${FAY_SOAK_MAX_TAIL_RSS_GROWTH_KB:-262144}
 max_gpu_utilization_percent=${FAY_SOAK_MAX_GPU_UTILIZATION_PERCENT:-85}
+max_face_p95_ms=${FAY_SOAK_MAX_FACE_P95_MS:-20}
 [[ $unreal_pid =~ ^[1-9][0-9]*$ && $fay_pid =~ ^[1-9][0-9]*$ ]] || \
     fail 'PIDs must be positive integers'
 [[ $duration =~ ^[1-9][0-9]*$ && $turn_count =~ ^[1-9][0-9]*$ ]] || \
@@ -26,9 +27,12 @@ max_gpu_utilization_percent=${FAY_SOAK_MAX_GPU_UTILIZATION_PERCENT:-85}
     fail 'FAY_SOAK_MAX_TAIL_RSS_GROWTH_KB must be a non-negative integer'
 [[ $max_gpu_utilization_percent =~ ^([0-9]|[1-9][0-9]|100)$ ]] || \
     fail 'FAY_SOAK_MAX_GPU_UTILIZATION_PERCENT must be an integer from 0 through 100'
+[[ $max_face_p95_ms =~ ^[0-9]+([.][0-9]+)?$ ]] || \
+    fail 'FAY_SOAK_MAX_FACE_P95_MS must be a non-negative number'
 (( duration >= turn_count && turn_count <= 100 )) || \
     fail 'duration must cover every turn and turn count must not exceed 100'
-for command_name in curl date mkdir nvidia-smi ps readlink ss; do
+for command_name in awk curl date dirname grep head mkdir nvidia-smi ps readlink realpath \
+    sleep ss tail tr wc; do
     command -v "$command_name" >/dev/null 2>&1 || fail "missing command: $command_name"
 done
 
@@ -36,6 +40,10 @@ unreal_exe=$(readlink "/proc/$unreal_pid/exe" 2>/dev/null || true)
 fay_exe=$(readlink "/proc/$fay_pid/exe" 2>/dev/null || true)
 [[ $unreal_exe == */FayAvatarRuntime ]] || fail 'UNREAL_PID is not FayAvatarRuntime'
 [[ $fay_exe == */python* ]] || fail 'FAY_PID is not a Python process'
+runtime_root=$(realpath "$(dirname "$unreal_exe")/../..")
+runtime_log="$runtime_root/Saved/Logs/FayAvatarRuntime.log"
+[[ -f $runtime_log ]] || fail "Unreal runtime log is missing: $runtime_log"
+runtime_log_start_lines=$(wc -l <"$runtime_log")
 
 output_dir=$(mkdir -p "$output_input" && cd "$output_input" && pwd -P)
 case "$output_dir/" in
@@ -116,6 +124,35 @@ status=passed
 if (( tail_rss_growth_kb > max_tail_rss_growth_kb )); then
     status=failed
 fi
+facial_summaries="$output_dir/facial-summaries.log"
+tail -n "+$((runtime_log_start_lines + 1))" "$runtime_log" |
+    grep 'Fay facial solve summary' >"$facial_summaries" || true
+facial_summary_count=0
+facial_frame_failures=0
+facial_p95_failures=0
+worst_face_p95_ms=0
+while IFS= read -r line; do
+    [[ $line =~ frames=([0-9]+),[[:space:]]speech_seconds=([0-9]+([.][0-9]+)?),.*p95_ms=([0-9]+([.][0-9]+)?) ]] || continue
+    ((++facial_summary_count))
+    actual_frames=${BASH_REMATCH[1]}
+    speech_seconds=${BASH_REMATCH[2]}
+    face_p95_ms=${BASH_REMATCH[4]}
+    expected_frames=$(awk -v seconds="$speech_seconds" \
+        'BEGIN { printf "%.0f", seconds * 50.0 + 10.0 }')
+    if (( actual_frames != expected_frames )); then
+        ((++facial_frame_failures))
+    fi
+    if awk -v observed="$face_p95_ms" -v limit="$max_face_p95_ms" \
+        'BEGIN { exit !(observed > limit) }'; then
+        ((++facial_p95_failures))
+    fi
+    worst_face_p95_ms=$(awk -v current="$worst_face_p95_ms" -v observed="$face_p95_ms" \
+        'BEGIN { print observed > current ? observed : current }')
+done <"$facial_summaries"
+if (( facial_summary_count < turn_count || facial_frame_failures > 0 ||
+    facial_p95_failures > 0 )); then
+    status=failed
+fi
 {
     printf 'status=%s\n' "$status"
     printf 'duration_seconds=%s\n' "$((end - start))"
@@ -130,9 +167,15 @@ fi
     printf 'rss_tail_growth_limit_kb=%s\n' "$max_tail_rss_growth_kb"
     printf 'gpu_utilization_max_percent=%s\n' "$max_gpu_utilization"
     printf 'gpu_utilization_limit_percent=%s\n' "$max_gpu_utilization_percent"
+    printf 'facial_summary_count=%s\n' "$facial_summary_count"
+    printf 'facial_summary_required=%s\n' "$turn_count"
+    printf 'facial_frame_failures=%s\n' "$facial_frame_failures"
+    printf 'facial_p95_failures=%s\n' "$facial_p95_failures"
+    printf 'facial_p95_worst_ms=%s\n' "$worst_face_p95_ms"
+    printf 'facial_p95_limit_ms=%s\n' "$max_face_p95_ms"
 } >"$summary"
 if [[ $status != passed ]]; then
-    fail "Unreal RSS grew by ${tail_rss_growth_kb} KB in the latter half of the soak (limit: ${max_tail_rss_growth_kb} KB)"
+    fail "avatar soak failed; inspect $summary and $facial_summaries"
 fi
 printf 'Soak test passed: %s turn(s) over %s second(s).\n' "$turn_count" "$((end - start))"
 printf 'Private metrics: %s\n' "$metrics"
