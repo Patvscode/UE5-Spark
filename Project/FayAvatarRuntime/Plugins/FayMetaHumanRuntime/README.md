@@ -20,15 +20,20 @@ and included only in that user's cooked package.
 ## Bounded runtime diagnostics
 
 The default command line preserves the production path: a neutral Live Link
-heartbeat is published at 10 Hz while the configured avatar is idle, and the
-exact consumer/source contract is audited every frame. Reviewed packages also
-expose two narrow diagnostic overrides:
+heartbeat is published at 10 Hz while the configured avatar is awake and idle,
+and the exact consumer/source contract is audited every frame. Reviewed
+idle-dormancy mode suppresses the neutral heartbeat and bounds the same full
+health audit to at most one second while frozen. Accepted Fay messages and body
+motion state changes still wake the avatar synchronously; a failed periodic
+health audit fails open and restores the saved actor/component state. Reviewed
+packages also expose two narrow diagnostic overrides:
 
 - `-FayLiveLinkIdleHeartbeat=0` stops only the configured-idle heartbeat.
   Bootstrap neutral frames, speech frames, and action head frames remain
   enabled.
 - `-FayLiveLinkHealthInterval=1.0` audits the complete consumer/source contract
-  once per second while idle. `0` retains the every-frame default.
+  once per second while awake and idle. `0` retains the every-frame awake
+  default. Dormancy always caps this interval at one second.
 
 These switches isolate downstream Live Link, MetaHuman deformer, and renderer
 allocation behavior. They do not disable StreamingADA or weaken the initial

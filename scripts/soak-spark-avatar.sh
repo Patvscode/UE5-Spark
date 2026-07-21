@@ -452,10 +452,13 @@ dormancy_cancel_count=$(grep -Fc 'Cancelled MetaHuman dormancy preparation' \
     "$runtime_new_log" || true)
 dormancy_enabled_marker="MetaHuman idle dormancy: enabled (delay=${expected_avatar_dormancy_delay}.00 seconds, neutral_prepare_frames=2)."
 dormancy_disabled_marker="MetaHuman idle dormancy: disabled (delay=${expected_avatar_dormancy_delay}.00 seconds, neutral_prepare_frames=2)."
+dormancy_health_marker='Dormant Live Link health audit ceiling: 1.00 seconds.'
 dormancy_enabled_count=$(grep -Fc "$dormancy_enabled_marker" "$runtime_new_log" || true)
 dormancy_disabled_count=$(grep -Fc "$dormancy_disabled_marker" "$runtime_new_log" || true)
+dormancy_health_count=$(grep -Fc "$dormancy_health_marker" "$runtime_new_log" || true)
 if [[ $expected_avatar_dormancy == 1 ]]; then
     if (( dormancy_enabled_count != 1 || dormancy_disabled_count != 0 ||
+        dormancy_health_count != 1 ||
         dormancy_configured_count < 1 || dormancy_enter_count < 1 )); then
         status=failed
     fi
@@ -567,6 +570,7 @@ fi
     printf 'dormancy_configured_count=%s\n' "$dormancy_configured_count"
     printf 'dormancy_enabled_marker_count=%s\n' "$dormancy_enabled_count"
     printf 'dormancy_disabled_marker_count=%s\n' "$dormancy_disabled_count"
+    printf 'dormancy_health_marker_count=%s\n' "$dormancy_health_count"
     printf 'dormancy_enter_count=%s\n' "$dormancy_enter_count"
     printf 'dormancy_wake_count=%s\n' "$dormancy_wake_count"
     printf 'dormancy_cancel_count=%s\n' "$dormancy_cancel_count"

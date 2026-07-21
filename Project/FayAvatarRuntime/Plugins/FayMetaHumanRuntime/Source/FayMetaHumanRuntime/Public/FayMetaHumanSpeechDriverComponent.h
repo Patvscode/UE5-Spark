@@ -55,6 +55,9 @@ public:
     UFUNCTION(BlueprintPure, Category = "Fay|MetaHuman|Dormancy")
     bool IsFaceIdleForDormancy() const;
 
+    /** Cheap cached guard used only after the controller has entered dormancy. */
+    bool CanRemainDormant() const;
+
     /** Publish neutral and permit a deliberately dormant Live Link snapshot. */
     UFUNCTION(BlueprintCallable, Category = "Fay|MetaHuman|Dormancy")
     bool PrepareAvatarForDormancy();

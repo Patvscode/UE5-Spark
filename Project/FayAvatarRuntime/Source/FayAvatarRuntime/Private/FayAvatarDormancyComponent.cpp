@@ -98,6 +98,20 @@ void UFayAvatarDormancyComponent::TickComponent(
         return;
     }
 
+    if (DormancyState == EDormancyState::Dormant)
+    {
+        const bool bCanRemainDormant = Bridge != nullptr &&
+            SpeechDriver != nullptr && BodyMotion != nullptr &&
+            !Bridge->HasPendingSpeechWork() &&
+            SpeechDriver->CanRemainDormant() &&
+            BodyMotion->CanEnterDormancy();
+        if (!bCanRemainDormant)
+        {
+            WakeAvatar(TEXT("dormancy eligibility changed"));
+        }
+        return;
+    }
+
     if (!CanPrepareForDormancy())
     {
         if (DormancyState == EDormancyState::Preparing ||
@@ -240,7 +254,9 @@ void UFayAvatarDormancyComponent::BeginPreparation()
 
 void UFayAvatarDormancyComponent::FreezeAvatar()
 {
-    if (DormancyState != EDormancyState::Preparing || !CanPrepareForDormancy())
+    if (DormancyState != EDormancyState::Preparing ||
+        !CanPrepareForDormancy() || SpeechDriver == nullptr ||
+        !SpeechDriver->IsAvatarConfigured())
     {
         WakeAvatar(TEXT("freeze precondition changed"));
         return;

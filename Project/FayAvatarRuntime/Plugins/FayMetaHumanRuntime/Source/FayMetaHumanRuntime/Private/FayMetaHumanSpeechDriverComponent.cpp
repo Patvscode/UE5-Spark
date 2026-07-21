@@ -36,6 +36,7 @@ constexpr int32 ExpectedSolverCurveCount = 81;
 constexpr int32 ExpectedRawControlCount = 251;
 constexpr float LiveLinkHeartbeatSeconds = 0.10f;
 constexpr float LiveLinkPendingGraceSeconds = 2.0f;
+constexpr float DormantLiveLinkHealthCeilingSeconds = 1.0f;
 constexpr float MinimumHeadGestureDegrees = 4.0f;
 constexpr float HardMaximumHeadGestureDegrees = 12.0f;
 
@@ -1047,6 +1048,9 @@ void UFayMetaHumanSpeechDriverComponent::BeginPlay()
         TEXT("Live Link idle heartbeat: %s; full health interval: %.2f seconds."),
         bEnableIdleNeutralHeartbeat ? TEXT("enabled") : TEXT("disabled"),
         LiveLinkHealthCheckIntervalSeconds);
+    UE_LOG(LogFayMetaHumanRuntime, Display,
+        TEXT("Dormant Live Link health audit ceiling: %.2f seconds."),
+        DormantLiveLinkHealthCeilingSeconds);
     InitializeSolverAndSource();
 }
 
@@ -1132,16 +1136,23 @@ bool UFayMetaHumanSpeechDriverComponent::IsAvatarConfigurationPending() const
 
 bool UFayMetaHumanSpeechDriverComponent::IsFaceIdleForDormancy() const
 {
-    return IsAvatarConfigured() && !IsValid(PendingAvatar) &&
+    return IsSolverReady() && IsValid(Avatar) &&
+        bHasOriginalAvatarConfiguration && !IsValid(PendingAvatar) &&
         !bLiveLinkHealthPending && !bDormancyWakePending &&
         !bActionHeadGestureActive &&
         !bSpeechPrepared && !bSpeechStarted && !bSpeechFinished &&
         (Bridge == nullptr || !Bridge->HasPendingSpeechWork());
 }
 
+bool UFayMetaHumanSpeechDriverComponent::CanRemainDormant() const
+{
+    return bDormancyPrepared && IsFaceIdleForDormancy();
+}
+
 bool UFayMetaHumanSpeechDriverComponent::PrepareAvatarForDormancy()
 {
-    if (!IsFaceIdleForDormancy() || !RuntimeState.IsValid())
+    if (!IsFaceIdleForDormancy() || !IsAvatarConfigured() ||
+        !RuntimeState.IsValid())
     {
         if (bDormancyPrepared)
         {
@@ -1943,10 +1954,17 @@ void UFayMetaHumanSpeechDriverComponent::TickComponent(
     }
 
     LiveLinkHealthCheckElapsedSeconds += SafeDeltaSeconds;
+    const float EffectiveHealthCheckIntervalSeconds = bDormancyPrepared
+        ? (LiveLinkHealthCheckIntervalSeconds <= 0.0f
+            ? DormantLiveLinkHealthCeilingSeconds
+            : FMath::Min(
+                LiveLinkHealthCheckIntervalSeconds,
+                DormantLiveLinkHealthCeilingSeconds))
+        : LiveLinkHealthCheckIntervalSeconds;
     const bool bLiveLinkHealthCheckDue =
         bLiveLinkHealthPending ||
-        LiveLinkHealthCheckIntervalSeconds <= 0.0f ||
-        LiveLinkHealthCheckElapsedSeconds >= LiveLinkHealthCheckIntervalSeconds;
+        EffectiveHealthCheckIntervalSeconds <= 0.0f ||
+        LiveLinkHealthCheckElapsedSeconds >= EffectiveHealthCheckIntervalSeconds;
     if (IsValid(Avatar) && bLiveLinkHealthCheckDue)
     {
         LiveLinkHealthCheckElapsedSeconds = 0.0;
