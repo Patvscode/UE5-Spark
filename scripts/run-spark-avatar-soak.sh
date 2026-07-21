@@ -32,7 +32,7 @@ shift 5
 [[ $duration =~ ^[1-9][0-9]*$ && $turn_count =~ ^[1-9][0-9]*$ ]] || \
     fail 'duration and turn count must be positive integers'
 
-for command_name in basename grep kill mkdir ps readlink realpath seq sleep ss tail wc; do
+for command_name in basename grep kill mkdir ps readlink realpath seq sleep ss stat tail; do
     command -v "$command_name" >/dev/null 2>&1 || fail "missing command: $command_name"
 done
 
@@ -73,9 +73,9 @@ for argument in "$@"; do
 done
 
 runtime_log="$package_launcher_dir/FayAvatarRuntime/Saved/Logs/FayAvatarRuntime.log"
-runtime_log_start_lines=0
+runtime_log_prelaunch_identity=missing
 if [[ -f $runtime_log ]]; then
-    runtime_log_start_lines=$(wc -l <"$runtime_log")
+    runtime_log_prelaunch_identity=$(stat -c '%d:%i:%s:%y' "$runtime_log")
 fi
 launcher_log="$output_dir/launcher.log"
 
@@ -177,11 +177,18 @@ for _ in $(seq 1 90); do
     kill -0 "$runtime_pid" 2>/dev/null || \
         fail "Unreal exited during readiness; inspect $launcher_log"
     if [[ -f $runtime_log ]]; then
-        new_runtime_log=$(tail -n "+$((runtime_log_start_lines + 1))" "$runtime_log")
-        if grep -Fq 'Connected to the Fay avatar WebSocket.' <<<"$new_runtime_log" &&
-            grep -Fq "Spawned character '$character'" <<<"$new_runtime_log"; then
-            runtime_ready=1
-            break
+        runtime_log_identity=$(stat -c '%d:%i:%s:%y' "$runtime_log")
+        if [[ $runtime_log_identity != "$runtime_log_prelaunch_identity" ]]; then
+            latest_log_open=$(grep -n 'Log file open,' "$runtime_log" | tail -n1 || true)
+            current_launch_start=${latest_log_open%%:*}
+            if [[ $current_launch_start =~ ^[1-9][0-9]*$ ]]; then
+                current_launch_log=$(tail -n "+$current_launch_start" "$runtime_log")
+                if grep -Fq 'Connected to the Fay avatar WebSocket.' <<<"$current_launch_log" &&
+                    grep -Fq "Spawned character '$character'" <<<"$current_launch_log"; then
+                    runtime_ready=1
+                    break
+                fi
+            fi
         fi
     fi
     sleep 1
