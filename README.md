@@ -119,6 +119,7 @@ scripts/build-ardy-container.sh           Build isolated ARM64 PyTorch service
 scripts/run-ardy-container.sh             Run loopback-only hardened pose service
 services/ardy/                            Strict Core27 protocol and providers
 tools/fay-avatar-smoke-test.py            Test Fay without Unreal
+tools/analyze-unreal-csv.py               Validate/summarize private CSVProfiler timing
 tools/progress_hub.py                     Private allowlisted milestone/media page
 docs/                                     Architecture and deployment guides
 ```

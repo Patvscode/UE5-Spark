@@ -584,6 +584,7 @@ if re.search(r'(?m)^\s*exec\s+(?:--\s+)?["\']?\$launcher["\']?(?:\s|$)', runtime
 
 soak_wrapper = Path("scripts/run-spark-avatar-soak.sh").read_text()
 soak_harness = Path("scripts/soak-spark-avatar.sh").read_text()
+csv_analyzer = Path("tools/analyze-unreal-csv.py").read_text()
 for marker in (
     "add_diagnostic_override extra-unreal-arguments",
     "add_diagnostic_override resolution-override",
@@ -607,7 +608,17 @@ for marker in (
     'fay_http_ready 5000 /',
     'fay_http_ready 5010 /',
     'fay_http_ready 8766 /sse',
-    "cleanup_runtime 1\nfinalize_evidence_summary",
+    "Verified project-owned FayGameUserSettings runtime policy.",
+    "Enforced reviewed runtime frame cap at 30.00 FPS after GameUserSettings initialization.",
+    "validate_csv_evidence",
+    "--min-average-fps",
+    "--max-average-fps",
+    "--expected-total-frames",
+    "--max-p95-frame-time-ms",
+    "--require-capture-duration",
+    'ln -- "$temporary_csv" "$csv_evidence"',
+    "csv_capture_sha256",
+    "cleanup_runtime 1\nif (( enable_csv == 1 )); then\n    validate_csv_evidence\nfi\nfinalize_evidence_summary",
 ):
     if marker not in soak_wrapper:
         reject(f"the guarded soak wrapper is missing its reliability contract: {marker}")
@@ -650,9 +661,24 @@ for marker in (
     "idle_measurement_sample_count",
     "runtime_exit_status=pending",
     "post_teardown_runtime_failure_count=pending",
+    "game_user_settings_policy_verified_count",
+    "frame_rate_policy_enforced_count",
+    "frame_rate_policy_violation_count",
 ):
     if marker not in soak_harness:
         reject(f"the strict soak harness is missing its reliability contract: {marker}")
+for marker in (
+    "--expected-total-frames",
+    "--min-average-fps",
+    "--max-average-fps",
+    "--max-p95-frame-time-ms",
+    "--require-capture-duration",
+    'metadata.get("captureduration", [])',
+    'metadata.get("hasheaderrowatend", [])',
+    "summed FrameTime does not match CSV capture-duration metadata",
+):
+    if marker not in csv_analyzer:
+        reject(f"the strict Unreal CSV analyzer is missing its contract: {marker}")
 
 media_capture = Path("scripts/capture-spark-avatar-window.sh").read_text()
 for marker in (
@@ -693,6 +719,18 @@ speech_source = Path(
 game_mode_source = Path(
     "Project/FayAvatarRuntime/Source/FayAvatarRuntime/Private/"
     "FayAvatarBootstrapGameMode.cpp"
+).read_text()
+game_mode_header = Path(
+    "Project/FayAvatarRuntime/Source/FayAvatarRuntime/Private/"
+    "FayAvatarBootstrapGameMode.h"
+).read_text()
+game_user_settings_header = Path(
+    "Project/FayAvatarRuntime/Source/FayAvatarRuntime/Public/"
+    "FayGameUserSettings.h"
+).read_text()
+game_user_settings_source = Path(
+    "Project/FayAvatarRuntime/Source/FayAvatarRuntime/Private/"
+    "FayGameUserSettings.cpp"
 ).read_text()
 for marker in (
     "EFayMetaHumanLiveLinkState::RecoveryBackoff",
@@ -772,6 +810,73 @@ if handler_start < 0 or handler_end < 0:
     reject("GameMode Live Link transition handler is missing")
 elif "LiveLinkRecoveryAttemptCount = 0" in game_mode_source[handler_start:handler_end]:
     reject("a transient Configured event must not reset the Live Link recovery episode")
+
+for marker in (
+    'TEXT("t.MaxFPS")',
+    "ECVF_SetByCode",
+    "SetWithCurrentPriority",
+    "FrameRatePolicyAuditIntervalSeconds = 5.0",
+    "TickFrameRatePolicy(DeltaSeconds);",
+    "Verified project-owned FayGameUserSettings runtime policy.",
+    "Enforced reviewed runtime frame cap at 30.00 FPS after GameUserSettings initialization.",
+    "Reviewed runtime frame cap policy drifted",
+):
+    if marker not in game_mode_source:
+        reject(f"the reviewed runtime frame-rate policy is missing: {marker}")
+for marker in (
+    "ApplyReviewedFrameRateLimit() const",
+    "TickFrameRatePolicy(float DeltaSeconds)",
+    "bFrameRatePolicyViolationLogged",
+    "FrameRatePolicyAuditElapsedSeconds",
+):
+    if marker not in game_mode_header:
+        reject(f"the reviewed frame-rate policy state is missing: {marker}")
+begin_play_start = game_mode_source.find("void AFayAvatarBootstrapGameMode::BeginPlay()")
+begin_play_end = game_mode_source.find(
+    "void AFayAvatarBootstrapGameMode::EndPlay", begin_play_start
+)
+begin_play_body = game_mode_source[begin_play_start:begin_play_end]
+initial_frame_cap = begin_play_body.find("ApplyReviewedFrameRateLimit()")
+scene_only_parse = begin_play_body.find('TEXT("FaySceneOnly=")')
+if min(begin_play_start, begin_play_end, initial_frame_cap, scene_only_parse) < 0:
+    reject("BeginPlay is missing its reviewed frame-rate initialization contract")
+elif initial_frame_cap > scene_only_parse:
+    reject("the frame-rate cap must be enforced before the scene-only early return")
+for forbidden in ("SetFrameRateLimit(", "ApplySettings(", "SaveSettings("):
+    if forbidden in game_mode_source:
+        reject(f"GameMode must not persist or apply user settings: {forbidden}")
+for marker in (
+    "class FAYAVATARRUNTIME_API UFayGameUserSettings final",
+    "virtual void SetToDefaults() override",
+    "virtual float GetEffectiveFrameRateLimit() override",
+):
+    if marker not in game_user_settings_header:
+        reject(f"the project-owned GameUserSettings contract is missing: {marker}")
+for marker in (
+    "ReviewedFrameRateLimit = 30.0f",
+    "SetFrameRateLimit(ReviewedFrameRateLimit)",
+    "return ReviewedFrameRateLimit",
+):
+    if marker not in game_user_settings_source:
+        reject(f"the project-owned GameUserSettings policy is missing: {marker}")
+
+engine_config = Path("Project/FayAvatarRuntime/Config/DefaultEngine.ini").read_text()
+if len(re.findall(r"(?m)^bUseFixedFrameRate=False$", engine_config)) != 1:
+    reject("DefaultEngine.ini must disable fixed-frame-rate simulation exactly once")
+if len(re.findall(r"(?m)^t[.]MaxFPS=30$", engine_config)) != 1:
+    reject("DefaultEngine.ini must define the reviewed 30 FPS early-boot cap exactly once")
+if len(re.findall(
+    r"(?m)^GameUserSettingsClassName=/Script/FayAvatarRuntime[.]FayGameUserSettings$",
+    engine_config,
+)) != 1:
+    reject("DefaultEngine.ini must select the project-owned GameUserSettings class")
+game_user_settings_config = Path(
+    "Project/FayAvatarRuntime/Config/DefaultGameUserSettings.ini"
+).read_text()
+if len(re.findall(r"(?m)^FrameRateLimit=30[.]000000$", game_user_settings_config)) != 1:
+    reject("DefaultGameUserSettings.ini must define the reviewed 30 FPS default")
+if len(re.findall(r"(?m)^Version=5$", game_user_settings_config)) != 1:
+    reject("DefaultGameUserSettings.ini must carry Unreal's current settings version")
 
 game_config_path = Path("Project/FayAvatarRuntime/Config/DefaultGame.ini")
 game_config = game_config_path.read_text()

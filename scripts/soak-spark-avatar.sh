@@ -737,6 +737,19 @@ allocator_release_count=$(grep -Fc 'Released completed-utterance allocator pools
 delayed_collection_count=$(grep -Fc 'Collected completed speech objects and released delayed' "$runtime_new_log" || true)
 audio_watchdog_count=$(grep -Ec 'Procedural PCM did not drain|Unreal did not report audio completion' "$runtime_new_log" || true)
 bridge_warning_count=$(grep -Fc 'LogFayAvatarBridge: Warning' "$runtime_new_log" || true)
+frame_rate_policy_enforced_count=$(grep -Fc \
+    'Enforced reviewed runtime frame cap at 30.00 FPS after GameUserSettings initialization.' \
+    "$runtime_new_log" || true)
+game_user_settings_policy_verified_count=$(grep -Fc \
+    'Verified project-owned FayGameUserSettings runtime policy.' \
+    "$runtime_new_log" || true)
+frame_rate_policy_violation_count=$(grep -Ec \
+    'Reviewed runtime frame cap policy drifted|Could not enforce the reviewed 30.00 FPS runtime frame cap|The packaged runtime is not using project-owned FayGameUserSettings' \
+    "$runtime_new_log" || true)
+if (( game_user_settings_policy_verified_count != 1 ||
+    frame_rate_policy_enforced_count != 1 || frame_rate_policy_violation_count != 0 )); then
+    status=failed
+fi
 dormancy_configured_count=$(grep -Fc \
     'Configured fail-open dormancy for the reviewed avatar.' \
     "$runtime_new_log" || true)
@@ -941,6 +954,12 @@ fi
     printf 'delayed_collection_count=%s\n' "$delayed_collection_count"
     printf 'audio_watchdog_count=%s\n' "$audio_watchdog_count"
     printf 'bridge_warning_count=%s\n' "$bridge_warning_count"
+    printf 'game_user_settings_policy_verified_count=%s\n' \
+        "$game_user_settings_policy_verified_count"
+    printf 'frame_rate_policy_enforced_count=%s\n' \
+        "$frame_rate_policy_enforced_count"
+    printf 'frame_rate_policy_violation_count=%s\n' \
+        "$frame_rate_policy_violation_count"
     printf 'dormancy_configured_count=%s\n' "$dormancy_configured_count"
     printf 'dormancy_enabled_marker_count=%s\n' "$dormancy_enabled_count"
     printf 'dormancy_disabled_marker_count=%s\n' "$dormancy_disabled_count"

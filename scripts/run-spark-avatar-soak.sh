@@ -46,8 +46,9 @@ if (( turn_count == 0 && duration < idle_warmup_seconds + idle_measurement_secon
     fail 'an idle diagnostic must include its configured warm-up and measurement windows'
 fi
 
-for command_name in awk basename curl date find grep head journalctl kill mkdir mktemp mv \
-    ps readlink realpath rm sed seq setsid sha256sum sleep ss stat tail tr wc; do
+for command_name in awk basename chmod cp curl date find grep head journalctl kill ln \
+    mkdir mktemp mv ps python3 readlink realpath rm sed seq setsid sha256sum sleep \
+    ss stat tail tr wc; do
     command -v "$command_name" >/dev/null 2>&1 || fail "missing command: $command_name"
 done
 
@@ -82,8 +83,13 @@ scene_only=${FAY_SOAK_SCENE_ONLY:-0}
 avatar_dormancy=${FAY_SOAK_AVATAR_DORMANCY:-0}
 avatar_dormancy_delay=${FAY_SOAK_AVATAR_DORMANCY_DELAY_SECONDS:-5}
 enable_csv=${FAY_SOAK_ENABLE_CSV:-0}
-csv_capture_frames=${FAY_SOAK_CSV_CAPTURE_FRAMES:-60000}
+csv_capture_frames=${FAY_SOAK_CSV_CAPTURE_FRAMES:-6000}
 csv_compression=${FAY_SOAK_CSV_COMPRESSION:-0}
+csv_trim_start_frames=${FAY_SOAK_CSV_TRIM_START_FRAMES:-300}
+csv_trim_end_frames=${FAY_SOAK_CSV_TRIM_END_FRAMES:-30}
+csv_min_average_fps=${FAY_SOAK_CSV_MIN_AVERAGE_FPS:-29}
+csv_max_average_fps=${FAY_SOAK_CSV_MAX_AVERAGE_FPS:-31}
+csv_max_p95_frame_time_ms=${FAY_SOAK_CSV_MAX_P95_FRAME_TIME_MS:-40}
 requested_evidence_mode=${FAY_SOAK_EVIDENCE_MODE:-}
 evidence_mode=$requested_evidence_mode
 max_dormancy_cancellations=${FAY_SOAK_MAX_DORMANCY_CANCELLATIONS:-0}
@@ -131,6 +137,36 @@ fi
     fail 'FAY_SOAK_CSV_CAPTURE_FRAMES must be a positive integer'
 [[ $csv_compression =~ ^[01]$ ]] || \
     fail 'FAY_SOAK_CSV_COMPRESSION must be 0 or 1'
+[[ $csv_trim_start_frames =~ ^[0-9]+$ && $csv_trim_end_frames =~ ^[0-9]+$ ]] || \
+    fail 'CSV trim-frame counts must be non-negative integers'
+for csv_numeric_limit in "$csv_min_average_fps" "$csv_max_average_fps" \
+    "$csv_max_p95_frame_time_ms"; do
+    [[ $csv_numeric_limit =~ ^[0-9]+([.][0-9]+)?$ ]] || \
+        fail 'CSV performance limits must be non-negative numbers'
+done
+if (( enable_csv == 1 )); then
+    (( csv_compression == 0 )) || \
+        fail 'guarded CSV validation requires uncompressed CSVProfiler output'
+    (( csv_capture_frames > csv_trim_start_frames + csv_trim_end_frames )) || \
+        fail 'CSV trim-frame counts must leave at least one requested frame'
+    if ! awk -v minimum="$csv_min_average_fps" -v maximum="$csv_max_average_fps" \
+        -v p95="$csv_max_p95_frame_time_ms" \
+        'BEGIN {exit !(minimum > 0 && maximum >= minimum && p95 > 0)}'; then
+        fail 'CSV FPS/p95 limits must be positive and ordered'
+    fi
+    minimum_csv_duration=$(awk \
+        -v frames="$csv_capture_frames" -v minimum_fps="$csv_min_average_fps" '
+        BEGIN {
+            seconds = frames / minimum_fps
+            rounded_up = int(seconds)
+            if (seconds > rounded_up) rounded_up++
+            print rounded_up + 30
+        }')
+    [[ $minimum_csv_duration =~ ^[1-9][0-9]*$ ]] || \
+        fail 'could not derive the guarded CSV capture duration'
+    (( duration >= minimum_csv_duration )) || \
+        fail 'run duration is too short to finish the requested capped CSV capture'
+fi
 [[ $max_dormancy_cancellations =~ ^(0|[1-9][0-9]*)$ ]] || \
     fail 'FAY_SOAK_MAX_DORMANCY_CANCELLATIONS must be a non-negative integer'
 [[ $max_tail_rss_growth_kb =~ ^[0-9]+$ && $max_rss_kb =~ ^[0-9]+$ && \
@@ -247,6 +283,12 @@ if [[ $evidence_mode == production && ( $turn_count == 0 || $scene_only == 1 ) ]
 fi
 
 runtime_log="$package_launcher_dir/FayAvatarRuntime/Saved/Logs/FayAvatarRuntime.log"
+csv_profile_root="$package_launcher_dir/FayAvatarRuntime/Saved/Profiling/CSV"
+csv_analyzer="$script_dir/../tools/analyze-unreal-csv.py"
+if (( enable_csv == 1 )); then
+    [[ -x $csv_analyzer && ! -L $csv_analyzer ]] || \
+        fail 'the guarded Unreal CSV analyzer is missing or unsafe'
+fi
 runtime_log_prelaunch_identity=missing
 if [[ -f $runtime_log ]]; then
     runtime_log_prelaunch_identity=$(stat -c '%d:%i:%s:%y' "$runtime_log")
@@ -373,6 +415,7 @@ postflight_package_seal_sha256=not-verified
 post_teardown_runtime_failure_count=not-scanned
 post_teardown_kernel_failure_count=not-scanned
 cleanup_completed=0
+csv_prelaunch_identity_file=''
 
 process_matches_starttime() {
     local pid=$1 expected_starttime=$2 actual_starttime
@@ -750,6 +793,105 @@ finalize_evidence_summary() {
     mv -f -- "$temporary_summary" "$summary"
 }
 
+validate_csv_evidence() {
+    local csv_source csv_source_sha256 csv_source_sha256_after csv_copy_sha256
+    local candidate candidate_identity temporary_csv temporary_analysis
+    local temporary_summary summary
+    local csv_evidence="$output_dir/unreal-csv-profile.csv"
+    local csv_analysis="$output_dir/unreal-csv-analysis.json"
+    local csv_min_used_frames=$((
+        csv_capture_frames - csv_trim_start_frames - csv_trim_end_frames
+    ))
+    local -a all_csv_captures new_csv_captures
+
+    [[ -n $csv_prelaunch_identity_file && -f $csv_prelaunch_identity_file &&
+        ! -L $csv_prelaunch_identity_file ]] || \
+        fail 'the guarded CSV prelaunch identity record is missing or unsafe'
+    [[ -d $csv_profile_root && ! -L $csv_profile_root ]] || \
+        fail 'Unreal did not create a safe CSVProfiler output directory'
+    mapfile -d '' -t all_csv_captures < <(
+        find "$csv_profile_root" -maxdepth 1 -type f -name 'Profile*.csv' \
+            -print0
+    )
+    new_csv_captures=()
+    for candidate in "${all_csv_captures[@]}"; do
+        candidate_identity=$(stat -c '%d:%i' "$candidate")
+        if ! grep -Fqx -- "$candidate_identity" "$csv_prelaunch_identity_file"; then
+            new_csv_captures+=("$candidate")
+        fi
+    done
+    (( ${#new_csv_captures[@]} == 1 )) || \
+        fail "expected exactly one new Unreal CSV capture; found ${#new_csv_captures[@]}"
+    csv_source=${new_csv_captures[0]}
+    [[ -f $csv_source && ! -L $csv_source && -O $csv_source ]] || \
+        fail 'the new Unreal CSV capture is missing, linked, or not user-owned'
+    [[ ! -e $csv_evidence && ! -L $csv_evidence &&
+        ! -e $csv_analysis && ! -L $csv_analysis ]] || \
+        fail 'private CSV evidence destinations already exist'
+
+    csv_source_sha256=$(sha256sum -- "$csv_source")
+    csv_source_sha256=${csv_source_sha256%% *}
+    temporary_csv=$(mktemp "$output_dir/.unreal-csv-profile.XXXXXX")
+    cp -- "$csv_source" "$temporary_csv"
+    chmod 600 "$temporary_csv"
+    csv_copy_sha256=$(sha256sum -- "$temporary_csv")
+    csv_copy_sha256=${csv_copy_sha256%% *}
+    csv_source_sha256_after=$(sha256sum -- "$csv_source")
+    csv_source_sha256_after=${csv_source_sha256_after%% *}
+    if [[ $csv_source_sha256 != "$csv_copy_sha256" ||
+        $csv_source_sha256 != "$csv_source_sha256_after" ]]; then
+        rm -f -- "$temporary_csv"
+        fail 'the Unreal CSV capture changed while private evidence was copied'
+    fi
+    if ! ln -- "$temporary_csv" "$csv_evidence"; then
+        rm -f -- "$temporary_csv"
+        fail 'could not publish the private Unreal CSV without clobbering'
+    fi
+    rm -f -- "$temporary_csv"
+
+    temporary_analysis=$(mktemp "$output_dir/.unreal-csv-analysis.XXXXXX")
+    if ! python3 "$csv_analyzer" "$csv_evidence" \
+        --trim-start "$csv_trim_start_frames" \
+        --trim-end "$csv_trim_end_frames" \
+        --min-used-frames "$csv_min_used_frames" \
+        --expected-total-frames "$csv_capture_frames" \
+        --min-average-fps "$csv_min_average_fps" \
+        --max-average-fps "$csv_max_average_fps" \
+        --max-p95-frame-time-ms "$csv_max_p95_frame_time_ms" \
+        --require-capture-duration >"$temporary_analysis"; then
+        rm -f -- "$temporary_analysis"
+        fail 'the measured Unreal CSV performance acceptance gate failed'
+    fi
+    chmod 600 "$temporary_analysis"
+    if ! ln -- "$temporary_analysis" "$csv_analysis"; then
+        rm -f -- "$temporary_analysis"
+        fail 'could not publish the private CSV analysis without clobbering'
+    fi
+    rm -f -- "$temporary_analysis"
+
+    summary="$output_dir/soak-summary.txt"
+    [[ -f $summary && ! -L $summary ]] || \
+        fail 'the soak summary is unavailable for CSV evidence binding'
+    temporary_summary=$(mktemp "$output_dir/.soak-summary.csv.XXXXXX")
+    cp -- "$summary" "$temporary_summary"
+    {
+        printf 'csv_performance_validation=passed\n'
+        printf 'csv_capture_file=unreal-csv-profile.csv\n'
+        printf 'csv_analysis_file=unreal-csv-analysis.json\n'
+        printf 'csv_capture_sha256=%s\n' "$csv_source_sha256"
+        printf 'csv_capture_requested_frames=%s\n' "$csv_capture_frames"
+        printf 'csv_trim_start_frames=%s\n' "$csv_trim_start_frames"
+        printf 'csv_trim_end_frames=%s\n' "$csv_trim_end_frames"
+        printf 'csv_min_average_fps=%s\n' "$csv_min_average_fps"
+        printf 'csv_max_average_fps=%s\n' "$csv_max_average_fps"
+        printf 'csv_max_p95_frame_time_ms=%s\n' \
+            "$csv_max_p95_frame_time_ms"
+    } >>"$temporary_summary"
+    mv -f -- "$temporary_summary" "$summary"
+    rm -f -- "$csv_prelaunch_identity_file"
+    csv_prelaunch_identity_file=''
+}
+
 handle_exit() {
     local original_status=$? cleanup_status=0
     if (( cleanup_completed == 0 )); then
@@ -801,6 +943,21 @@ if [[ $enable_csv == 1 ]]; then
         "-csvCaptureFrames=$csv_capture_frames"
         "-csvCompression=$csv_compression"
     )
+    csv_prelaunch_identity_file="$output_dir/.csv-prelaunch-identities"
+    [[ ! -e $csv_prelaunch_identity_file &&
+        ! -L $csv_prelaunch_identity_file ]] || \
+        fail 'the private CSV prelaunch identity record already exists'
+    : >"$csv_prelaunch_identity_file"
+    chmod 600 "$csv_prelaunch_identity_file"
+    if [[ -e $csv_profile_root ]]; then
+        [[ -d $csv_profile_root && ! -L $csv_profile_root ]] || \
+            fail 'the existing CSVProfiler output directory is unsafe'
+        while IFS= read -r -d '' existing_csv_capture; do
+            stat -c '%d:%i' "$existing_csv_capture" \
+                >>"$csv_prelaunch_identity_file"
+        done < <(find "$csv_profile_root" -maxdepth 1 -type f \
+            -name 'Profile*.csv' -print0)
+    fi
 fi
 export UE5_SPARK_MIN_AVAILABLE_MEMORY_GIB="$min_start_available_memory_gib"
 export UE5_SPARK_MAX_START_GPU_UTILIZATION="$max_start_gpu_utilization"
@@ -920,6 +1077,8 @@ for _ in $(seq 1 90); do
                 fi
                 if grep -Fq 'Connected to the Fay avatar WebSocket.' <<<"$current_launch_log" &&
                     grep -Fq 'Activated the visible Spark studio camera and lighting rig.' <<<"$current_launch_log" &&
+                    grep -Fq 'Verified project-owned FayGameUserSettings runtime policy.' <<<"$current_launch_log" &&
+                    grep -Fq 'Enforced reviewed runtime frame cap at 30.00 FPS after GameUserSettings initialization.' <<<"$current_launch_log" &&
                     grep -Fq "$readiness_marker" <<<"$current_launch_log" &&
                     (( dormancy_ready == 1 )); then
                     runtime_ready=1
@@ -996,6 +1155,9 @@ if (( inner_exit_status != 0 )); then
     fail "the owned soak harness failed with status $inner_exit_status"
 fi
 cleanup_runtime 1
+if (( enable_csv == 1 )); then
+    validate_csv_evidence
+fi
 finalize_evidence_summary
 trap - EXIT HUP INT TERM
 if [[ $evidence_mode == diagnostic ]]; then

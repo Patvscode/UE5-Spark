@@ -5,12 +5,14 @@
 #include "Components/SceneComponent.h"
 #include "Components/SkeletalMeshComponent.h"
 #include "DrawDebugHelpers.h"
+#include "Engine/Engine.h"
 #include "Engine/SkeletalMesh.h"
 #include "Engine/World.h"
 #include "FayAvatarBridgeComponent.h"
 #include "FayAvatarDormancyComponent.h"
 #include "FayArdyPoseClientComponent.h"
 #include "FayBodyMotionComponent.h"
+#include "FayGameUserSettings.h"
 #include "FayMetaHumanSpeechDriverComponent.h"
 #include "GameFramework/PlayerController.h"
 #include "HAL/PlatformProcess.h"
@@ -27,6 +29,9 @@ namespace
 constexpr TCHAR AvatarSettingsSection[] = TEXT("FayAvatar");
 constexpr TCHAR DefaultCharacterId[] = TEXT("Ada");
 constexpr TCHAR RequiredAdapter[] = TEXT("UE58MetaHuman");
+constexpr float ReviewedMaximumFramesPerSecond = 30.0f;
+constexpr float FrameRateLimitTolerance = 0.01f;
+constexpr double FrameRatePolicyAuditIntervalSeconds = 5.0;
 constexpr double LiveLinkRecoveryDelaysSeconds[] = {1.0, 2.0, 4.0, 8.0, 16.0};
 constexpr double LiveLinkRecoveryHealthyResetSeconds = 10.0;
 constexpr int32 MaximumLiveLinkRecoveryAttempts =
@@ -146,6 +151,31 @@ AFayAvatarBootstrapGameMode::AFayAvatarBootstrapGameMode()
 void AFayAvatarBootstrapGameMode::BeginPlay()
 {
     Super::BeginPlay();
+    const UGameUserSettings* RuntimeUserSettings =
+        GEngine != nullptr ? GEngine->GetGameUserSettings() : nullptr;
+    if (RuntimeUserSettings != nullptr &&
+        RuntimeUserSettings->IsA<UFayGameUserSettings>())
+    {
+        UE_LOG(LogFayAvatarRuntime, Display,
+            TEXT("Verified project-owned FayGameUserSettings runtime policy."));
+    }
+    else
+    {
+        bFrameRatePolicyViolationLogged = true;
+        UE_LOG(LogFayAvatarRuntime, Error,
+            TEXT("The packaged runtime is not using project-owned FayGameUserSettings."));
+    }
+    if (ApplyReviewedFrameRateLimit())
+    {
+        UE_LOG(LogFayAvatarRuntime, Display,
+            TEXT("Enforced reviewed runtime frame cap at 30.00 FPS after GameUserSettings initialization."));
+    }
+    else
+    {
+        bFrameRatePolicyViolationLogged = true;
+        UE_LOG(LogFayAvatarRuntime, Error,
+            TEXT("Could not enforce the reviewed 30.00 FPS runtime frame cap."));
+    }
     if (IConsoleVariable* IdleWhenNotForeground =
             IConsoleManager::Get().FindConsoleVariable(TEXT("t.IdleWhenNotForeground")))
     {
@@ -214,6 +244,7 @@ void AFayAvatarBootstrapGameMode::EndPlay(
 void AFayAvatarBootstrapGameMode::Tick(const float DeltaSeconds)
 {
     Super::Tick(DeltaSeconds);
+    TickFrameRatePolicy(DeltaSeconds);
     TickLiveLinkRecovery(DeltaSeconds);
 
     if (!bViewClaimed)
@@ -237,6 +268,77 @@ void AFayAvatarBootstrapGameMode::Tick(const float DeltaSeconds)
     else if (!bSceneOnlyDiagnostic)
     {
         DrawSmokeScene();
+    }
+}
+
+bool AFayAvatarBootstrapGameMode::ApplyReviewedFrameRateLimit() const
+{
+    IConsoleVariable* MaximumFramesPerSecond =
+        IConsoleManager::Get().FindConsoleVariable(TEXT("t.MaxFPS"));
+    if (MaximumFramesPerSecond == nullptr)
+    {
+        return false;
+    }
+
+    // GameUserSettings can apply FrameRateLimit=0 after ConsoleVariables.ini.
+    // Code priority handles the ordinary path. A console-priority diagnostic
+    // can outrank it, so retry at the variable's current priority before the
+    // verified readback. Neither path persists or applies user settings.
+    MaximumFramesPerSecond->Set(
+        ReviewedMaximumFramesPerSecond,
+        ECVF_SetByCode);
+    if (!FMath::IsNearlyEqual(
+            MaximumFramesPerSecond->GetFloat(),
+            ReviewedMaximumFramesPerSecond,
+            FrameRateLimitTolerance))
+    {
+        MaximumFramesPerSecond->SetWithCurrentPriority(
+            ReviewedMaximumFramesPerSecond);
+    }
+    return FMath::IsNearlyEqual(
+        MaximumFramesPerSecond->GetFloat(),
+        ReviewedMaximumFramesPerSecond,
+        FrameRateLimitTolerance);
+}
+
+void AFayAvatarBootstrapGameMode::TickFrameRatePolicy(const float DeltaSeconds)
+{
+    FrameRatePolicyAuditElapsedSeconds += FMath::Max(0.0f, DeltaSeconds);
+    if (FrameRatePolicyAuditElapsedSeconds < FrameRatePolicyAuditIntervalSeconds)
+    {
+        return;
+    }
+    FrameRatePolicyAuditElapsedSeconds = FMath::Fmod(
+        FrameRatePolicyAuditElapsedSeconds,
+        FrameRatePolicyAuditIntervalSeconds);
+
+    IConsoleVariable* MaximumFramesPerSecond =
+        IConsoleManager::Get().FindConsoleVariable(TEXT("t.MaxFPS"));
+    const float ObservedMaximumFramesPerSecond =
+        MaximumFramesPerSecond != nullptr
+        ? MaximumFramesPerSecond->GetFloat()
+        : 0.0f;
+    if (MaximumFramesPerSecond != nullptr &&
+        FMath::IsNearlyEqual(
+            ObservedMaximumFramesPerSecond,
+            ReviewedMaximumFramesPerSecond,
+            FrameRateLimitTolerance))
+    {
+        return;
+    }
+
+    if (!bFrameRatePolicyViolationLogged)
+    {
+        bFrameRatePolicyViolationLogged = true;
+        UE_LOG(LogFayAvatarRuntime, Error,
+            TEXT("Reviewed runtime frame cap policy drifted (observed=%.2f, expected=30.00); attempting repair."),
+            ObservedMaximumFramesPerSecond);
+    }
+
+    if (ApplyReviewedFrameRateLimit())
+    {
+        UE_LOG(LogFayAvatarRuntime, Warning,
+            TEXT("Restored the reviewed 30.00 FPS runtime frame cap after policy drift."));
     }
 }
 

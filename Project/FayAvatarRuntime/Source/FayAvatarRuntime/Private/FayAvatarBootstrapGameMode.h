@@ -42,6 +42,8 @@ private:
     void TrySpawnMetaHuman();
     void ResolveFaceAndJawMorph();
     void DriveJawFallback() const;
+    bool ApplyReviewedFrameRateLimit() const;
+    void TickFrameRatePolicy(float DeltaSeconds);
     void HandleLiveLinkStateChanged(
         EFayMetaHumanLiveLinkState State,
         EFayMetaHumanLiveLinkFailure Failure);
@@ -100,6 +102,8 @@ private:
     bool bLiveLinkRecoveryScheduled = false;
     bool bLiveLinkRecoveryExhaustionPending = false;
     bool bEndingPlay = false;
+    bool bFrameRatePolicyViolationLogged = false;
     int32 LiveLinkRecoveryAttemptCount = 0;
+    double FrameRatePolicyAuditElapsedSeconds = 0.0;
     double LiveLinkRecoveryDelayRemainingSeconds = 0.0;
 };
