@@ -54,7 +54,11 @@ gate:
   FAY_PID /path/below/logs-private/rendered-qualification 240 4
 ```
 
-Only after that passes, cold-launch again for 1,800 seconds and 20 turns. The
+Only after that passes, cold-launch again for 1,800 seconds and 20 turns. Keep
+CSV profiling disabled for this memory/reliability gate; the wrapper defaults
+to `FAY_SOAK_ENABLE_CSV=0` so profiling allocations cannot be mistaken for an
+avatar leak. Run a separate short performance capture with
+`FAY_SOAK_ENABLE_CSV=1` and retain that CSV alongside the endurance evidence. The
 rendered defaults enforce tail RSS growth at or below 128 MiB, total Unreal RSS
 at or below 3 GiB, facial p95 at or below 20 ms, and no three consecutive GPU
 samples above 95 percent. Preserve CSV timing and private beginning/midpoint/end

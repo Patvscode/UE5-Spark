@@ -60,14 +60,22 @@ esac
 res_x=${FAY_SOAK_EXPECTED_RES_X:-1280}
 res_y=${FAY_SOAK_EXPECTED_RES_Y:-720}
 character=${FAY_SOAK_CHARACTER:-Ada}
+enable_csv=${FAY_SOAK_ENABLE_CSV:-0}
+csv_capture_frames=${FAY_SOAK_CSV_CAPTURE_FRAMES:-60000}
+csv_compression=${FAY_SOAK_CSV_COMPRESSION:-0}
 [[ $res_x =~ ^[1-9][0-9]*$ && $res_y =~ ^[1-9][0-9]*$ ]] || \
     fail 'FAY_SOAK_EXPECTED_RES_X/Y must be positive integers'
 [[ $character == Ada || $character == Aoi ]] || \
     fail 'FAY_SOAK_CHARACTER must name a reviewed packaged profile'
+[[ $enable_csv =~ ^[01]$ ]] || fail 'FAY_SOAK_ENABLE_CSV must be 0 or 1'
+[[ $csv_capture_frames =~ ^[1-9][0-9]*$ ]] || \
+    fail 'FAY_SOAK_CSV_CAPTURE_FRAMES must be a positive integer'
+[[ $csv_compression =~ ^[01]$ ]] || \
+    fail 'FAY_SOAK_CSV_COMPRESSION must be 0 or 1'
 for argument in "$@"; do
     case "${argument,,}" in
-        -nullrhi|-resx=*|-resy=*)
-            fail 'the soak runner owns RHI and resolution arguments'
+        -nullrhi|-resx=*|-resy=*|-csvcaptureframes=*|-csvcompression=*)
+            fail 'the soak runner owns RHI, resolution, and CSV arguments'
             ;;
     esac
 done
@@ -148,12 +156,20 @@ handle_exit() {
 }
 trap handle_exit EXIT
 
+runtime_arguments=(
+    "-FayCharacter=$character"
+    -FayResetSpeechCache=0
+    -FayTrimSpeechMemory=1
+    "-ResX=$res_x" "-ResY=$res_y" -Windowed -WinX=0 -WinY=0
+)
+if [[ $enable_csv == 1 ]]; then
+    runtime_arguments+=(
+        "-csvCaptureFrames=$csv_capture_frames"
+        "-csvCompression=$csv_compression"
+    )
+fi
 "$digital_human_launcher" "$package_launcher" \
-    "-FayCharacter=$character" \
-    -FayResetSpeechCache=0 \
-    -FayTrimSpeechMemory=1 \
-    "-ResX=$res_x" "-ResY=$res_y" -Windowed -WinX=0 -WinY=0 \
-    -csvCaptureFrames=60000 -csvCompression=0 "$@" >"$launcher_log" 2>&1 &
+    "${runtime_arguments[@]}" "$@" >"$launcher_log" 2>&1 &
 launcher_pid=$!
 
 for _ in $(seq 1 90); do
