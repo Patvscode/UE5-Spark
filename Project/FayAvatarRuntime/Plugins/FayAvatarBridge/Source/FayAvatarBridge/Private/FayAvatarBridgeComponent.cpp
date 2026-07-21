@@ -859,7 +859,8 @@ bool UFayAvatarBridgeComponent::ParseAvatarMessage(
 
     const TSharedPtr<FJsonObject>& Data = *DataPtr;
     FString Key;
-    if (!Data->TryGetStringField(TEXT("Key"), Key) || Key != TEXT("audio"))
+    if (!Data->TryGetStringField(TEXT("Key"), Key) ||
+        (Key != TEXT("audio") && Key != TEXT("action")))
     {
         return false;
     }
@@ -884,6 +885,18 @@ bool UFayAvatarBridgeComponent::ParseAvatarMessage(
         Action->TryGetNumberField(TEXT("intensity"), OutMessage.Action.Intensity);
         Action->TryGetNumberField(TEXT("priority"), OutMessage.Action.Priority);
         Action->TryGetNumberField(TEXT("sentimentHint"), OutMessage.Action.SentimentHint);
+    }
+
+    // The constrained Fay/MCP path does not enter the speech queue, fetch a
+    // URL, or interrupt audio that is already playing.
+    if (Key == TEXT("action"))
+    {
+        if (!OutMessage.Action.bIsValid || OutMessage.Action.Behavior.IsEmpty())
+        {
+            OutError = TEXT("A Fay action message did not contain a behavior.");
+            return false;
+        }
+        return true;
     }
 
     const TArray<TSharedPtr<FJsonValue>>* Lips = nullptr;

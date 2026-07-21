@@ -20,6 +20,18 @@ data; the `FayAvatarBridge` turns those fields into presentation behavior.
 Unreal should never execute a tool merely because an avatar event contains
 text that resembles a command.
 
+The companion Fay branch exposes one renderer-control tool:
+
+```text
+avatar_perform_action(behavior, intensity=0.5, duration=1.0)
+```
+
+`behavior` is restricted to `idle`, `listen`, `wave`, `invite`, `think`,
+`warn`, `nod`, `shake`, or `explain`. Intensity is bounded to 0–1 and duration
+to 0.2–10 seconds. Fay converts the request to a normalized action-only avatar
+event; credentials, arbitrary ARDY prompts, and high-frequency pose data never
+cross this interface.
+
 ## Companion Fay deployment
 
 The public companion implementation is the
