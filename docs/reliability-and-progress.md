@@ -19,8 +19,12 @@ the latter half of a run; override that explicit limit only with
 `FAY_SOAK_MAX_TAIL_RSS_GROWTH_KB`. DGX Spark does not expose a separate
 `memory.used` value through `nvidia-smi` for its unified memory, so the report
 records `-1` for that field and treats process RSS as the enforceable memory
-signal. A pass still requires log review for exact facial-frame accounting,
-queue failures, render-driver errors, and crashes.
+signal. The harness snapshots the packaged runtime log at startup and requires
+at least one new facial summary per requested turn. Every summary must contain
+exactly 50 solver frames per speech second plus the configured 10-frame tail,
+and facial p95 must remain at or below 20 ms. The p95 ceiling is explicitly
+adjustable with `FAY_SOAK_MAX_FACE_P95_MS`; queue failures, render-driver
+errors, and crashes still require log review.
 
 Run long tests only when another project is not saturating the shared GPU. A
 kernel NVIDIA Xid is an infrastructure failure even when Fay and the HTTP test

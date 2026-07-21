@@ -136,15 +136,18 @@ deployable application.
   buffer, baseline calibration, head/face mask, bounded root motion, blend-in,
   cached-pose fade-out, and automatic service recovery now run natively on
   Spark without replacing StreamingADA.
-- Author or generate the private deterministic gesture clips. The current
-  baked provider fails safely to idle when no compatible reviewed montage is
-  configured.
+- Build and visually tune the source-complete deterministic procedural gesture
+  fallback. It supplies character-neutral `wave`, `invite`, `think`, `warn`,
+  and conversational arm/wrist poses when no reviewed montage is configured;
+  compatible private montages retain precedence. `nod` and `shake` remain
+  owned by the face driver's bounded head curves.
 - Cache approved ARDY text embeddings after Meta Llama access is granted. The
   real provider currently reports degraded and returns 503 without them.
 - Visually validate and tune the source-level semantic head-control mappings for
   `nod`, `shake`, `think`, and `warn`.
-- Add reviewed, MetaHuman-compatible body animations and explicit mappings for
-  actions such as `wave` and `invite`. No body montages are included today.
+- Add optional reviewed MetaHuman-compatible body montages for more polished
+  action performances. No licensed body montage is published or required by
+  the procedural fallback.
 - Tune gaze, breathing, idle motion, emotional range, lighting, LODs, and scene
   presentation for a polished long-running character experience.
 - Assemble and validate a second reviewed female preset. Aoi already proves the
