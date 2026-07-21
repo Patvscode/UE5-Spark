@@ -352,6 +352,7 @@ for record in git_output("ls-files", "--stage", "-z").split(b"\0"):
 
 python_sources = (
     Path("tools/fay-avatar-smoke-test.py"),
+    Path("tools/tests/test_run_spark_avatar_gate.py"),
     Path("scripts/character-profiles.py"),
     Path("scripts/cook-state.py"),
     Path("scripts/inspect-metahuman-runtime-contract.py"),
@@ -584,6 +585,7 @@ if re.search(r'(?m)^\s*exec\s+(?:--\s+)?["\']?\$launcher["\']?(?:\s|$)', runtime
 
 soak_wrapper = Path("scripts/run-spark-avatar-soak.sh").read_text()
 soak_harness = Path("scripts/soak-spark-avatar.sh").read_text()
+avatar_gate = Path("scripts/run-spark-avatar-gate.sh").read_text()
 csv_analyzer = Path("tools/analyze-unreal-csv.py").read_text()
 for marker in (
     "add_diagnostic_override extra-unreal-arguments",
@@ -679,6 +681,91 @@ for marker in (
 ):
     if marker not in csv_analyzer:
         reject(f"the strict Unreal CSV analyzer is missing its contract: {marker}")
+
+for marker in (
+    "if (( $# != 5 )); then",
+    "readonly VOXTRAL_UNIT='codex-studio-voxtral-realtime.service'",
+    "readonly ARDY_CONTAINER='ue5-spark-ardy'",
+    "PRIVATE_GATE_DIR must not already exist",
+    'flock -n 9',
+    'voxtral_restore_required=1',
+    'systemctl --user stop "$VOXTRAL_UNIT"',
+    'systemctl --user start "$VOXTRAL_UNIT"',
+    'docker inspect --type container "$ARDY_CONTAINER"',
+    'exec setsid "$soak_runner"',
+    'kill -TERM -- "-$runner_session_id"',
+    'wait "$runner_pid"',
+    "runner_identity_capture_in_progress=1",
+    "deferred_signal_status",
+    "Deferring %s until the owned runner identity is committed.",
+    'capture_process_record runner_initial_record "$runner_pid"',
+    '${runner_initial_record[1]} == "$supervisor_pid"',
+    '${runner_candidate_record[2]} == "$runner_pid"',
+    '${runner_candidate_record[3]} == "$runner_pid"',
+    '$runner_candidate_exe == "$runner_bash_exe"',
+    '${runner_confirm_record[4]} == "$runner_provisional_starttime"',
+    "runner_identity_committed=1",
+    "while runner_leader_is_live; do",
+    "if ! voxtral_is_fully_inactive; then",
+    "voxtral_pause_continuity=failed",
+    "trap 'on_exit $?' EXIT",
+    "trap '' HUP INT TERM",
+    "capture_fay_listener_bindings fay_listener_bindings_after",
+    "arrays_are_equal fay_listener_bindings_before fay_listener_bindings_after",
+    "other_owner=$(grep -oE 'pid=[0-9]+,'",
+    "capture_ardy_snapshot ardy_after",
+    "arrays_are_equal ardy_before ardy_after",
+    '"$gate_root/gate-before.txt"',
+    '"$gate_root/gate-after.txt"',
+    '"$gate_root/gate-result.txt"',
+    "runner_group_post_exit_policy=not-scanned-after-exact-leader-exit",
+    "runner_exit_status=kill-timeout",
+    "the rendered-soak runner changed executable while remaining live",
+    "the allowlisted Voxtral unit or listener returned before restoration",
+):
+    if marker not in avatar_gate:
+        reject(f"the guarded Spark avatar gate is missing its safety contract: {marker}")
+if re.search(
+    r"\bdocker\s+(?:run|start|stop|restart|rm|kill|pause|unpause|update|exec)\b",
+    avatar_gate,
+):
+    reject("the guarded Spark avatar gate must never mutate ARDY container lifecycle")
+lifecycle_calls = re.findall(
+    r"systemctl\s+--user\s+"
+    r"(start|stop|restart|enable|disable|mask|unmask)\s+([^\s;]+)",
+    avatar_gate,
+)
+if lifecycle_calls != [
+    ("start", '"$VOXTRAL_UNIT"'),
+    ("stop", '"$VOXTRAL_UNIT"'),
+]:
+    reject("the guarded Spark avatar gate may mutate only its fixed Voxtral user unit")
+restore_arm = avatar_gate.find("voxtral_restore_required=1")
+stop_voxtral = avatar_gate.find('systemctl --user stop "$VOXTRAL_UNIT"')
+if min(restore_arm, stop_voxtral) < 0 or restore_arm >= stop_voxtral:
+    reject("the guarded Spark avatar gate must arm restoration before stopping Voxtral")
+if re.search(r"(?m)^\s*FAY_SOAK_[A-Z0-9_]+=", avatar_gate):
+    reject("the guarded Spark avatar gate must pass existing soak policy through unchanged")
+if "process_group_has_live_members" in avatar_gate or "clear_residual_runner_group" in avatar_gate:
+    reject("the guarded Spark avatar gate must never rescan a vanished leader's numeric PGID")
+gate_cancel_handler = avatar_gate[
+    avatar_gate.find("cancel_and_reap_runner() {"):
+    avatar_gate.find("restore_voxtral() {")
+]
+if gate_cancel_handler.count('kill -TERM -- "-$runner_session_id"') != 1 or \
+    gate_cancel_handler.count('kill -KILL -- "-$runner_session_id"') != 1:
+    reject("the guarded Spark avatar gate must confine group signals to exact-leader cleanup")
+if 'kill -TERM "$runner_pid"' in gate_cancel_handler or \
+    'kill -KILL "$runner_pid"' in gate_cancel_handler:
+    reject("the guarded Spark avatar gate must never signal a provisional runner PID")
+if "if (( session_is_owned == 1 )) && runner_leader_is_live; then" not in gate_cancel_handler:
+    reject("the guarded Spark avatar gate must require a live exact leader before group TERM")
+gate_final_record = avatar_gate[
+    avatar_gate.find("write_final_record() {"):
+    avatar_gate.find("write_after_record() {")
+]
+if gate_final_record.count("voxtral_restore_verified=") != 1:
+    reject("the guarded Spark avatar gate result must record Voxtral restoration exactly once")
 
 media_capture = Path("scripts/capture-spark-avatar-window.sh").read_text()
 for marker in (
@@ -937,6 +1024,11 @@ if errors:
         print(f"error: {error}", file=sys.stderr)
     raise SystemExit(1)
 PY
+fi
+
+if [[ -n $python_bin ]] && ! "$python_bin" -m unittest \
+    tools.tests.test_run_spark_avatar_gate; then
+    fail 'guarded Spark avatar gate tests failed'
 fi
 
 if git grep --untracked -I -n -E '[[:blank:]]+$' -- .; then
