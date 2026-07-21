@@ -67,6 +67,7 @@ esac
 res_x=${FAY_SOAK_EXPECTED_RES_X:-1280}
 res_y=${FAY_SOAK_EXPECTED_RES_Y:-720}
 character=${FAY_SOAK_CHARACTER:-Ada}
+scene_only=${FAY_SOAK_SCENE_ONLY:-0}
 enable_csv=${FAY_SOAK_ENABLE_CSV:-0}
 csv_capture_frames=${FAY_SOAK_CSV_CAPTURE_FRAMES:-60000}
 csv_compression=${FAY_SOAK_CSV_COMPRESSION:-0}
@@ -74,6 +75,10 @@ csv_compression=${FAY_SOAK_CSV_COMPRESSION:-0}
     fail 'FAY_SOAK_EXPECTED_RES_X/Y must be positive integers'
 [[ $character == Ada || $character == Aoi ]] || \
     fail 'FAY_SOAK_CHARACTER must name a reviewed packaged profile'
+[[ $scene_only =~ ^[01]$ ]] || fail 'FAY_SOAK_SCENE_ONLY must be 0 or 1'
+if (( scene_only == 1 && turn_count != 0 )); then
+    fail 'FAY_SOAK_SCENE_ONLY is restricted to zero-turn idle diagnostics'
+fi
 [[ $enable_csv =~ ^[01]$ ]] || fail 'FAY_SOAK_ENABLE_CSV must be 0 or 1'
 [[ $csv_capture_frames =~ ^[1-9][0-9]*$ ]] || \
     fail 'FAY_SOAK_CSV_CAPTURE_FRAMES must be a positive integer'
@@ -81,8 +86,8 @@ csv_compression=${FAY_SOAK_CSV_COMPRESSION:-0}
     fail 'FAY_SOAK_CSV_COMPRESSION must be 0 or 1'
 for argument in "$@"; do
     case "${argument,,}" in
-        -nullrhi|-resx=*|-resy=*|-csvcaptureframes=*|-csvcompression=*)
-            fail 'the soak runner owns RHI, resolution, and CSV arguments'
+        -nullrhi|-resx=*|-resy=*|-csvcaptureframes=*|-csvcompression=*|-faysceneonly|-faysceneonly=*)
+            fail 'the soak runner owns RHI, resolution, CSV, and scene-only arguments'
             ;;
     esac
 done
@@ -169,6 +174,9 @@ runtime_arguments=(
     -FayTrimSpeechMemory=1
     "-ResX=$res_x" "-ResY=$res_y" -Windowed -WinX=0 -WinY=0
 )
+if [[ $scene_only == 1 ]]; then
+    runtime_arguments+=("-FaySceneOnly=1")
+fi
 if [[ $enable_csv == 1 ]]; then
     runtime_arguments+=(
         "-csvCaptureFrames=$csv_capture_frames"
@@ -206,8 +214,14 @@ for _ in $(seq 1 90); do
             current_launch_start=${latest_log_open%%:*}
             if [[ $current_launch_start =~ ^[1-9][0-9]*$ ]]; then
                 current_launch_log=$(tail -n "+$current_launch_start" "$runtime_log")
+                if [[ $scene_only == 1 ]]; then
+                    readiness_marker='Fay scene-only diagnostic active (character_spawn=off, debug_draw=off, integrations=on).'
+                else
+                    readiness_marker="Spawned character '$character'"
+                fi
                 if grep -Fq 'Connected to the Fay avatar WebSocket.' <<<"$current_launch_log" &&
-                    grep -Fq "Spawned character '$character'" <<<"$current_launch_log"; then
+                    grep -Fq 'Activated the visible Spark studio camera and lighting rig.' <<<"$current_launch_log" &&
+                    grep -Fq "$readiness_marker" <<<"$current_launch_log"; then
                     runtime_ready=1
                     break
                 fi
@@ -216,7 +230,7 @@ for _ in $(seq 1 90); do
     fi
     sleep 1
 done
-(( runtime_ready == 1 )) || fail 'Unreal did not reach the Fay/character readiness markers'
+(( runtime_ready == 1 )) || fail 'Unreal did not reach the required Fay/runtime readiness markers'
 
 export FAY_SOAK_REQUIRE_RENDERED=1
 if (( turn_count == 0 )); then
@@ -229,6 +243,7 @@ fi
 export FAY_SOAK_EXPECTED_UNREAL_EXE="$expected_unreal_exe"
 export FAY_SOAK_EXPECTED_RES_X="$res_x"
 export FAY_SOAK_EXPECTED_RES_Y="$res_y"
+export FAY_SOAK_EXPECT_SCENE_ONLY="$scene_only"
 export FAY_SOAK_MAX_TAIL_RSS_GROWTH_KB=${FAY_SOAK_MAX_TAIL_RSS_GROWTH_KB:-131072}
 if (( turn_count == 0 )); then
     export FAY_SOAK_MAX_RSS_KB=${FAY_SOAK_MAX_RSS_KB:-3040870}

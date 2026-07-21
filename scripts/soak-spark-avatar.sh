@@ -32,6 +32,7 @@ require_procedural_actions=${FAY_SOAK_REQUIRE_PROCEDURAL_ACTIONS:-$require_rende
 expected_unreal_input=${FAY_SOAK_EXPECTED_UNREAL_EXE:-}
 expected_res_x=${FAY_SOAK_EXPECTED_RES_X:-1280}
 expected_res_y=${FAY_SOAK_EXPECTED_RES_Y:-720}
+expected_scene_only=${FAY_SOAK_EXPECT_SCENE_ONLY:-0}
 
 [[ $unreal_pid =~ ^[1-9][0-9]*$ && $fay_pid =~ ^[1-9][0-9]*$ ]] || \
     fail 'PIDs must be positive integers'
@@ -58,6 +59,8 @@ expected_res_y=${FAY_SOAK_EXPECTED_RES_Y:-720}
     fail 'rendered, normal-audio, and procedural-action requirements must be 0 or 1'
 [[ $expected_res_x =~ ^[1-9][0-9]*$ && $expected_res_y =~ ^[1-9][0-9]*$ ]] || \
     fail 'expected rendered resolution must contain positive integers'
+[[ $expected_scene_only =~ ^[01]$ ]] || \
+    fail 'FAY_SOAK_EXPECT_SCENE_ONLY must be 0 or 1'
 (( duration >= turn_count && turn_count <= 100 )) || \
     fail 'duration must cover every turn and turn count must not exceed 100'
 if (( turn_count == 0 && duration < idle_warmup_seconds + 300 )); then
@@ -92,6 +95,14 @@ if [[ $require_rendered == 1 ]]; then
         fail "rendered soak requires -ResY=$expected_res_y"
     if grep -Fxiq -- '-nullrhi' <<<"$unreal_arguments"; then
         fail 'rendered soak refuses -nullrhi'
+    fi
+fi
+if [[ $expected_scene_only == 1 ]]; then
+    grep -Fxiq -- '-FaySceneOnly=1' <<<"$unreal_arguments" || \
+        fail 'scene-only evidence requires the exact -FaySceneOnly=1 argument'
+else
+    if grep -Fxiq -- '-FaySceneOnly=1' <<<"$unreal_arguments"; then
+        fail 'ordinary avatar evidence refuses an unexpected -FaySceneOnly=1 argument'
     fi
 fi
 
@@ -269,6 +280,9 @@ tail_rss_growth_kb=$((last_rss - tail_start_rss))
 status=passed
 if (( turn_count == 0 )); then
     run_mode=idle
+    if [[ $expected_scene_only == 1 ]]; then
+        run_mode=scene-only-idle
+    fi
     idle_measurement_start_rss=$(awk -v warmup="$idle_warmup_seconds" \
         'NR>1 && $1>=warmup {print $3; exit}' "$metrics")
     [[ $idle_measurement_start_rss =~ ^[0-9]+$ ]] || \

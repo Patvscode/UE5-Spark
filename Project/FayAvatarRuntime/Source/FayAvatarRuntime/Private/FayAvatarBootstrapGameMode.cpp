@@ -130,6 +130,23 @@ void AFayAvatarBootstrapGameMode::BeginPlay()
         BodyMotion->AttachBridge(Bridge);
         BodyMotion->AttachArdyClient(ArdyPoseClient);
     }
+    FString SceneOnlyValue;
+    if (FParse::Value(FCommandLine::Get(), TEXT("FaySceneOnly="), SceneOnlyValue))
+    {
+        SceneOnlyValue.TrimStartAndEndInline();
+        if (SceneOnlyValue == TEXT("1"))
+        {
+            bSceneOnlyDiagnostic = true;
+            UE_LOG(LogFayAvatarRuntime, Display,
+                TEXT("Fay scene-only diagnostic active (character_spawn=off, debug_draw=off, integrations=on)."));
+            return;
+        }
+        if (SceneOnlyValue != TEXT("0"))
+        {
+            UE_LOG(LogFayAvatarRuntime, Warning,
+                TEXT("Ignoring invalid FaySceneOnly value; expected 0 or 1."));
+        }
+    }
     bCharacterProfileValid = LoadCharacterProfile();
     TrySpawnMetaHuman();
 }
@@ -176,7 +193,7 @@ void AFayAvatarBootstrapGameMode::Tick(const float DeltaSeconds)
     {
         DriveJawFallback();
     }
-    else
+    else if (!bSceneOnlyDiagnostic)
     {
         DrawSmokeScene();
     }

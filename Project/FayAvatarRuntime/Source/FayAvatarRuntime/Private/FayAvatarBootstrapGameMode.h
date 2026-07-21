@@ -81,6 +81,7 @@ private:
     FRotator CharacterSpawnRotation = FRotator(0.0f, 180.0f, 0.0f);
 
     bool bViewClaimed = false;
+    bool bSceneOnlyDiagnostic = false;
     bool bCharacterProfileValid = false;
     bool bLiveLinkConfigurationRequested = false;
     bool bLiveLinkConfigured = false;
