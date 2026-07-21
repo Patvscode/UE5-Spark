@@ -1668,6 +1668,21 @@ void UFayMetaHumanSpeechDriverComponent::TickComponent(
 {
     Super::TickComponent(DeltaTime, TickType, ThisTickFunction);
 
+    if (PendingMemoryTrimSeconds >= 0.0f)
+    {
+        PendingMemoryTrimSeconds -= FMath::Max(DeltaTime, 0.0f);
+        if (PendingMemoryTrimSeconds <= 0.0f &&
+            (Bridge == nullptr || !Bridge->IsSpeechPlaying()))
+        {
+            const double TrimStarted = FPlatformTime::Seconds();
+            FMemory::Trim(true);
+            PendingMemoryTrimSeconds = -1.0f;
+            UE_LOG(LogFayMetaHumanRuntime, Display,
+                TEXT("Released delayed render/audio allocator pools in %.2f ms."),
+                (FPlatformTime::Seconds() - TrimStarted) * 1000.0);
+        }
+    }
+
     if (IsValid(PendingAvatar))
     {
         // A source registered during the first game frame can remain pending
@@ -1977,5 +1992,9 @@ void UFayMetaHumanSpeechDriverComponent::ResetSpeechState()
         UE_LOG(LogFayMetaHumanRuntime, Display,
             TEXT("Released completed-utterance allocator pools in %.2f ms."),
             (FPlatformTime::Seconds() - TrimStarted) * 1000.0);
+        // Render/audio commands that consumed the final Live Link frame can
+        // retire after this game-thread reset. A second bounded pass runs only
+        // after one quiet second and never while the next speech is playing.
+        PendingMemoryTrimSeconds = 1.0f;
     }
 }

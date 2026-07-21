@@ -156,6 +156,7 @@ private:
     float MoodIntensity = 1.0f;
     float HeadGestureStrength = 0.0f;
     float HeadGestureDurationSeconds = 0.0f;
+    float PendingMemoryTrimSeconds = -1.0f;
     uint8 MoodValue = 0;
     uint8 HeadGestureValue = 0;
     FName OriginalActorLiveLinkSubject = NAME_None;
