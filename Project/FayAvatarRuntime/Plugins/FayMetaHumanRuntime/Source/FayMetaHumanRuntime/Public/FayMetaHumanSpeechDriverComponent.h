@@ -51,7 +51,7 @@ public:
     UFUNCTION(BlueprintPure, Category = "Fay|MetaHuman")
     bool IsAvatarConfigurationPending() const;
 
-    /** True only when the configured face has no queued or active work. */
+    /** Cached idle eligibility; prepare/freeze perform the exact Live Link audits. */
     UFUNCTION(BlueprintPure, Category = "Fay|MetaHuman|Dormancy")
     bool IsFaceIdleForDormancy() const;
 
@@ -121,8 +121,9 @@ public:
     bool bEnableIdleNeutralHeartbeat = true;
 
     /**
-     * Seconds between full configured-consumer health audits. Zero preserves
-     * the strict every-frame behavior; -FayLiveLinkHealthInterval overrides it.
+     * Seconds between full configured-consumer health audits while awake. Zero
+     * preserves strict every-frame awake auditing; intentional dormancy caps
+     * the interval at one second. -FayLiveLinkHealthInterval overrides it.
      */
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Fay|MetaHuman", AdvancedDisplay,
         meta = (ClampMin = "0.0", ClampMax = "60.0"))
