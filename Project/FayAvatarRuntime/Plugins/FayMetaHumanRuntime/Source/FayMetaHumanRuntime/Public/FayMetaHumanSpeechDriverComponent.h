@@ -93,6 +93,14 @@ public:
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Fay|MetaHuman", AdvancedDisplay)
     bool bRecreateSolverBetweenUtterances = false;
 
+    /**
+     * Return per-utterance allocator pools after the facial solve completes.
+     * This is independent of solver reset policy and is controllable with
+     * -FayTrimSpeechMemory=0 or 1 for bounded rendered-runtime diagnostics.
+     */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Fay|MetaHuman", AdvancedDisplay)
+    bool bTrimMemoryAfterUtterance = true;
+
     /** Convert supported Fay semantic actions into conservative head gestures. */
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Fay|MetaHuman|Gestures")
     bool bEnableSemanticHeadGestures = true;

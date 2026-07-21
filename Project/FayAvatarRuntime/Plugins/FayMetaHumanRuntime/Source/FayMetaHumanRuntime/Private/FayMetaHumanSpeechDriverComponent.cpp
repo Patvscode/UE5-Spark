@@ -981,11 +981,20 @@ void UFayMetaHumanSpeechDriverComponent::BeginPlay()
     {
         bResetSolverCacheBetweenUtterances = false;
     }
+    int32 TrimMemoryOverride = bTrimMemoryAfterUtterance ? 1 : 0;
+    if (FParse::Value(
+            FCommandLine::Get(),
+            TEXT("FayTrimSpeechMemory="),
+            TrimMemoryOverride))
+    {
+        bTrimMemoryAfterUtterance = TrimMemoryOverride != 0;
+    }
     UE_LOG(LogFayMetaHumanRuntime, Display,
-        TEXT("StreamingADA utterance reset mode: %s."),
+        TEXT("StreamingADA utterance reset mode: %s (post-solve trim=%s)."),
         bRecreateSolverBetweenUtterances
             ? TEXT("recreate-solver")
-            : (bResetSolverCacheBetweenUtterances ? TEXT("clear-cache") : TEXT("contiguous-flag")));
+            : (bResetSolverCacheBetweenUtterances ? TEXT("clear-cache") : TEXT("contiguous-flag")),
+        bTrimMemoryAfterUtterance ? TEXT("enabled") : TEXT("disabled"));
     InitializeSolverAndSource();
 }
 
@@ -1919,7 +1928,8 @@ bool UFayMetaHumanSpeechDriverComponent::SolveNextFrame()
 
 void UFayMetaHumanSpeechDriverComponent::ResetSpeechState()
 {
-    if (!SolveDurationsMilliseconds.IsEmpty())
+    const bool bHadSolveResults = !SolveDurationsMilliseconds.IsEmpty();
+    if (bHadSolveResults)
     {
         TArray<float> SortedDurations = SolveDurationsMilliseconds;
         SortedDurations.Sort();
@@ -1960,4 +1970,12 @@ void UFayMetaHumanSpeechDriverComponent::ResetSpeechState()
     bSpeechPrepared = false;
     bSpeechStarted = false;
     bSpeechFinished = false;
+    if (bHadSolveResults && bTrimMemoryAfterUtterance)
+    {
+        const double TrimStarted = FPlatformTime::Seconds();
+        FMemory::Trim(true);
+        UE_LOG(LogFayMetaHumanRuntime, Display,
+            TEXT("Released completed-utterance allocator pools in %.2f ms."),
+            (FPlatformTime::Seconds() - TrimStarted) * 1000.0);
+    }
 }
