@@ -67,6 +67,18 @@ content remain private and are not part of this repository.
   neck/head-exclusion, and coordinate-mapping tests. The real Horizon8 provider
   loads without network/token access and fails closed because the account does
   not yet have access to the separate gated Meta Llama text encoder.
+- The sealed Ada v12 package initialized the generated Core27-to-MetaHuman
+  retargeter without replacing the Body's StreamingADA `ULiveLinkInstance`.
+  Nineteen reviewed body bones are mapped after ordinary body evaluation;
+  face, neck, head, and sparse hand endpoints remain excluded.
+- A live 16.400-second Fay turn drove both the facial path and continuous
+  loopback pose requests. StreamingADA solved 830 frames at 8.88 ms average,
+  15.77 ms p95, and 20.28 ms maximum while the body adapter remained active.
+- Failure injection removed only the project-owned ARDY container during a
+  second live turn. Ada completed 14.640 seconds of audio and 742 facial frames
+  at 9.01 ms average / 15.79 ms p95; Unreal and the externally managed Fay
+  process stayed alive. The body path fell back to idle and detected the
+  restarted loopback service automatically without restarting Unreal or Fay.
 
 ## Important boundary
 
@@ -83,11 +95,11 @@ deployable application.
 
 ## Remaining work
 
-- Complete the MetaHuman post-evaluation Control Rig/IK retarget adapter and
-  prove it does not replace or fight StreamingADA. The character-neutral
-  `FayBodyMotion` boundary, baked-provider precedence, loopback client, strict
-  pose parser, eight-frame interpolating buffer, and automatic idle fallback
-  already compile natively on Spark.
+- Tune and visually validate the post-evaluation Core27 retarget adapter with
+  polished motion. Its character-neutral routing, eight-frame interpolating
+  buffer, baseline calibration, head/face mask, bounded root motion, blend-in,
+  cached-pose fade-out, and automatic service recovery now run natively on
+  Spark without replacing StreamingADA.
 - Author or generate the private deterministic gesture clips. The current
   baked provider fails safely to idle when no compatible reviewed montage is
   configured.
@@ -101,8 +113,8 @@ deployable application.
   presentation for a polished long-running character experience.
 - Prove the second included female Aoi profile without character-specific C++
   changes after its licensed assets are assembled locally.
-- Add hardened startup/recovery, failure injection, a 30-minute soak test, and
-  the lightweight private progress hub after the core motion path works.
+- Complete malformed/out-of-order-frame coverage, a 30-minute mixed-action soak
+  test, and the lightweight private progress hub.
 
 ## Publication boundary
 

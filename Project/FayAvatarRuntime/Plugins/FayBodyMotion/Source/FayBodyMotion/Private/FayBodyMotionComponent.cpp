@@ -293,8 +293,7 @@ bool UFayBodyMotionComponent::ConfigureAvatar(
 
 bool UFayBodyMotionComponent::ConfigureGeneratedRetarget()
 {
-    if (!IsValid(BodyMesh) || !IsValid(BodyMesh->GetSkeletalMeshAsset()) ||
-        !IsValid(BodyMesh->GetAnimInstance()))
+    if (!IsValid(BodyMesh) || !IsValid(BodyMesh->GetSkeletalMeshAsset()))
     {
         return false;
     }

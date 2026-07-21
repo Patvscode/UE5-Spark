@@ -5,15 +5,17 @@ Unreal Engine 5.8 digital-human application natively on NVIDIA DGX Spark. It
 contains a minimal Unreal project, a Fay speech/event bridge, and source for a
 local MetaHuman facial-animation adapter.
 
-> **Engineering-preview status:** the character-independent v10 pipeline has
+> **Engineering-preview status:** the character-independent v12 pipeline has
 > rebuilt the free female Ada MetaHuman, cooked it from a reviewed profile, and
 > run it as a sealed native Linux ARM64 package on DGX Spark. Ada renders,
-> speaks, and animates through the local StreamingADA model. The same Spark runs
+> speaks, and animates through the local StreamingADA model while the guarded
+> Core27 body adapter consumes an isolated loopback pose service. The same Spark runs
 > the x86-64 UE 5.8 Editor/cooker through rootless FEX. Fay audio/WebSocket
 > integration, MCP readiness, learned facial motion, background-window
-> operation, package integrity, and repeated launch/teardown have been verified.
-> Hybrid body motion and the optional ARDY provider are the next implementation
-> stage.
+> operation, package integrity, generated-motion recovery, and repeated
+> launch/teardown have been verified. Real ARDY prompt conditioning remains
+> gated on approved Meta Llama access; deterministic gesture authoring and Aoi
+> portability are the next implementation stages.
 
 This repository does **not** redistribute Unreal Engine, MetaHuman assets,
 Marketplace plugins, cooked packages, or private Epic source patches.
@@ -52,8 +54,8 @@ required for this project.
 | Direct local StreamingADA facial adapter | Verified in the native package: 81 solver curves, 251 raw controls, `FayAudio` Live Link subject |
 | Free optimized Ada MetaHuman renders on Spark | Verified with skin, hair, clothing, and portrait lighting |
 | MetaHuman learned speech motion | Verified visibly and at the complete 50 Hz solve cadence |
-| Reviewed character profiles and repeatable profile-driven cooking | Verified with Ada v10; unknown profiles fail closed |
-| Fay-driven body gestures | Not implemented |
+| Reviewed character profiles and repeatable profile-driven cooking | Verified with Ada v10-v12; unknown profiles fail closed |
+| Fay-driven body gestures | Core27 transport/retarget/fallback verified with mock provider; polished clips pending |
 | Native ARM64 Unreal Editor/cooker | Not required; x86 Editor uses FEX |
 
 See [the detailed status](docs/status.md) for the exact boundary.
