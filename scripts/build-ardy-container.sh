@@ -16,5 +16,5 @@ repository=$(cd "$script_dir/.." && pwd -P)
 docker build \
     --pull=false \
     --build-arg ARDY_COMMIT=693f74d13b3d04a0a22ce127ee79c929dd89756b \
-    --tag ue5-spark-ardy:0.1.0 \
+    --tag ue5-spark-ardy:0.2.0 \
     "$repository/services/ardy"

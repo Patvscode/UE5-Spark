@@ -2,10 +2,23 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 import math
 from pathlib import Path
 import threading
 import time
+
+from embedding_contract import (
+    APPROVED_EMBEDDING_BEHAVIORS,
+    ARDY_SOURCE_COMMIT,
+    BASE_ENCODER_REPOSITORY,
+    EMBEDDING_SCHEMA_VERSION,
+    EMBEDDING_WIDTH,
+    SUPERVISED_ENCODER_REPOSITORY,
+    UPSTREAM_LLAMA_REPOSITORY,
+    prompt_sha256,
+)
 
 from pose_protocol import (
     BATCH_FRAMES,
@@ -21,6 +34,86 @@ from pose_protocol import (
 
 
 IDENTITY = [0.0, 0.0, 0.0, 1.0]
+
+
+def _sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def load_embedding_cache(root: Path, np_module: object) -> dict[str, tuple[object, object]]:
+    """Load only a complete, hash-sealed cache produced by cache_embeddings.py."""
+
+    if not root.is_dir() or root.is_symlink():
+        return {}
+    manifest_path = root / "manifest.json"
+    if not manifest_path.is_file() or manifest_path.is_symlink():
+        return {}
+    if manifest_path.stat().st_size > 64 * 1024:
+        raise RuntimeError("cached embedding manifest is too large")
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError) as error:
+        raise RuntimeError("cached embedding manifest is invalid") from error
+
+    expected_files = {"manifest.json"} | {
+        f"{behavior}.npz" for behavior in APPROVED_EMBEDDING_BEHAVIORS
+    }
+    if {path.name for path in root.iterdir()} != expected_files:
+        raise RuntimeError("cached embedding directory has unexpected entries")
+    if (
+        manifest.get("schemaVersion") != EMBEDDING_SCHEMA_VERSION
+        or manifest.get("ardySourceCommit") != ARDY_SOURCE_COMMIT
+        or manifest.get("approvedBehaviors") != list(APPROVED_EMBEDDING_BEHAVIORS)
+    ):
+        raise RuntimeError("cached embedding manifest contract does not match this image")
+    encoder = manifest.get("encoder")
+    if not isinstance(encoder, dict) or (
+        encoder.get("baseRepository") != BASE_ENCODER_REPOSITORY
+        or encoder.get("supervisedRepository") != SUPERVISED_ENCODER_REPOSITORY
+        or encoder.get("upstreamRepository") != UPSTREAM_LLAMA_REPOSITORY
+        or encoder.get("precision") not in {"bfloat16", "float32"}
+        or encoder.get("outputDtype") != "float32"
+    ):
+        raise RuntimeError("cached embedding encoder identity is invalid")
+    entries = manifest.get("embeddings")
+    if not isinstance(entries, dict) or set(entries) != set(APPROVED_EMBEDDING_BEHAVIORS):
+        raise RuntimeError("cached embedding manifest behavior set is invalid")
+
+    result: dict[str, tuple[object, object]] = {}
+    for behavior in APPROVED_EMBEDDING_BEHAVIORS:
+        entry = entries[behavior]
+        filename = f"{behavior}.npz"
+        if not isinstance(entry, dict) or entry != {
+            "file": filename,
+            "fileSha256": entry.get("fileSha256"),
+            "promptSha256": prompt_sha256(behavior),
+            "shape": [1, EMBEDDING_WIDTH],
+        }:
+            raise RuntimeError(f"cached embedding manifest entry {behavior} is invalid")
+        expected_digest = entry.get("fileSha256")
+        if not isinstance(expected_digest, str) or len(expected_digest) != 64:
+            raise RuntimeError(f"cached embedding digest {behavior} is invalid")
+        path = root / filename
+        if not path.is_file() or path.is_symlink() or _sha256(path) != expected_digest:
+            raise RuntimeError(f"cached embedding {behavior} failed its hash seal")
+        with np_module.load(path, allow_pickle=False) as values:
+            if set(values.files) != {"text_feat", "text_pad_mask"}:
+                raise RuntimeError(f"cached embedding {behavior} has an invalid envelope")
+            features = np_module.asarray(values["text_feat"], dtype=np_module.float32)
+            mask = np_module.asarray(values["text_pad_mask"], dtype=np_module.bool_)
+        if (
+            features.shape != (1, EMBEDDING_WIDTH)
+            or mask.shape != (1,)
+            or mask.tolist() != [True]
+            or not np_module.isfinite(features).all()
+        ):
+            raise RuntimeError(f"cached embedding {behavior} has an invalid shape or value")
+        result[behavior] = (features, mask)
+    return result
 
 
 class MockPoseProvider:
@@ -129,7 +222,7 @@ class ArdyPoseProvider:
 
     @property
     def ready(self) -> bool:
-        return bool(self._embeddings)
+        return set(self._embeddings) == set(APPROVED_EMBEDDING_BEHAVIORS)
 
     @property
     def health(self) -> dict[str, object]:
@@ -142,27 +235,9 @@ class ArdyPoseProvider:
         }
 
     def _load_embeddings(self, root: Path) -> dict[str, tuple[object, object]]:
-        if not root.is_dir() or root.is_symlink():
-            return {}
+        cached = load_embedding_cache(root, self._np)
         result: dict[str, tuple[object, object]] = {}
-        for behavior in sorted({"idle", "listen", "explain"}):
-            path = root / f"{behavior}.npz"
-            if not path.is_file() or path.is_symlink():
-                continue
-            with self._np.load(path, allow_pickle=False) as values:
-                if set(values.files) != {"text_feat", "text_pad_mask"}:
-                    raise RuntimeError(f"cached embedding {behavior} has an invalid envelope")
-                features = self._np.asarray(values["text_feat"], dtype=self._np.float32)
-                mask = self._np.asarray(values["text_pad_mask"], dtype=self._np.bool_)
-            if (
-                features.ndim != 2
-                or not 1 <= features.shape[0] <= 256
-                or features.shape[1] != 4096
-                or mask.shape != (features.shape[0],)
-                or not self._np.isfinite(features).all()
-                or not mask.any()
-            ):
-                raise RuntimeError(f"cached embedding {behavior} has an invalid shape or value")
+        for behavior, (features, mask) in cached.items():
             result[behavior] = (
                 self._torch.from_numpy(features).unsqueeze(0).to("cuda:0"),
                 self._torch.from_numpy(mask).unsqueeze(0).to("cuda:0"),
@@ -171,7 +246,7 @@ class ArdyPoseProvider:
 
     def generate(self, request: PoseRequest) -> dict[str, object]:
         # Timing-critical actions remain deterministic Unreal-side clips.
-        if request.behavior not in {"idle", "listen", "explain"}:
+        if request.behavior not in set(APPROVED_EMBEDDING_BEHAVIORS):
             raise RuntimeError("behavior is reserved for the baked provider")
         embedding = self._embeddings.get(request.behavior)
         if embedding is None:

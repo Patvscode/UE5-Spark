@@ -22,8 +22,8 @@ token_file=$(cd "$(dirname "$3")" && pwd -P)/$(basename "$3")
 [[ $(stat -c '%a' "$token_file") =~ ^(400|600)$ ]] || \
     fail 'token file must not grant group or other access'
 
-docker image inspect ue5-spark-ardy:0.1.0 >/dev/null 2>&1 || \
-    fail 'build ue5-spark-ardy:0.1.0 first'
+docker image inspect ue5-spark-ardy:0.2.0 >/dev/null 2>&1 || \
+    fail 'build ue5-spark-ardy:0.2.0 first'
 docker run --rm \
     --network bridge \
     --read-only \
@@ -34,5 +34,5 @@ docker run --rm \
     --mount "type=bind,src=$models_root,dst=/models" \
     --mount "type=bind,src=$token_file,dst=/run/secrets/hf_token,readonly" \
     --entrypoint python \
-    ue5-spark-ardy:0.1.0 \
+    ue5-spark-ardy:0.2.0 \
     /opt/ue5-spark-ardy/download_checkpoint.py --model "$model"

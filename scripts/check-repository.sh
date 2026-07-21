@@ -358,10 +358,13 @@ python_sources = (
     Path("scripts/inspect-metahuman-runtime-contract.py"),
     Path("scripts/metahuman-preflight.py"),
     Path("services/ardy/service/ardy_pose_service.py"),
+    Path("services/ardy/service/cache_embeddings.py"),
     Path("services/ardy/service/download_checkpoint.py"),
+    Path("services/ardy/service/embedding_contract.py"),
     Path("services/ardy/service/pose_protocol.py"),
     Path("services/ardy/service/providers.py"),
     Path("services/ardy/tests/test_pose_protocol.py"),
+    Path("services/ardy/tests/test_cache_embeddings.py"),
     Path(
         "Project/FayAvatarRuntime/Plugins/FayMetaHumanEditorTools/"
         "Scripts/build_ada.py"
@@ -1029,6 +1032,11 @@ fi
 if [[ -n $python_bin ]] && ! "$python_bin" -m unittest \
     tools.tests.test_run_spark_avatar_gate; then
     fail 'guarded Spark avatar gate tests failed'
+fi
+
+if [[ -n $python_bin ]] && ! "$python_bin" -m unittest discover \
+    -s services/ardy/tests -p 'test_*.py'; then
+    fail 'ARDY service tests failed'
 fi
 
 if git grep --untracked -I -n -E '[[:blank:]]+$' -- .; then

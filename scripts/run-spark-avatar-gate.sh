@@ -29,7 +29,7 @@ fi
 
 readonly VOXTRAL_UNIT='codex-studio-voxtral-realtime.service'
 readonly ARDY_CONTAINER='ue5-spark-ardy'
-readonly ARDY_IMAGE='ue5-spark-ardy:0.1.0'
+readonly ARDY_IMAGE='ue5-spark-ardy:0.2.0'
 
 package_launcher_input=$1
 fay_pid=$2

@@ -21,16 +21,23 @@ Two providers exist:
   `listen`, and `explain` embeddings. It reports degraded health and returns
   503 when those private embeddings are absent.
 
+Image `0.2.0` adds the sealed embedding contract. Keep `0.1.0` available as the
+mock-provider rollback while qualifying the real provider.
+
 The runtime wrapper uses a read-only root filesystem and checkpoint mount,
 drops every Linux capability, enables `no-new-privileges`, applies a PID limit,
 and shares host networking only so the process can bind loopback. The normal
-runtime receives no Hugging Face token. A separate one-shot downloader mounts
-the token read-only and writes only approved checkpoint IDs.
+runtime receives no Hugging Face token. Separate one-shot tools mount the token
+read-only and write only approved checkpoint IDs or the three reviewed text
+embeddings. Embedding generation uses a private Hugging Face cache and publishes
+the complete cache atomically with prompt, encoder, shape, and file hash seals.
 
 ```bash
 ./scripts/build-ardy-container.sh
 ./scripts/download-ardy-checkpoint.sh \
   ARDY-Core-RP-20FPS-Horizon8 /private/checkpoints ~/.cache/huggingface/token
+./scripts/cache-ardy-embeddings.sh \
+  /private/checkpoints ~/.cache/huggingface/token cpu bfloat16
 ./scripts/run-ardy-container.sh /private/checkpoints mock
 ```
 
