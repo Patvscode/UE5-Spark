@@ -23,7 +23,7 @@ if (( ${EUID:-$(id -u)} == 0 )); then
     fail 'run the digital human as the normal workspace owner, not root'
 fi
 
-for command_name in awk curl nvidia-smi python3 sleep ss; do
+for command_name in awk curl id nvidia-smi python3 sleep ss; do
     command -v "$command_name" >/dev/null 2>&1 || \
         fail "required command is missing: $command_name"
 done
@@ -39,6 +39,49 @@ for argument in "$@"; do
         break
     fi
 done
+
+if (( uses_vulkan == 1 )); then
+    if [[ -z ${DISPLAY:-} ]]; then
+        command -v systemctl >/dev/null 2>&1 || \
+            fail 'DISPLAY is unset and systemctl is unavailable for local-session discovery'
+        user_service_environment=$(systemctl --user show-environment 2>/dev/null || true)
+        discovered_display=$(awk -F= \
+            '$1 == "DISPLAY" {sub(/^[^=]*=/, ""); print; exit}' \
+            <<<"$user_service_environment")
+        [[ $discovered_display =~ ^:[0-9]+([.][0-9]+)?$ ]] || \
+            fail 'DISPLAY is unset and no unambiguous local X11 display was found'
+        display_number=${discovered_display#:}
+        display_number=${display_number%%.*}
+        display_socket="/tmp/.X11-unix/X$display_number"
+        [[ -S $display_socket && -O $display_socket ]] || \
+            fail "the discovered X11 socket is missing or not owned by this user: $display_socket"
+        export DISPLAY="$discovered_display"
+        printf 'Using existing local X11 display %s.\n' "$DISPLAY"
+    fi
+
+    if [[ $DISPLAY =~ ^:([0-9]+)([.][0-9]+)?$ ]]; then
+        display_socket="/tmp/.X11-unix/X${BASH_REMATCH[1]}"
+        [[ -S $display_socket && -O $display_socket ]] || \
+            fail "the selected local X11 socket is missing or not owned by this user: $display_socket"
+        if [[ -z ${XDG_RUNTIME_DIR:-} ]]; then
+            candidate_runtime_dir="/run/user/$(id -u)"
+            [[ -d $candidate_runtime_dir && -O $candidate_runtime_dir ]] || \
+                fail "the local desktop runtime directory is unavailable: $candidate_runtime_dir"
+            export XDG_RUNTIME_DIR="$candidate_runtime_dir"
+        fi
+        [[ -d $XDG_RUNTIME_DIR && -O $XDG_RUNTIME_DIR ]] || \
+            fail "the local desktop runtime directory is missing or not owned by this user: $XDG_RUNTIME_DIR"
+        if [[ -z ${XAUTHORITY:-} && -r $XDG_RUNTIME_DIR/gdm/Xauthority &&
+            -O $XDG_RUNTIME_DIR/gdm/Xauthority ]]; then
+            export XAUTHORITY="$XDG_RUNTIME_DIR/gdm/Xauthority"
+        fi
+        [[ -n ${XAUTHORITY:-} ]] || \
+            fail 'the selected local X11 display has no same-user readable XAUTHORITY file'
+        [[ -r $XAUTHORITY && -O $XAUTHORITY ]] || \
+            fail "the selected XAUTHORITY file is unreadable or not owned by this user: $XAUTHORITY"
+    fi
+fi
+
 min_available_memory_gib=${UE5_SPARK_MIN_AVAILABLE_MEMORY_GIB:-48}
 [[ $min_available_memory_gib =~ ^([0-9]|[1-9][0-9]|1[01][0-9]|12[0-8])$ ]] || \
     fail 'UE5_SPARK_MIN_AVAILABLE_MEMORY_GIB must be an integer from 0 through 128'
