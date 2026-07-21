@@ -55,8 +55,8 @@ enum class EFaySemanticHeadGesture : uint8
     Shake,
     Think,
     Warn,
-    UnsupportedWave,
-    UnsupportedInvite
+    BodyOwnedWave,
+    BodyOwnedInvite
 };
 
 enum class EFayLiveLinkSubjectReadiness : uint8
@@ -378,12 +378,12 @@ EFaySemanticHeadGesture ResolveSemanticHeadGesture(const FFayAvatarMessage& Mess
     }
     if (Behavior == TEXT("wave") || Code == TEXT("farewell.goodbye"))
     {
-        return EFaySemanticHeadGesture::UnsupportedWave;
+        return EFaySemanticHeadGesture::BodyOwnedWave;
     }
     if (Behavior == TEXT("invite") || Code == TEXT("guidance.invite") ||
         Code == TEXT("greeting.welcome"))
     {
-        return EFaySemanticHeadGesture::UnsupportedInvite;
+        return EFaySemanticHeadGesture::BodyOwnedInvite;
     }
     return EFaySemanticHeadGesture::None;
 }
@@ -437,8 +437,8 @@ FFayHeadPose EvaluateHeadGesture(
 {
     FFayHeadPose Pose;
     if (Gesture == EFaySemanticHeadGesture::None ||
-        Gesture == EFaySemanticHeadGesture::UnsupportedWave ||
-        Gesture == EFaySemanticHeadGesture::UnsupportedInvite ||
+        Gesture == EFaySemanticHeadGesture::BodyOwnedWave ||
+        Gesture == EFaySemanticHeadGesture::BodyOwnedInvite ||
         DurationSeconds <= KINDA_SMALL_NUMBER)
     {
         return Pose;
@@ -1607,15 +1607,13 @@ void UFayMetaHumanSpeechDriverComponent::HandleSpeechStarted(
     const EFaySemanticHeadGesture Gesture = ResolveSemanticHeadGesture(Message);
     switch (Gesture)
     {
-    case EFaySemanticHeadGesture::UnsupportedWave:
+    case EFaySemanticHeadGesture::BodyOwnedWave:
         UE_LOG(LogFayMetaHumanRuntime, Display,
-            TEXT("Fay body-wave action requires an authored compatible animation; "
-                 "continuing with facial animation only."));
+            TEXT("Fay wave action was delegated to the character-neutral body-motion provider."));
         break;
-    case EFaySemanticHeadGesture::UnsupportedInvite:
+    case EFaySemanticHeadGesture::BodyOwnedInvite:
         UE_LOG(LogFayMetaHumanRuntime, Display,
-            TEXT("Fay invitation body action requires an authored compatible animation; "
-                 "continuing with facial animation only."));
+            TEXT("Fay invitation action was delegated to the character-neutral body-motion provider."));
         break;
     case EFaySemanticHeadGesture::Nod:
     case EFaySemanticHeadGesture::Shake:
