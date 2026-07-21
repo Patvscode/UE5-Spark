@@ -23,10 +23,33 @@ if (( ${EUID:-$(id -u)} == 0 )); then
     fail 'run the digital human as the normal workspace owner, not root'
 fi
 
-for command_name in curl nvidia-smi python3 sleep ss; do
+for command_name in awk curl nvidia-smi python3 sleep ss; do
     command -v "$command_name" >/dev/null 2>&1 || \
         fail "required command is missing: $command_name"
 done
+
+# Spark's CPU and GPU share the same physical memory. Low GPU utilization is
+# therefore not enough to prove that Vulkan can allocate a graphics context:
+# idle model servers can still reserve most of unified memory. Headless NullRHI
+# diagnostics do not create a Vulkan device and intentionally skip this gate.
+uses_vulkan=1
+for argument in "$@"; do
+    if [[ ${argument,,} == -nullrhi ]]; then
+        uses_vulkan=0
+        break
+    fi
+done
+min_available_memory_gib=${UE5_SPARK_MIN_AVAILABLE_MEMORY_GIB:-48}
+[[ $min_available_memory_gib =~ ^([0-9]|[1-9][0-9]|1[01][0-9]|12[0-8])$ ]] || \
+    fail 'UE5_SPARK_MIN_AVAILABLE_MEMORY_GIB must be an integer from 0 through 128'
+if (( uses_vulkan == 1 && min_available_memory_gib > 0 )); then
+    available_memory_kib=$(awk '/^MemAvailable:/ { print $2; exit }' /proc/meminfo)
+    [[ $available_memory_kib =~ ^[0-9]+$ ]] || \
+        fail 'could not read available unified memory from /proc/meminfo'
+    required_memory_kib=$((min_available_memory_gib * 1024 * 1024))
+    (( available_memory_kib >= required_memory_kib )) || \
+        fail "only $((available_memory_kib / 1024 / 1024)) GiB of unified memory is available; Vulkan launch requires ${min_available_memory_gib} GiB"
+fi
 
 max_start_gpu_utilization=${UE5_SPARK_MAX_START_GPU_UTILIZATION:-85}
 [[ $max_start_gpu_utilization =~ ^([0-9]|[1-9][0-9]|100)$ ]] || \

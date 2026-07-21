@@ -34,6 +34,10 @@ after three consecutive samples above 85 percent; that guard can be adjusted
 explicitly with `FAY_SOAK_MAX_GPU_UTILIZATION_PERCENT`. The packaged avatar
 launcher also refuses three consecutive startup samples above 85 percent
 (`UE5_SPARK_MAX_START_GPU_UTILIZATION`) before it creates an Unreal process.
+Because Spark uses unified memory, the launcher separately requires 48 GiB of
+`MemAvailable` for a Vulkan launch even when GPU utilization is idle. Override
+that reviewed reserve with `UE5_SPARK_MIN_AVAILABLE_MEMORY_GIB`; `-nullrhi`
+diagnostics skip only this Vulkan-specific memory gate.
 The packaged avatar caps rendering at 30 FPS to retain compute headroom for
 speech and motion rather than rendering unused frames as quickly as possible.
 

@@ -174,7 +174,11 @@ The guarded normal-user stack launcher discovers existing non-global Fay HTTP,
 avatar, and MCP listeners, probes readiness, exports the discovered `FAY_*`
 runtime endpoints, and then delegates to `run-cooked-package.sh`. It does not
 print or bake the discovered addresses, start or stop a service, or change
-service/system configuration. MCP administration/SSE checks are required by
+service/system configuration. Before a Vulkan launch it also requires at least
+48 GiB of available unified memory so idle model reservations cannot produce a
+stuck NVIDIA device-creation dialog. The reserve is configurable with
+`UE5_SPARK_MIN_AVAILABLE_MEMORY_GIB`; headless `-nullrhi` diagnostics bypass
+that graphics-only check. MCP administration/SSE checks are required by
 default; disable only those checks with:
 
 ```bash
