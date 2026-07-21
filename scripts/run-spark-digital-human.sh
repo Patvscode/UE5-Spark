@@ -42,9 +42,21 @@ done
 
 if (( uses_vulkan == 1 )); then
     if [[ -z ${DISPLAY:-} ]]; then
+        candidate_runtime_dir=${XDG_RUNTIME_DIR:-"/run/user/$(id -u)"}
+        [[ -d $candidate_runtime_dir && -O $candidate_runtime_dir ]] || \
+            fail "the local desktop runtime directory is missing or not owned by this user: $candidate_runtime_dir"
+        candidate_user_bus="$candidate_runtime_dir/bus"
+        [[ -S $candidate_user_bus && -O $candidate_user_bus ]] || \
+            fail "the local user-session bus is missing or not owned by this user: $candidate_user_bus"
+        export XDG_RUNTIME_DIR="$candidate_runtime_dir"
+        if [[ -z ${DBUS_SESSION_BUS_ADDRESS:-} ]]; then
+            export DBUS_SESSION_BUS_ADDRESS="unix:path=$candidate_user_bus"
+        fi
         command -v systemctl >/dev/null 2>&1 || \
             fail 'DISPLAY is unset and systemctl is unavailable for local-session discovery'
-        user_service_environment=$(systemctl --user show-environment 2>/dev/null || true)
+        if ! user_service_environment=$(systemctl --user show-environment 2>/dev/null); then
+            fail 'could not query the existing local user-session environment'
+        fi
         discovered_display=$(awk -F= \
             '$1 == "DISPLAY" {sub(/^[^=]*=/, ""); print; exit}' \
             <<<"$user_service_environment")

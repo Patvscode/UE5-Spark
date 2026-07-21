@@ -175,8 +175,9 @@ avatar, and MCP listeners, probes readiness, exports the discovered `FAY_*`
 runtime endpoints, and then delegates to `run-cooked-package.sh`. It does not
 print or bake the discovered addresses, start or stop a service, or change
 service/system configuration. For Vulkan launches from SSH, it reuses the
-existing local desktop's `DISPLAY` only when the matching X11 socket and GDM
-authority file are readable and owned by the same user. It never starts or
+existing local desktop's `DISPLAY` only when the matching X11 socket exists and
+the socket, runtime directory, user-session bus, and GDM authority file are
+owned by the same user. It never starts or
 reconfigures a display server. Before a Vulkan launch it also requires at least
 48 GiB of available unified memory so idle model reservations cannot produce a
 stuck NVIDIA device-creation dialog. The reserve is configurable with
