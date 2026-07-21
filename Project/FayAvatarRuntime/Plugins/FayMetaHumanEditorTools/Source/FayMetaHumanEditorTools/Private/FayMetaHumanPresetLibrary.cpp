@@ -84,7 +84,7 @@ bool UFayMetaHumanPresetLibrary::InitializeFromPreset(
         UE_LOG(
             LogFayMetaHumanEditorTools,
             Error,
-            TEXT("InitializeFromPreset returned without copying Ada's key preset state."));
+            TEXT("InitializeFromPreset returned without copying the reviewed preset's key state."));
         return false;
     }
 

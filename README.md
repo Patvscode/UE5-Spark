@@ -14,8 +14,8 @@ local MetaHuman facial-animation adapter.
 > integration, MCP readiness, learned facial motion, background-window
 > operation, package integrity, generated-motion recovery, and repeated
 > launch/teardown have been verified. Real ARDY prompt conditioning remains
-> gated on approved Meta Llama access; deterministic gesture authoring and Aoi
-> portability are the next implementation stages.
+> gated on approved Meta Llama access; deterministic gesture authoring and a
+> second female-preset polish pass are the next implementation stages.
 
 This repository does **not** redistribute Unreal Engine, MetaHuman assets,
 Marketplace plugins, cooked packages, or private Epic source patches.
@@ -54,7 +54,7 @@ required for this project.
 | Direct local StreamingADA facial adapter | Verified in the native package: 81 solver curves, 251 raw controls, `FayAudio` Live Link subject |
 | Free optimized Ada MetaHuman renders on Spark | Verified with skin, hair, clothing, and portrait lighting |
 | MetaHuman learned speech motion | Verified visibly and at the complete 50 Hz solve cadence |
-| Reviewed character profiles and repeatable profile-driven cooking | Verified with Ada v10-v12; unknown profiles fail closed |
+| Reviewed character profiles and repeatable profile-driven cooking | Verified with Ada and Aoi in sealed v13; unknown profiles fail closed |
 | Fay-driven body gestures | Core27 transport/retarget/fallback verified with mock provider; polished clips pending |
 | Native ARM64 Unreal Editor/cooker | Not required; x86 Editor uses FEX |
 
@@ -118,6 +118,12 @@ services/ardy/                            Strict Core27 protocol and providers
 tools/fay-avatar-smoke-test.py            Test Fay without Unreal
 docs/                                     Architecture and deployment guides
 ```
+
+The included UE 5.8 `Aoi` preset is male in the tested installation. It is kept
+as the second v13 portability fixture because it proved that the runtime,
+speech adapter, and body retargeter are character-independent. Ada remains the
+female demonstration character; another reviewed female preset can use the
+same guarded builder and profile path.
 
 ## Quick path
 

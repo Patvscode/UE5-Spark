@@ -1,16 +1,23 @@
-"""Assemble the included UE 5.8 Ada preset into a fresh project path."""
+"""Assemble one reviewed UE 5.8 MetaHuman preset without overwriting content."""
 
+import os
 import unreal
 
 
 CONTENT_ROOT = "/Game/FayMetaHumans"
 SOURCE_DIRECTORY = f"{CONTENT_ROOT}/Source"
-SOURCE_ASSET = f"{SOURCE_DIRECTORY}/AdaFay"
 BUILD_DIRECTORY = f"{CONTENT_ROOT}/Built"
 COMMON_DIRECTORY = f"{CONTENT_ROOT}/Common_UE58"
-EXPECTED_BLUEPRINT = f"{BUILD_DIRECTORY}/AdaFay/BP_AdaFay"
-PRESET_ASSET = "/MetaHumanCharacter/Optional/Presets/Ada.Ada"
-CHARACTER_NAME = "AdaFay"
+REVIEWED_PRESETS = {
+    "Ada": {
+        "asset": "/MetaHumanCharacter/Optional/Presets/Ada.Ada",
+        "name": "AdaFay",
+    },
+    "Aoi": {
+        "asset": "/MetaHumanCharacter/Optional/Presets/Aoi.Aoi",
+        "name": "AoiFay",
+    },
+}
 SPARK_OPTIMIZATION_NOTICE = (
     "This Optimized/High assembly is a fidelity baseline, not a fully Spark-tuned "
     "asset. The script cannot require card-only hair or cap generated texture "
@@ -40,12 +47,15 @@ def ensure_clean_editor_state():
         )
 
 
-def ensure_fresh_destination():
-    existing_assets = unreal.EditorAssetLibrary.list_assets(
-        CONTENT_ROOT,
+def ensure_fresh_destination(source_asset, build_character_directory):
+    existing_assets = []
+    if unreal.EditorAssetLibrary.does_asset_exist(source_asset):
+        existing_assets.append(source_asset)
+    existing_assets.extend(unreal.EditorAssetLibrary.list_assets(
+        build_character_directory,
         recursive=True,
         include_folder=False,
-    )
+    ))
     if existing_assets:
         formatted_assets = "\n  ".join(str(asset) for asset in existing_assets)
         fail(
@@ -54,29 +64,40 @@ def ensure_fresh_destination():
         )
 
 
-def create_character():
+def create_character(character_name, source_directory, source_asset):
     asset_tools = unreal.AssetToolsHelpers.get_asset_tools()
     factory = unreal.new_object(type=unreal.MetaHumanCharacterFactoryNew)
     character = asset_tools.create_asset(
-        asset_name=CHARACTER_NAME,
-        package_path=SOURCE_DIRECTORY,
+        asset_name=character_name,
+        package_path=source_directory,
         asset_class=unreal.MetaHumanCharacter,
         factory=factory,
     )
     if character is None:
-        fail(f"Could not create {SOURCE_ASSET}.")
+        fail(f"Could not create {source_asset}.")
     return character
 
 
-def assemble_ada():
+def assemble_character(profile_id="Ada"):
+    profile = REVIEWED_PRESETS.get(profile_id)
+    if profile is None:
+        fail(f"Character {profile_id!r} is not in the reviewed preset allowlist.")
+    character_name = profile["name"]
+    preset_asset = profile["asset"]
+    source_asset = f"{SOURCE_DIRECTORY}/{character_name}"
+    build_character_directory = f"{BUILD_DIRECTORY}/{character_name}"
+    expected_blueprint = (
+        f"{build_character_directory}/BP_{character_name}"
+    )
+
     ensure_clean_editor_state()
-    ensure_fresh_destination()
+    ensure_fresh_destination(source_asset, build_character_directory)
     unreal.log_warning(f"Fay MetaHuman: {SPARK_OPTIMIZATION_NOTICE}")
 
-    preset = unreal.load_asset(PRESET_ASSET)
+    preset = unreal.load_asset(preset_asset)
     if preset is None:
         fail(
-            f"Could not load {PRESET_ASSET}. Install the UE 5.8 MetaHuman "
+            f"Could not load {preset_asset}. Install the UE 5.8 MetaHuman "
             "Creator Core Data before running this script."
         )
 
@@ -98,7 +119,7 @@ def assemble_ada():
     if rig_type is None:
         fail("UE 5.8 did not expose the expected Joints and Blend Shapes rig type.")
 
-    character = create_character()
+    character = create_character(character_name, SOURCE_DIRECTORY, source_asset)
     registered = False
 
     try:
@@ -110,7 +131,10 @@ def assemble_ada():
             target_character=character,
             preset_character=preset,
         ):
-            fail("The Editor adapter refused or failed to apply the Ada preset.")
+            fail(
+                "The Editor adapter refused or failed to apply the "
+                f"{profile_id} preset."
+            )
 
         if adapter.has_face_dna(character=character):
             subsystem.remove_face_rig(character=character)
@@ -154,7 +178,7 @@ def assemble_ada():
         build_parameters.animation_system_name = "AnimBP"
         build_parameters.absolute_build_path = BUILD_DIRECTORY
         build_parameters.common_folder_path = COMMON_DIRECTORY
-        build_parameters.name_override = CHARACTER_NAME
+        build_parameters.name_override = character_name
         build_parameters.enable_wardrobe_item_validation = True
 
         subsystem.build_meta_human(
@@ -162,10 +186,10 @@ def assemble_ada():
             params=build_parameters,
         )
 
-        if unreal.load_asset(EXPECTED_BLUEPRINT) is None:
+        if unreal.load_asset(expected_blueprint) is None:
             fail(
                 "Assembly returned without creating the expected Blueprint at "
-                f"{EXPECTED_BLUEPRINT}."
+                f"{expected_blueprint}."
             )
 
         dirty_maps = unreal.EditorLoadingAndSavingUtils.get_dirty_map_packages()
@@ -200,12 +224,12 @@ def assemble_ada():
         ):
             fail("Unreal did not save every generated content package.")
 
-        if not unreal.EditorAssetLibrary.does_asset_exist(EXPECTED_BLUEPRINT):
-            fail(f"The saved Blueprint is missing at {EXPECTED_BLUEPRINT}.")
+        if not unreal.EditorAssetLibrary.does_asset_exist(expected_blueprint):
+            fail(f"The saved Blueprint is missing at {expected_blueprint}.")
 
         unreal.log(
             "Fay MetaHuman assembly succeeded. Blueprint: "
-            f"{EXPECTED_BLUEPRINT}"
+            f"{expected_blueprint}"
         )
         unreal.log_warning(f"Fay MetaHuman: {SPARK_OPTIMIZATION_NOTICE}")
     finally:
@@ -216,4 +240,4 @@ def assemble_ada():
 
 
 if __name__ == "__main__":
-    assemble_ada()
+    assemble_character(os.environ.get("FAY_METAHUMAN_CHARACTER", "Ada"))

@@ -8,11 +8,13 @@ project enables it only for Editor targets; packaged Game targets exclude it.
 The adapter reflects
 `UMetaHumanCharacterEditorSubsystem::InitializeFromPreset`, which is public C++
 in UE 5.8 but is not exposed directly to Blueprint or Python. The accompanying
-`Scripts/build_ada.py` creates a fresh character from Epic's included Ada
-preset, requests the face rig and texture sources, and assembles an **Optimized
-/ High** MetaHuman using **Joints and Blend Shapes**. It validates key copied
-preset state, removes any rig inherited from the preset, and confirms that the
-new cloud rig actually returned blend shapes before assembly.
+`Scripts/build_ada.py` is the fail-closed reviewed-preset builder. It defaults
+to Epic's included Ada preset; `Scripts/build_aoi.py` selects Aoi through the
+same implementation. Both request the face rig and texture sources and
+assemble an **Optimized / High** MetaHuman using **Joints and Blend Shapes**.
+The builder validates key copied preset state, removes any inherited rig,
+confirms that the new cloud rig returned blend shapes, never overwrites an
+existing character destination, and does not accept arbitrary preset paths.
 
 ## Spark optimization boundary
 

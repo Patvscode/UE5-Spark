@@ -79,6 +79,19 @@ content remain private and are not part of this repository.
   at 9.01 ms average / 15.79 ms p95; Unreal and the externally managed Fay
   process stayed alive. The body path fell back to idle and detected the
   restarted loopback service automatically without restarting Unreal or Fay.
+- The reviewed builder was generalized without permitting arbitrary presets or
+  overwrites. Epic's included Aoi preset assembled beside Ada on Spark, and a
+  fresh 947-package LinuxArm64 cook produced a sealed dual-character v13
+  package whose manifest deep-verifies both Blueprints.
+- Aoi launched from that native package using only `-FayCharacter=Aoi` and the
+  reviewed profile. The same StreamingADA and generated Core27 retarget paths
+  initialized without Aoi-specific C++. Two live turns solved 622 frames over
+  12.240 seconds at 15.87 ms p95 and 486 frames over 9.520 seconds at 15.91 ms
+  p95; the second turn continuously requested body poses.
+- The installed UE 5.8 Aoi preset is male. It remains a valid portability
+  fixture, but it does not satisfy the desired second-female appearance; Ada is
+  still the female demonstration character until another reviewed preset is
+  assembled.
 
 ## Important boundary
 
@@ -111,8 +124,8 @@ deployable application.
   actions such as `wave` and `invite`. No body montages are included today.
 - Tune gaze, breathing, idle motion, emotional range, lighting, LODs, and scene
   presentation for a polished long-running character experience.
-- Prove the second included female Aoi profile without character-specific C++
-  changes after its licensed assets are assembled locally.
+- Assemble and validate a second reviewed female preset. Aoi already proves the
+  no-character-specific-C++ portability requirement but is male in UE 5.8.
 - Complete malformed/out-of-order-frame coverage, a 30-minute mixed-action soak
   test, and the lightweight private progress hub.
 

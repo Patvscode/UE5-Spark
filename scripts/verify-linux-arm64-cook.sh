@@ -100,10 +100,10 @@ mapfile -t garment_material_functions < <(
         -print
 )
 if (( ${#garment_material_functions[@]} != 1 )); then
-    fail "expected exactly one cooked Ada garment material function; found ${#garment_material_functions[@]}"
+    fail "expected exactly one cooked MetaHuman garment material function; found ${#garment_material_functions[@]}"
 fi
 [[ -s ${garment_material_functions[0]} ]] || \
-    fail 'the cooked Ada garment material function is empty'
+    fail 'the cooked MetaHuman garment material function is empty'
 
 if find "$cook_root" -iname '*FayMetaHumanEditorTools*' -print -quit | grep -q .; then
     fail 'the Editor-only FayMetaHumanEditorTools plugin leaked into the cook'
@@ -113,5 +113,5 @@ printf 'Loose LinuxArm64 cook verification passed.\n'
 printf '  Reviewed character Blueprint(s): present (%s)\n' "${#character_package_assets[@]}"
 printf '  StreamingADA v2 model: present\n'
 printf '  MetaHuman common assets: present\n'
-printf '  Ada garment material dependency: present\n'
+printf '  MetaHuman garment material dependency: present\n'
 printf '  Editor-only helper: absent\n'
