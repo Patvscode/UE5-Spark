@@ -55,8 +55,16 @@ second launch path:
 ```bash
 ./scripts/run-spark-avatar-soak.sh \
   /path/to/FayAvatarRuntime-Arm64.sh \
-  FAY_PID /path/below/logs-private/rendered-idle 600 0
+  FAY_PID /path/below/logs-private/rendered-idle 720 0
 ```
+
+The reviewed idle gate ignores its first 120 seconds, then requires no more
+than 96 MiB of post-warm-up growth, an ordinary-least-squares slope no greater
+than 128 KiB/s across both the measured interval and final five minutes, and no
+more than two 7--18 MiB step-like increases in that final window. It aborts if
+Unreal exceeds 2.9 GiB RSS or unified `MemAvailable` drops below 48 GiB. These
+limits distinguish a stable warm-up from the recurring allocation staircase
+that a short endpoint-only gate can miss.
 
 Run a four-minute, four-turn 1280x720 qualification before the final endurance
 gate:

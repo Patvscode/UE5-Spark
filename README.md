@@ -196,7 +196,7 @@ runner, see [reliability and private progress](docs/reliability-and-progress.md)
    ```bash
    ./scripts/run-spark-avatar-soak.sh \
      /path/to/FayAvatarRuntime-Arm64.sh \
-     FAY_PID /path/below/logs-private/idle-diagnostic 600 0
+     FAY_PID /path/below/logs-private/idle-diagnostic 720 0
    ```
 
 Full instructions are in [build and deploy](docs/build-and-deploy.md). The

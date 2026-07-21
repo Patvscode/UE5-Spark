@@ -224,7 +224,12 @@ export FAY_SOAK_EXPECTED_UNREAL_EXE="$expected_unreal_exe"
 export FAY_SOAK_EXPECTED_RES_X="$res_x"
 export FAY_SOAK_EXPECTED_RES_Y="$res_y"
 export FAY_SOAK_MAX_TAIL_RSS_GROWTH_KB=${FAY_SOAK_MAX_TAIL_RSS_GROWTH_KB:-131072}
-export FAY_SOAK_MAX_RSS_KB=${FAY_SOAK_MAX_RSS_KB:-3145728}
+if (( turn_count == 0 )); then
+    export FAY_SOAK_MAX_RSS_KB=${FAY_SOAK_MAX_RSS_KB:-3040870}
+else
+    export FAY_SOAK_MAX_RSS_KB=${FAY_SOAK_MAX_RSS_KB:-3145728}
+fi
+export FAY_SOAK_MIN_MEM_AVAILABLE_KB=${FAY_SOAK_MIN_MEM_AVAILABLE_KB:-50331648}
 export FAY_SOAK_MAX_GPU_UTILIZATION_PERCENT=${FAY_SOAK_MAX_GPU_UTILIZATION_PERCENT:-95}
 
 "$soak_runner" "$runtime_pid" "$fay_pid" "$output_dir" "$duration" "$turn_count"

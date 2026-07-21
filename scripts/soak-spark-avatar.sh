@@ -19,8 +19,13 @@ duration=$4
 turn_count=$5
 max_tail_rss_growth_kb=${FAY_SOAK_MAX_TAIL_RSS_GROWTH_KB:-262144}
 max_rss_kb=${FAY_SOAK_MAX_RSS_KB:-0}
+min_mem_available_kb=${FAY_SOAK_MIN_MEM_AVAILABLE_KB:-0}
 max_gpu_utilization_percent=${FAY_SOAK_MAX_GPU_UTILIZATION_PERCENT:-85}
 max_face_p95_ms=${FAY_SOAK_MAX_FACE_P95_MS:-20}
+idle_warmup_seconds=${FAY_SOAK_IDLE_WARMUP_SECONDS:-120}
+max_idle_measurement_growth_kb=${FAY_SOAK_MAX_IDLE_MEASUREMENT_GROWTH_KB:-98304}
+max_idle_slope_kb_per_second=${FAY_SOAK_MAX_IDLE_SLOPE_KB_PER_SECOND:-128}
+max_idle_step_like_growth_count=${FAY_SOAK_MAX_IDLE_STEP_LIKE_GROWTH_COUNT:-2}
 require_rendered=${FAY_SOAK_REQUIRE_RENDERED:-0}
 require_normal_audio=${FAY_SOAK_REQUIRE_NORMAL_AUDIO:-$require_rendered}
 require_procedural_actions=${FAY_SOAK_REQUIRE_PROCEDURAL_ACTIONS:-$require_rendered}
@@ -36,10 +41,18 @@ expected_res_y=${FAY_SOAK_EXPECTED_RES_Y:-720}
     fail 'FAY_SOAK_MAX_TAIL_RSS_GROWTH_KB must be a non-negative integer'
 [[ $max_rss_kb =~ ^[0-9]+$ ]] || \
     fail 'FAY_SOAK_MAX_RSS_KB must be a non-negative integer'
+[[ $min_mem_available_kb =~ ^[0-9]+$ ]] || \
+    fail 'FAY_SOAK_MIN_MEM_AVAILABLE_KB must be a non-negative integer'
 [[ $max_gpu_utilization_percent =~ ^([0-9]|[1-9][0-9]|100)$ ]] || \
     fail 'FAY_SOAK_MAX_GPU_UTILIZATION_PERCENT must be an integer from 0 through 100'
 [[ $max_face_p95_ms =~ ^[0-9]+([.][0-9]+)?$ ]] || \
     fail 'FAY_SOAK_MAX_FACE_P95_MS must be a non-negative number'
+[[ $idle_warmup_seconds =~ ^[0-9]+$ && \
+    $max_idle_measurement_growth_kb =~ ^[0-9]+$ && \
+    $max_idle_step_like_growth_count =~ ^[0-9]+$ ]] || \
+    fail 'idle warm-up, growth, and step-count settings must be non-negative integers'
+[[ $max_idle_slope_kb_per_second =~ ^[0-9]+([.][0-9]+)?$ ]] || \
+    fail 'FAY_SOAK_MAX_IDLE_SLOPE_KB_PER_SECOND must be a non-negative number'
 [[ $require_rendered =~ ^[01]$ && $require_normal_audio =~ ^[01]$ && \
     $require_procedural_actions =~ ^[01]$ ]] || \
     fail 'rendered, normal-audio, and procedural-action requirements must be 0 or 1'
@@ -47,6 +60,9 @@ expected_res_y=${FAY_SOAK_EXPECTED_RES_Y:-720}
     fail 'expected rendered resolution must contain positive integers'
 (( duration >= turn_count && turn_count <= 100 )) || \
     fail 'duration must cover every turn and turn count must not exceed 100'
+if (( turn_count == 0 && duration < idle_warmup_seconds + 300 )); then
+    fail 'an idle diagnostic must include its warm-up plus at least 300 measured seconds'
+fi
 if [[ $require_rendered == 1 && -z $expected_unreal_input ]]; then
     fail 'FAY_SOAK_EXPECTED_UNREAL_EXE is required for a rendered soak'
 fi
@@ -162,6 +178,13 @@ sample_resources() {
     if (( high_gpu_samples >= 3 )); then
         fail "shared GPU utilization exceeded ${max_gpu_utilization_percent}% for three consecutive samples"
     fi
+    if (( max_rss_kb > 0 && rss > max_rss_kb )); then
+        fail "Unreal RSS exceeded the ${max_rss_kb} KiB safety ceiling"
+    fi
+    if (( min_mem_available_kb > 0 && available_memory_kb >= 0 &&
+        available_memory_kb < min_mem_available_kb )); then
+        fail "MemAvailable fell below the ${min_mem_available_kb} KiB safety floor"
+    fi
 }
 
 if (( turn_count == 0 )); then
@@ -208,6 +231,13 @@ last_rss=$(awk 'END {print $3}' "$metrics")
 max_rss=$(awk 'NR>1 && $3>m {m=$3} END {print m+0}' "$metrics")
 max_gpu_utilization=$(awk 'NR>1 && $5>m {m=$5} END {print m+0}' "$metrics")
 min_available_memory_kb=$(awk 'NR>1 && (m==0 || $6<m) {m=$6} END {print m+0}' "$metrics")
+rss_slope_kb_per_second=$(awk '
+    NR > 1 {n++; sx += $1; sy += $3; sxx += $1 * $1; sxy += $1 * $3}
+    END {
+        denominator = n * sxx - sx * sx
+        if (n < 2 || denominator == 0) print "0.00"
+        else printf "%.2f\n", (n * sxy - sx * sy) / denominator
+    }' "$metrics")
 half_duration=$((duration / 2))
 tail_start_rss=$(awk -v half="$half_duration" 'NR>1 && $1>=half {print $3; exit}' "$metrics")
 [[ $tail_start_rss =~ ^[0-9]+$ ]] || tail_start_rss=$first_rss
@@ -217,14 +247,75 @@ tail_rss_growth_kb=$((last_rss - tail_start_rss))
 status=passed
 if (( turn_count == 0 )); then
     run_mode=idle
+    idle_measurement_start_rss=$(awk -v warmup="$idle_warmup_seconds" \
+        'NR>1 && $1>=warmup {print $3; exit}' "$metrics")
+    [[ $idle_measurement_start_rss =~ ^[0-9]+$ ]] || \
+        fail 'idle measurement did not contain a post-warm-up RSS sample'
+    idle_measurement_growth_kb=$((last_rss - idle_measurement_start_rss))
+    (( idle_measurement_growth_kb < 0 )) && idle_measurement_growth_kb=0
+    idle_slope_kb_per_second=$(awk -v warmup="$idle_warmup_seconds" '
+        NR > 1 && $1 >= warmup {
+            n++; sx += $1; sy += $3; sxx += $1 * $1; sxy += $1 * $3
+        }
+        END {
+            denominator = n * sxx - sx * sx
+            if (n < 2 || denominator == 0) print "0.00"
+            else printf "%.2f\n", (n * sxy - sx * sy) / denominator
+        }' "$metrics")
+    idle_final_window_start=$((duration - 300))
+    idle_final_slope_kb_per_second=$(awk -v window="$idle_final_window_start" '
+        NR > 1 && $1 >= window {
+            n++; sx += $1; sy += $3; sxx += $1 * $1; sxy += $1 * $3
+        }
+        END {
+            denominator = n * sxx - sx * sx
+            if (n < 2 || denominator == 0) print "0.00"
+            else printf "%.2f\n", (n * sxy - sx * sy) / denominator
+        }' "$metrics")
+    idle_step_like_growth_count=$(awk -v window="$idle_final_window_start" '
+        NR > 1 && $1 >= window {
+            if (have_previous) {
+                delta = $3 - previous
+                if (delta >= 7168 && delta <= 18432) count++
+            }
+            previous = $3
+            have_previous = 1
+        }
+        END {print count + 0}' "$metrics")
 else
     run_mode=speech
+    idle_measurement_start_rss=0
+    idle_measurement_growth_kb=0
+    idle_slope_kb_per_second=0.00
+    idle_final_window_start=0
+    idle_final_slope_kb_per_second=0.00
+    idle_step_like_growth_count=0
 fi
 if (( tail_rss_growth_kb > max_tail_rss_growth_kb )); then
     status=failed
 fi
 if (( max_rss_kb > 0 && max_rss > max_rss_kb )); then
     status=failed
+fi
+if (( min_mem_available_kb > 0 && min_available_memory_kb >= 0 &&
+    min_available_memory_kb < min_mem_available_kb )); then
+    status=failed
+fi
+if (( turn_count == 0 )); then
+    if (( idle_measurement_growth_kb > max_idle_measurement_growth_kb ||
+        idle_step_like_growth_count > max_idle_step_like_growth_count )); then
+        status=failed
+    fi
+    if awk -v observed="$idle_slope_kb_per_second" \
+        -v limit="$max_idle_slope_kb_per_second" \
+        'BEGIN {exit !(observed > limit)}'; then
+        status=failed
+    fi
+    if awk -v observed="$idle_final_slope_kb_per_second" \
+        -v limit="$max_idle_slope_kb_per_second" \
+        'BEGIN {exit !(observed > limit)}'; then
+        status=failed
+    fi
 fi
 
 facial_summaries="$output_dir/facial-summaries.log"
@@ -337,7 +428,9 @@ fi
     printf 'rss_tail_start_kb=%s\n' "$tail_start_rss"
     printf 'rss_tail_growth_kb=%s\n' "$tail_rss_growth_kb"
     printf 'rss_tail_growth_limit_kb=%s\n' "$max_tail_rss_growth_kb"
+    printf 'rss_slope_kb_per_second=%s\n' "$rss_slope_kb_per_second"
     printf 'mem_available_min_kb=%s\n' "$min_available_memory_kb"
+    printf 'mem_available_min_limit_kb=%s\n' "$min_mem_available_kb"
     printf 'gpu_utilization_max_percent=%s\n' "$max_gpu_utilization"
     printf 'gpu_utilization_sustained_threshold_percent=%s\n' \
         "$max_gpu_utilization_percent"
@@ -356,6 +449,16 @@ fi
     printf 'procedural_action_failures=%s\n' "$procedural_action_failures"
     printf 'runtime_failure_count=%s\n' "$runtime_failure_count"
     printf 'kernel_failure_count=%s\n' "$kernel_failure_count"
+    printf 'idle_warmup_seconds=%s\n' "$idle_warmup_seconds"
+    printf 'idle_measurement_start_rss_kb=%s\n' "$idle_measurement_start_rss"
+    printf 'idle_measurement_growth_kb=%s\n' "$idle_measurement_growth_kb"
+    printf 'idle_measurement_growth_limit_kb=%s\n' "$max_idle_measurement_growth_kb"
+    printf 'idle_slope_kb_per_second=%s\n' "$idle_slope_kb_per_second"
+    printf 'idle_final_window_start_seconds=%s\n' "$idle_final_window_start"
+    printf 'idle_final_slope_kb_per_second=%s\n' "$idle_final_slope_kb_per_second"
+    printf 'idle_slope_limit_kb_per_second=%s\n' "$max_idle_slope_kb_per_second"
+    printf 'idle_step_like_growth_count=%s\n' "$idle_step_like_growth_count"
+    printf 'idle_step_like_growth_limit=%s\n' "$max_idle_step_like_growth_count"
 } >"$summary"
 
 if [[ $status != passed ]]; then
