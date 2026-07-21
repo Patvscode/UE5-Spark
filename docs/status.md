@@ -130,8 +130,24 @@ content remain private and are not part of this repository.
   delegated those actions without taking body ownership. Three completed
   speech turns retained exact frame accounting (98/1.760 s, 162/3.040 s, and
   346/6.720 s), all at 6.27 ms p95 or lower. No fatal marker appeared and Fay
-  remained alive after verified teardown. Rendered gesture-angle review is
-  still required before calling the poses polished.
+  remained alive after verified teardown.
+- v16 also rendered Ada through native Vulkan at 1080p and 720p. Front-view
+  private captures confirmed recognizable wave and invite poses, continuous
+  facial speech, and no visible root jump or face/head ownership conflict. A
+  rendered soak was stopped at turn seven because RSS was still increasing by
+  roughly 74--80 MiB per utterance; that result is retained as a failure.
+- v17 and v18 added immediate and delayed allocator trimming. The v18 rendered
+  eight-turn gate passed its bounded tail-growth, exact-frame, 20 ms facial
+  p95, and 95 percent GPU ceilings, but the longer warm slope still justified
+  a stronger completed-speech cleanup rather than declaring a soak pass.
+- The sealed dual-character v19 package now collects completed speech objects
+  before its delayed allocator trim. Its GPU-independent eight-turn gate passed
+  over 242 seconds with exact facial accounting, 6.24 ms worst p95, and only
+  892 KiB of latter-half RSS growth. A rendered v19 launch was unable to create
+  a Vulkan context because unrelated model servers left about 38 GiB of Spark's
+  unified memory available; NVIDIA reported `NV_ERR_NO_MEMORY`. No unrelated
+  workload was stopped. The launcher now requires a reviewed 48 GiB unified-
+  memory reserve before Vulkan startup, while allowing Null-RHI diagnostics.
 
 ## Important boundary
 
@@ -153,7 +169,7 @@ deployable application.
   buffer, baseline calibration, head/face mask, bounded root motion, blend-in,
   cached-pose fade-out, and automatic service recovery now run natively on
   Spark without replacing StreamingADA.
-- Visually tune the compiled and packaged deterministic procedural gesture
+- Further visually tune the compiled and packaged deterministic procedural gesture
   fallback. It supplies character-neutral `wave`, `invite`, `think`, `warn`,
   and conversational arm/wrist poses when no reviewed montage is configured;
   compatible private montages retain precedence. `nod` and `shake` remain
@@ -169,7 +185,8 @@ deployable application.
   presentation for a polished long-running character experience.
 - Assemble and validate a second reviewed female preset. Aoi already proves the
   no-character-specific-C++ portability requirement but is male in UE 5.8.
-- Complete a rendered v15/v16 face-plus-body soak under available GPU headroom.
+- Complete the rendered v19 face-plus-body soak when at least 48 GiB of unified
+  memory is available.
   The 30-minute speech/face/memory gate and the earlier malformed-envelope,
   stale-sequence, and service-recovery injections pass; visual motion,
   sustained Vulkan frame rate, foot sliding, and head-conflict review remain.
