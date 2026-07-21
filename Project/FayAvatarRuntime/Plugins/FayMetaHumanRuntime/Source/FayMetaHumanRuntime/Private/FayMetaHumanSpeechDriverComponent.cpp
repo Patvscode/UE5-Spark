@@ -942,13 +942,32 @@ struct FFayMetaHumanSpeechRuntimeState
         return OutValues.Num() == RawControlNames.Num() + ExtraLiveLinkProperties;
     }
 
+    bool PushNeutralHeadPose(const FFayHeadPose& HeadPose) const
+    {
+        if (!Source.IsValid() ||
+            NeutralPropertyValues.Num() != RawControlNames.Num() + ExtraLiveLinkProperties ||
+            !FMath::IsFinite(HeadPose.RollDegrees) ||
+            !FMath::IsFinite(HeadPose.PitchDegrees) ||
+            !FMath::IsFinite(HeadPose.YawDegrees))
+        {
+            return false;
+        }
+
+        TArray<float> PropertyValues = NeutralPropertyValues;
+        const int32 HeadPoseOffset = RawControlNames.Num();
+        PropertyValues[HeadPoseOffset] = HeadPose.bDriveOrientation ? 1.0f : 0.0f;
+        PropertyValues[HeadPoseOffset + 1] = HeadPose.RollDegrees;
+        PropertyValues[HeadPoseOffset + 2] = HeadPose.PitchDegrees;
+        PropertyValues[HeadPoseOffset + 3] = HeadPose.YawDegrees;
+        return Source->PushValues(
+            PropertyValues,
+            !HeadPose.bDriveOrientation,
+            HeadPose.bDriveOrientation);
+    }
+
     bool PushNeutral() const
     {
-        if (Source.IsValid() && NeutralPropertyValues.Num() > 0)
-        {
-            return Source->PushValues(NeutralPropertyValues, true, false);
-        }
-        return false;
+        return PushNeutralHeadPose(FFayHeadPose());
     }
 };
 
@@ -1010,6 +1029,11 @@ void UFayMetaHumanSpeechDriverComponent::EndPlay(const EEndPlayReason::Type EndP
     PendingAvatar = nullptr;
     ShutdownSource();
     ResetSpeechState();
+    bActionHeadGestureActive = false;
+    ActionHeadGestureElapsedSeconds = 0.0f;
+    ActionHeadGestureDurationSeconds = 0.0f;
+    ActionHeadGestureStrength = 0.0f;
+    ActionHeadGestureValue = static_cast<uint8>(EFaySemanticHeadGesture::None);
     SpeechModel = nullptr;
     RuntimeState.Reset();
     Super::EndPlay(EndPlayReason);
@@ -1024,6 +1048,9 @@ void UFayMetaHumanSpeechDriverComponent::AttachBridge(UFayAvatarBridgeComponent*
     if (Bridge != nullptr)
     {
         Bridge->OnDecodedPcm.RemoveAll(this);
+        Bridge->OnMessageReceived.RemoveDynamic(
+            this,
+            &UFayMetaHumanSpeechDriverComponent::HandleAvatarMessage);
         Bridge->OnSpeechStarted.RemoveDynamic(this, &UFayMetaHumanSpeechDriverComponent::HandleSpeechStarted);
         Bridge->OnSpeechFinished.RemoveDynamic(this, &UFayMetaHumanSpeechDriverComponent::HandleSpeechFinished);
     }
@@ -1032,6 +1059,9 @@ void UFayMetaHumanSpeechDriverComponent::AttachBridge(UFayAvatarBridgeComponent*
     if (Bridge != nullptr)
     {
         Bridge->OnDecodedPcm.AddUObject(this, &UFayMetaHumanSpeechDriverComponent::HandleDecodedPcm);
+        Bridge->OnMessageReceived.AddUniqueDynamic(
+            this,
+            &UFayMetaHumanSpeechDriverComponent::HandleAvatarMessage);
         Bridge->OnSpeechStarted.AddDynamic(this, &UFayMetaHumanSpeechDriverComponent::HandleSpeechStarted);
         Bridge->OnSpeechFinished.AddDynamic(this, &UFayMetaHumanSpeechDriverComponent::HandleSpeechFinished);
     }
@@ -1541,6 +1571,11 @@ bool UFayMetaHumanSpeechDriverComponent::RestoreConfiguredAvatar()
     LiveLinkHeartbeatElapsedSeconds = 0.0;
     LiveLinkPendingElapsedSeconds = 0.0;
     bLiveLinkPendingGraceLogged = false;
+    bActionHeadGestureActive = false;
+    ActionHeadGestureElapsedSeconds = 0.0f;
+    ActionHeadGestureDurationSeconds = 0.0f;
+    ActionHeadGestureStrength = 0.0f;
+    ActionHeadGestureValue = static_cast<uint8>(EFaySemanticHeadGesture::None);
     return bRestored;
 }
 
@@ -1599,6 +1634,49 @@ void UFayMetaHumanSpeechDriverComponent::HandleDecodedPcm(
         RuntimeState->Solver->ClearCache();
     }
     bSpeechPrepared = true;
+}
+
+void UFayMetaHumanSpeechDriverComponent::HandleAvatarMessage(
+    const FFayAvatarMessage& Message)
+{
+    // Audio-backed messages enter HandleSpeechStarted after their PCM has been
+    // prepared. This path exists only for action-only MCP events so head-owned
+    // behaviors remain visible without giving the body layer neck/head bones.
+    if (!Message.AudioUrl.IsEmpty() || !Message.Action.bIsValid ||
+        !bEnableSemanticHeadGestures || !IsAvatarConfigured())
+    {
+        return;
+    }
+
+    const EFaySemanticHeadGesture Gesture = ResolveSemanticHeadGesture(Message);
+    if (Gesture != EFaySemanticHeadGesture::Nod &&
+        Gesture != EFaySemanticHeadGesture::Shake &&
+        Gesture != EFaySemanticHeadGesture::Think &&
+        Gesture != EFaySemanticHeadGesture::Warn)
+    {
+        return;
+    }
+
+    const float RequestedIntensity = FMath::IsFinite(Message.Action.Intensity)
+        ? FMath::Clamp(Message.Action.Intensity, 0.0f, 1.0f)
+        : 0.0f;
+    const float RequestedDuration = FMath::IsFinite(Message.DurationHintSeconds) &&
+            Message.DurationHintSeconds > 0.0f
+        ? FMath::Clamp(Message.DurationHintSeconds, 0.2f, 10.0f)
+        : GetGestureBaseDurationSeconds(Gesture);
+    ActionHeadGestureValue = static_cast<uint8>(Gesture);
+    ActionHeadGestureStrength = FMath::Lerp(0.45f, 1.0f, RequestedIntensity);
+    ActionHeadGestureDurationSeconds = FMath::Min(
+        GetGestureBaseDurationSeconds(Gesture),
+        RequestedDuration);
+    ActionHeadGestureElapsedSeconds = 0.0f;
+    bActionHeadGestureActive = true;
+    LiveLinkHeartbeatElapsedSeconds = 0.0;
+    UE_LOG(LogFayMetaHumanRuntime, Display,
+        TEXT("Started action-only Fay head gesture '%s' (duration_seconds=%.2f, intensity=%.2f)."),
+        *Message.Action.Behavior,
+        ActionHeadGestureDurationSeconds,
+        RequestedIntensity);
 }
 
 void UFayMetaHumanSpeechDriverComponent::HandleSpeechStarted(
@@ -1668,10 +1746,11 @@ void UFayMetaHumanSpeechDriverComponent::TickComponent(
     FActorComponentTickFunction* ThisTickFunction)
 {
     Super::TickComponent(DeltaTime, TickType, ThisTickFunction);
+    const float SafeDeltaSeconds = FMath::Max(DeltaTime, 0.0f);
 
     if (PendingMemoryTrimSeconds >= 0.0f)
     {
-        PendingMemoryTrimSeconds -= FMath::Max(DeltaTime, 0.0f);
+        PendingMemoryTrimSeconds -= SafeDeltaSeconds;
         if (PendingMemoryTrimSeconds <= 0.0f &&
             (Bridge == nullptr || !Bridge->IsSpeechPlaying()))
         {
@@ -1693,7 +1772,7 @@ void UFayMetaHumanSpeechDriverComponent::TickComponent(
         // attached the subject. Keep publishing the same bounded neutral frame
         // until the exact source becomes evaluable; this also makes a cold
         // launch independent of scheduler timing.
-        LiveLinkHeartbeatElapsedSeconds += FMath::Max(DeltaTime, 0.0f);
+        LiveLinkHeartbeatElapsedSeconds += SafeDeltaSeconds;
         if (IsSolverReady() &&
             LiveLinkHeartbeatElapsedSeconds >= LiveLinkHeartbeatSeconds)
         {
@@ -1706,13 +1785,13 @@ void UFayMetaHumanSpeechDriverComponent::TickComponent(
     if (IsValid(Avatar) && IsSolverReady())
     {
         const bool bSpeechDriving = bSpeechPrepared && bSpeechStarted;
-        if (bSpeechDriving)
+        if (bSpeechDriving || bActionHeadGestureActive)
         {
             LiveLinkHeartbeatElapsedSeconds = 0.0;
         }
         else
         {
-            LiveLinkHeartbeatElapsedSeconds += FMath::Max(DeltaTime, 0.0f);
+            LiveLinkHeartbeatElapsedSeconds += SafeDeltaSeconds;
             if (LiveLinkHeartbeatElapsedSeconds >= LiveLinkHeartbeatSeconds)
             {
                 RuntimeState->PushNeutral();
@@ -1800,6 +1879,43 @@ void UFayMetaHumanSpeechDriverComponent::TickComponent(
         }
     }
 
+    const bool bSpeechDriving = bSpeechPrepared && bSpeechStarted;
+    if (bActionHeadGestureActive && IsAvatarConfigured())
+    {
+        ActionHeadGestureElapsedSeconds += SafeDeltaSeconds;
+        const EFaySemanticHeadGesture ActionGesture =
+            static_cast<EFaySemanticHeadGesture>(ActionHeadGestureValue);
+        if (ActionHeadGestureElapsedSeconds >= ActionHeadGestureDurationSeconds)
+        {
+            if (!bSpeechDriving)
+            {
+                RuntimeState->PushNeutral();
+            }
+            bActionHeadGestureActive = false;
+            ActionHeadGestureElapsedSeconds = 0.0f;
+            ActionHeadGestureDurationSeconds = 0.0f;
+            ActionHeadGestureStrength = 0.0f;
+            ActionHeadGestureValue = static_cast<uint8>(EFaySemanticHeadGesture::None);
+            UE_LOG(LogFayMetaHumanRuntime, Display,
+                TEXT("Completed action-only Fay head gesture."));
+        }
+        else if (!bSpeechDriving)
+        {
+            const FFayHeadPose ActionHeadPose = EvaluateHeadGesture(
+                ActionGesture,
+                ActionHeadGestureElapsedSeconds,
+                ActionHeadGestureDurationSeconds,
+                ActionHeadGestureStrength,
+                MaximumHeadGestureDegrees);
+            if (!RuntimeState->PushNeutralHeadPose(ActionHeadPose))
+            {
+                UE_LOG(LogFayMetaHumanRuntime, Warning,
+                    TEXT("Live Link rejected an action-only Fay head-gesture frame."));
+                bActionHeadGestureActive = false;
+            }
+        }
+    }
+
     if (!bSpeechPrepared || !bSpeechStarted || !IsSolverReady())
     {
         return;
@@ -1811,7 +1927,7 @@ void UFayMetaHumanSpeechDriverComponent::TickComponent(
         return;
     }
 
-    AnimationElapsedSeconds += FMath::Max(DeltaTime, 0.0f);
+    AnimationElapsedSeconds += SafeDeltaSeconds;
     if (!bSpeechFinished && Bridge != nullptr && !Bridge->IsSpeechPlaying() &&
         AnimationElapsedSeconds > 0.1)
     {
@@ -1910,12 +2026,25 @@ bool UFayMetaHumanSpeechDriverComponent::SolveNextFrame()
         GuiToRawControlsUtils::ConvertGuiToRawControls(GuiControls);
     const float GestureElapsedSeconds = static_cast<float>(SolvedStepCount - 1) /
         static_cast<float>(SolverFramesPerSecond);
-    const FFayHeadPose HeadPose = EvaluateHeadGesture(
+    FFayHeadPose HeadPose = EvaluateHeadGesture(
         static_cast<EFaySemanticHeadGesture>(HeadGestureValue),
         GestureElapsedSeconds,
         HeadGestureDurationSeconds,
         HeadGestureStrength,
         MaximumHeadGestureDegrees);
+    if (bActionHeadGestureActive)
+    {
+        const FFayHeadPose ActionHeadPose = EvaluateHeadGesture(
+            static_cast<EFaySemanticHeadGesture>(ActionHeadGestureValue),
+            ActionHeadGestureElapsedSeconds,
+            ActionHeadGestureDurationSeconds,
+            ActionHeadGestureStrength,
+            MaximumHeadGestureDegrees);
+        if (ActionHeadPose.bDriveOrientation)
+        {
+            HeadPose = ActionHeadPose;
+        }
+    }
     TArray<float> PropertyValues;
     if (!RuntimeState->TryMakePropertyValues(RawControls, PropertyValues, HeadPose))
     {

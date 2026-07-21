@@ -125,6 +125,9 @@ private:
         int32 NumChannels);
 
     UFUNCTION()
+    void HandleAvatarMessage(const FFayAvatarMessage& Message);
+
+    UFUNCTION()
     void HandleSpeechStarted(const FFayAvatarMessage& Message, float DurationSeconds);
 
     UFUNCTION()
@@ -156,9 +159,13 @@ private:
     float MoodIntensity = 1.0f;
     float HeadGestureStrength = 0.0f;
     float HeadGestureDurationSeconds = 0.0f;
+    float ActionHeadGestureElapsedSeconds = 0.0f;
+    float ActionHeadGestureStrength = 0.0f;
+    float ActionHeadGestureDurationSeconds = 0.0f;
     float PendingMemoryTrimSeconds = -1.0f;
     uint8 MoodValue = 0;
     uint8 HeadGestureValue = 0;
+    uint8 ActionHeadGestureValue = 0;
     FName OriginalActorLiveLinkSubject = NAME_None;
 
     UPROPERTY(Transient)
@@ -176,4 +183,5 @@ private:
     bool bSpeechPrepared = false;
     bool bSpeechStarted = false;
     bool bSpeechFinished = false;
+    bool bActionHeadGestureActive = false;
 };
