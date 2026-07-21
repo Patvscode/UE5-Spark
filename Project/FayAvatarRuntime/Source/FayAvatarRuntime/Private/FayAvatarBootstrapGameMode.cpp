@@ -27,6 +27,39 @@ namespace
 constexpr TCHAR AvatarSettingsSection[] = TEXT("FayAvatar");
 constexpr TCHAR DefaultCharacterId[] = TEXT("Ada");
 constexpr TCHAR RequiredAdapter[] = TEXT("UE58MetaHuman");
+constexpr double LiveLinkRecoveryDelaysSeconds[] = {1.0, 2.0, 4.0, 8.0, 16.0};
+constexpr double LiveLinkRecoveryHealthyResetSeconds = 10.0;
+constexpr int32 MaximumLiveLinkRecoveryAttempts =
+    UE_ARRAY_COUNT(LiveLinkRecoveryDelaysSeconds);
+
+const TCHAR* GetLiveLinkFailureName(const EFayMetaHumanLiveLinkFailure Failure)
+{
+    switch (Failure)
+    {
+    case EFayMetaHumanLiveLinkFailure::None:
+        return TEXT("none");
+    case EFayMetaHumanLiveLinkFailure::PendingTimeout:
+        return TEXT("pending-timeout");
+    case EFayMetaHumanLiveLinkFailure::ConsumerLost:
+        return TEXT("consumer-lost");
+    case EFayMetaHumanLiveLinkFailure::AvatarUnavailable:
+        return TEXT("avatar-unavailable");
+    case EFayMetaHumanLiveLinkFailure::SourceUnavailable:
+        return TEXT("source-unavailable");
+    case EFayMetaHumanLiveLinkFailure::SubjectCollision:
+        return TEXT("subject-collision");
+    case EFayMetaHumanLiveLinkFailure::SubjectInvalid:
+        return TEXT("subject-invalid");
+    case EFayMetaHumanLiveLinkFailure::RestoreFailed:
+        return TEXT("restore-failed");
+    case EFayMetaHumanLiveLinkFailure::ConfigurationRejected:
+        return TEXT("configuration-rejected");
+    case EFayMetaHumanLiveLinkFailure::RecoveryExhausted:
+        return TEXT("recovery-exhausted");
+    default:
+        return TEXT("unknown");
+    }
+}
 
 bool IsReviewedCharacterId(const FString& Value)
 {
@@ -133,6 +166,10 @@ void AFayAvatarBootstrapGameMode::BeginPlay()
     }
     if (SpeechDriver != nullptr)
     {
+        SpeechDriver->OnLiveLinkStateChanged.RemoveAll(this);
+        SpeechDriver->OnLiveLinkStateChanged.AddUObject(
+            this,
+            &AFayAvatarBootstrapGameMode::HandleLiveLinkStateChanged);
         SpeechDriver->AttachBridge(Bridge);
     }
     if (BodyMotion != nullptr)
@@ -161,9 +198,23 @@ void AFayAvatarBootstrapGameMode::BeginPlay()
     TrySpawnMetaHuman();
 }
 
+void AFayAvatarBootstrapGameMode::EndPlay(
+    const EEndPlayReason::Type EndPlayReason)
+{
+    bEndingPlay = true;
+    bLiveLinkRecoveryScheduled = false;
+    bLiveLinkRecoveryExhaustionPending = false;
+    if (SpeechDriver != nullptr)
+    {
+        SpeechDriver->OnLiveLinkStateChanged.RemoveAll(this);
+    }
+    Super::EndPlay(EndPlayReason);
+}
+
 void AFayAvatarBootstrapGameMode::Tick(const float DeltaSeconds)
 {
     Super::Tick(DeltaSeconds);
+    TickLiveLinkRecovery(DeltaSeconds);
 
     if (!bViewClaimed)
     {
@@ -179,26 +230,6 @@ void AFayAvatarBootstrapGameMode::Tick(const float DeltaSeconds)
         }
     }
 
-    if (bLiveLinkConfigurationRequested && !bLiveLinkConfigured && SpeechDriver != nullptr)
-    {
-        if (SpeechDriver->IsAvatarConfigured())
-        {
-            bLiveLinkConfigured = true;
-            bLiveLinkConfigurationRequested = false;
-            UE_LOG(LogFayAvatarRuntime, Display,
-                TEXT("Character '%s' has an enabled and evaluable Fay Live Link source."),
-                *ActiveCharacterId);
-        }
-        else if (!SpeechDriver->IsAvatarConfigurationPending())
-        {
-            bLiveLinkConfigurationRequested = false;
-            UE_LOG(LogFayAvatarRuntime, Warning,
-                TEXT("Character '%s' ended Live Link configuration without a verified consumer; "
-                     "retaining the jaw fallback when available."),
-                *ActiveCharacterId);
-        }
-    }
-
     if (IsValid(MetaHumanActor))
     {
         DriveJawFallback();
@@ -207,6 +238,168 @@ void AFayAvatarBootstrapGameMode::Tick(const float DeltaSeconds)
     {
         DrawSmokeScene();
     }
+}
+
+void AFayAvatarBootstrapGameMode::HandleLiveLinkStateChanged(
+    const EFayMetaHumanLiveLinkState State,
+    const EFayMetaHumanLiveLinkFailure Failure)
+{
+    if (bEndingPlay)
+    {
+        return;
+    }
+
+    const bool bWasJawFallbackActive = bJawFallbackActive;
+    bLiveLinkConfigured = State == EFayMetaHumanLiveLinkState::Configured;
+    bLiveLinkConfigurationRequested =
+        State == EFayMetaHumanLiveLinkState::Configuring;
+
+    if (State == EFayMetaHumanLiveLinkState::Configured)
+    {
+        if (bWasJawFallbackActive && IsValid(FaceMesh) &&
+            !JawMorphTarget.IsNone())
+        {
+            // A skipped utterance may leave a non-zero fallback morph. Clear
+            // it before learned Live Link takes exclusive facial ownership.
+            FaceMesh->SetMorphTarget(JawMorphTarget, 0.0f, false);
+        }
+        bJawFallbackActive = false;
+        bLiveLinkRecoveryScheduled = false;
+        bLiveLinkRecoveryExhaustionPending = false;
+        LiveLinkRecoveryDelayRemainingSeconds = 0.0;
+        UE_LOG(LogFayAvatarRuntime, Display,
+            TEXT("Character '%s' has an enabled and evaluable Fay Live Link source."),
+            *ActiveCharacterId);
+        return;
+    }
+
+    if (State == EFayMetaHumanLiveLinkState::RecoveryBackoff)
+    {
+        bJawFallbackActive = true;
+        bLiveLinkConfigurationRequested = false;
+        if (LiveLinkRecoveryAttemptCount >= MaximumLiveLinkRecoveryAttempts)
+        {
+            bLiveLinkRecoveryScheduled = false;
+            bLiveLinkRecoveryExhaustionPending = true;
+            UE_LOG(LogFayAvatarRuntime, Error,
+                TEXT("Character '%s' exhausted %d bounded Live Link recovery attempts; retaining the jaw fallback when available."),
+                *ActiveCharacterId,
+                MaximumLiveLinkRecoveryAttempts);
+            return;
+        }
+
+        LiveLinkRecoveryDelayRemainingSeconds =
+            LiveLinkRecoveryDelaysSeconds[LiveLinkRecoveryAttemptCount];
+        bLiveLinkRecoveryScheduled = true;
+        bLiveLinkRecoveryExhaustionPending = false;
+        UE_LOG(LogFayAvatarRuntime, Warning,
+            TEXT("Character '%s' entered degraded Live Link mode (failure=%s); retry %d/%d is scheduled in %.1f seconds and jaw fallback remains available."),
+            *ActiveCharacterId,
+            GetLiveLinkFailureName(Failure),
+            LiveLinkRecoveryAttemptCount + 1,
+            MaximumLiveLinkRecoveryAttempts,
+            LiveLinkRecoveryDelayRemainingSeconds);
+        return;
+    }
+
+    bLiveLinkRecoveryScheduled = false;
+    bLiveLinkRecoveryExhaustionPending = false;
+    LiveLinkRecoveryDelayRemainingSeconds = 0.0;
+    bJawFallbackActive = State != EFayMetaHumanLiveLinkState::TerminalFailure ||
+        Failure != EFayMetaHumanLiveLinkFailure::RestoreFailed;
+    if (State == EFayMetaHumanLiveLinkState::TerminalFailure)
+    {
+        if (Failure == EFayMetaHumanLiveLinkFailure::RestoreFailed)
+        {
+            UE_LOG(LogFayAvatarRuntime, Error,
+                TEXT("Character '%s' entered terminal Live Link degradation (failure=restore-failed); all further adapter avatar writes are blocked."),
+                *ActiveCharacterId);
+        }
+        else
+        {
+            UE_LOG(LogFayAvatarRuntime, Error,
+                TEXT("Character '%s' entered terminal Live Link degradation (failure=%s); retaining the jaw fallback when available."),
+                *ActiveCharacterId,
+                GetLiveLinkFailureName(Failure));
+        }
+    }
+}
+
+void AFayAvatarBootstrapGameMode::TickLiveLinkRecovery(const float DeltaSeconds)
+{
+    if (bEndingPlay || SpeechDriver == nullptr)
+    {
+        return;
+    }
+    const double SafeDeltaSeconds =
+        static_cast<double>(FMath::Max(DeltaSeconds, 0.0f));
+    if (bLiveLinkConfigured)
+    {
+        if (!SpeechDriver->IsLiveLinkHealthyCached())
+        {
+            return;
+        }
+        if (LiveLinkRecoveryAttemptCount > 0)
+        {
+            const double HealthySeconds =
+                SpeechDriver->GetConsecutiveLiveLinkHealthySeconds();
+            if (HealthySeconds >=
+                LiveLinkRecoveryHealthyResetSeconds)
+            {
+                UE_LOG(LogFayAvatarRuntime, Display,
+                    TEXT("Character '%s' completed %.0f continuous healthy Live Link seconds; resetting the recovery episode."),
+                    *ActiveCharacterId,
+                    LiveLinkRecoveryHealthyResetSeconds);
+                LiveLinkRecoveryAttemptCount = 0;
+            }
+        }
+        return;
+    }
+    if (bLiveLinkRecoveryExhaustionPending)
+    {
+        bLiveLinkRecoveryExhaustionPending = false;
+        SpeechDriver->AbandonAvatarRecovery();
+        return;
+    }
+    if (!bLiveLinkRecoveryScheduled)
+    {
+        return;
+    }
+    if (!IsValid(MetaHumanActor))
+    {
+        bLiveLinkRecoveryScheduled = false;
+        SpeechDriver->AbandonAvatarRecovery();
+        return;
+    }
+
+    LiveLinkRecoveryDelayRemainingSeconds -= SafeDeltaSeconds;
+    if (LiveLinkRecoveryDelayRemainingSeconds > 0.0)
+    {
+        return;
+    }
+    if (Bridge != nullptr && Bridge->HasPendingSpeechWork())
+    {
+        return;
+    }
+    if (BodyMotion == nullptr)
+    {
+        bLiveLinkRecoveryScheduled = false;
+        SpeechDriver->AbandonAvatarRecovery();
+        return;
+    }
+    if (!BodyMotion->CanEnterDormancy())
+    {
+        return;
+    }
+
+    bLiveLinkRecoveryScheduled = false;
+    ++LiveLinkRecoveryAttemptCount;
+    UE_LOG(LogFayAvatarRuntime, Display,
+        TEXT("Attempting sealed Live Link recovery for character '%s' (%d/%d)."),
+        *ActiveCharacterId,
+        LiveLinkRecoveryAttemptCount,
+        MaximumLiveLinkRecoveryAttempts);
+    SpeechDriver->RetryLastAvatarConfiguration();
 }
 
 bool AFayAvatarBootstrapGameMode::LoadCharacterProfile()
@@ -346,6 +539,11 @@ void AFayAvatarBootstrapGameMode::TrySpawnMetaHuman()
     {
         BodyMotion->ConfigureAvatar(MetaHumanActor, BodyComponentName);
     }
+    LiveLinkRecoveryAttemptCount = 0;
+    LiveLinkRecoveryDelayRemainingSeconds = 0.0;
+    bLiveLinkRecoveryScheduled = false;
+    bLiveLinkRecoveryExhaustionPending = false;
+    bJawFallbackActive = true;
     bLiveLinkConfigured = false;
     bLiveLinkConfigurationRequested = SpeechDriver != nullptr &&
         SpeechDriver->IsSolverReady();
@@ -420,7 +618,7 @@ void AFayAvatarBootstrapGameMode::ResolveFaceAndJawMorph()
 
 void AFayAvatarBootstrapGameMode::DriveJawFallback() const
 {
-    if (bLiveLinkConfigured || Bridge == nullptr || FaceMesh == nullptr ||
+    if (!bJawFallbackActive || Bridge == nullptr || FaceMesh == nullptr ||
         JawMorphTarget.IsNone())
     {
         return;

@@ -13,12 +13,14 @@ class UFayBodyMotionComponent;
 class UFayMetaHumanSpeechDriverComponent;
 class UPointLightComponent;
 class USkeletalMeshComponent;
+enum class EFayMetaHumanLiveLinkFailure : uint8;
+enum class EFayMetaHumanLiveLinkState : uint8;
 
 /**
  * ARM64 MetaHuman scene with an asset-free diagnostic fallback for DGX Spark.
  *
  * The actor supplies a camera, owns the Fay bridge and learned speech driver,
- * and spawns the locally assembled Ada MetaHuman when that licensed content is
+ * and spawns the selected reviewed MetaHuman when that licensed content is
  * available. A wireframe avatar keeps the Vulkan and bridge tests useful before
  * MetaHuman content is generated or whenever loading fails.
  */
@@ -31,6 +33,7 @@ public:
     AFayAvatarBootstrapGameMode();
 
     virtual void BeginPlay() override;
+    virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
     virtual void Tick(float DeltaSeconds) override;
 
 private:
@@ -39,6 +42,10 @@ private:
     void TrySpawnMetaHuman();
     void ResolveFaceAndJawMorph();
     void DriveJawFallback() const;
+    void HandleLiveLinkStateChanged(
+        EFayMetaHumanLiveLinkState State,
+        EFayMetaHumanLiveLinkFailure Failure);
+    void TickLiveLinkRecovery(float DeltaSeconds);
 
     UPROPERTY(VisibleAnywhere, Category = "Spark Smoke Test")
     TObjectPtr<UCameraComponent> Camera;
@@ -89,4 +96,10 @@ private:
     bool bCharacterProfileValid = false;
     bool bLiveLinkConfigurationRequested = false;
     bool bLiveLinkConfigured = false;
+    bool bJawFallbackActive = true;
+    bool bLiveLinkRecoveryScheduled = false;
+    bool bLiveLinkRecoveryExhaustionPending = false;
+    bool bEndingPlay = false;
+    int32 LiveLinkRecoveryAttemptCount = 0;
+    double LiveLinkRecoveryDelayRemainingSeconds = 0.0;
 };

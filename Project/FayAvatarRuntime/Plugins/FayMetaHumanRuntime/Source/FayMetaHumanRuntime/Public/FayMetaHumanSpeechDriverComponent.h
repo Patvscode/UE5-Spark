@@ -9,6 +9,36 @@ class AActor;
 class UNNEModelData;
 struct FFayMetaHumanSpeechRuntimeState;
 
+UENUM(BlueprintType)
+enum class EFayMetaHumanLiveLinkState : uint8
+{
+    Unconfigured,
+    Configuring,
+    Configured,
+    RecoveryBackoff,
+    TerminalFailure
+};
+
+UENUM(BlueprintType)
+enum class EFayMetaHumanLiveLinkFailure : uint8
+{
+    None,
+    PendingTimeout,
+    ConsumerLost,
+    AvatarUnavailable,
+    SourceUnavailable,
+    SubjectCollision,
+    SubjectInvalid,
+    RestoreFailed,
+    ConfigurationRejected,
+    RecoveryExhausted
+};
+
+DECLARE_MULTICAST_DELEGATE_TwoParams(
+    FFayMetaHumanLiveLinkStateEvent,
+    EFayMetaHumanLiveLinkState,
+    EFayMetaHumanLiveLinkFailure);
+
 /**
  * Converts Fay's decoded speech into UE 5.8 MetaHuman facial controls.
  *
@@ -50,6 +80,38 @@ public:
     /** True while Live Link is processing the source needed for a requested avatar. */
     UFUNCTION(BlueprintPure, Category = "Fay|MetaHuman")
     bool IsAvatarConfigurationPending() const;
+
+    /** Allocation-free cached state for orchestration and fallback selection. */
+    UFUNCTION(BlueprintPure, Category = "Fay|MetaHuman")
+    EFayMetaHumanLiveLinkState GetLiveLinkState() const { return LiveLinkState; }
+
+    UFUNCTION(BlueprintPure, Category = "Fay|MetaHuman")
+    EFayMetaHumanLiveLinkFailure GetLiveLinkFailure() const { return LiveLinkFailure; }
+
+    /** Cheap health latch used to age a recovery episode without exact audits. */
+    bool IsLiveLinkHealthyCached() const
+    {
+        return LiveLinkState == EFayMetaHumanLiveLinkState::Configured &&
+            IsValid(Avatar) && IsSolverReady() &&
+            !bLiveLinkHealthPending && !bDormancyWakePending;
+    }
+
+    double GetConsecutiveLiveLinkHealthySeconds() const
+    {
+        return ConsecutiveLiveLinkHealthySeconds;
+    }
+
+    /**
+     * Retry only the exact reviewed avatar captured by ConfigureAvatar.
+     * Recovery deliberately accepts no actor, subject, or asset path.
+     */
+    bool RetryLastAvatarConfiguration();
+
+    /** Permanently stop bounded recovery after the orchestrator exhausts its budget. */
+    void AbandonAvatarRecovery();
+
+    /** Emitted only when cached state or failure classification changes. */
+    FFayMetaHumanLiveLinkStateEvent OnLiveLinkStateChanged;
 
     /** Cached idle eligibility; prepare/freeze perform the exact Live Link audits. */
     UFUNCTION(BlueprintPure, Category = "Fay|MetaHuman|Dormancy")
@@ -142,8 +204,17 @@ private:
     void InitializeSolverAndSource();
     void ShutdownSource();
     void ResetSpeechState();
+    void ResetPendingConfigurationTimers();
+    void EnterRecoveryBackoff(EFayMetaHumanLiveLinkFailure Failure);
+    void EnterTerminalFailure(
+        EFayMetaHumanLiveLinkFailure Failure,
+        bool bRemoveSource);
+    void SetLiveLinkState(
+        EFayMetaHumanLiveLinkState NewState,
+        EFayMetaHumanLiveLinkFailure Failure);
     bool TryConfigurePendingAvatar();
-    bool ApplyAvatarConfiguration(AActor* InAvatar);
+    /** Returns None only after the reviewed avatar contract is fully applied. */
+    EFayMetaHumanLiveLinkFailure ApplyAvatarConfiguration(AActor* InAvatar);
     bool RestoreConfiguredAvatar();
     bool SolveNextFrame();
     void HandleDecodedPcm(
@@ -169,6 +240,10 @@ private:
 
     UPROPERTY(Transient)
     TObjectPtr<AActor> PendingAvatar;
+
+    /** The first reviewed avatar is sealed for the lifetime of this component. */
+    UPROPERTY(Transient)
+    TWeakObjectPtr<AActor> ReviewedAvatar;
 
     UPROPERTY(Transient)
     TObjectPtr<UNNEModelData> SpeechModel;
@@ -203,8 +278,18 @@ private:
     double LiveLinkHeartbeatElapsedSeconds = 0.0;
     double LiveLinkHealthCheckElapsedSeconds = 0.0;
     double LiveLinkPendingElapsedSeconds = 0.0;
+    double PendingConfigurationElapsedSeconds = 0.0;
+    double PendingConfigurationAuditElapsedSeconds = 0.0;
+    double ConsecutiveLiveLinkHealthySeconds = 0.0;
+    EFayMetaHumanLiveLinkState LiveLinkState =
+        EFayMetaHumanLiveLinkState::Unconfigured;
+    EFayMetaHumanLiveLinkFailure LiveLinkFailure =
+        EFayMetaHumanLiveLinkFailure::None;
     bool bOriginalUseLiveLink = false;
     bool bHasOriginalAvatarConfiguration = false;
+    bool bReviewedAvatarSealed = false;
+    bool bAvatarMutationPermanentlyBlocked = false;
+    bool bEndingPlay = false;
     bool bLiveLinkPendingGraceLogged = false;
     bool bLiveLinkHealthPending = false;
     bool bPendingSubjectWaitLogged = false;

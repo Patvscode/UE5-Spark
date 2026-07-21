@@ -39,3 +39,22 @@ These switches isolate downstream Live Link, MetaHuman deformer, and renderer
 allocation behavior. They do not disable StreamingADA or weaken the initial
 configuration contract, and they are not production defaults until the
 rendered regression and endurance gates pass.
+
+## Fail-closed recovery
+
+The adapter publishes allocation-free state transitions instead of making the
+GameMode poll the exact Live Link subject. A lost consumer or a subject that
+remains pending is restored once, then may retry only the same reviewed avatar
+captured by the first configuration. The retry API accepts no actor, subject,
+or asset path. GameMode applies a bounded `1/2/4/8/16` second backoff and waits
+for both speech and body motion to become idle before each of five attempts.
+The attempt count resets only after ten continuous healthy seconds.
+
+Configuration timeout and attachment pause while Fay speech is pending, so the
+jaw fallback owns the complete skipped utterance. Its morph is explicitly
+zeroed before learned Live Link takes facial ownership. Source collisions,
+invalid schemas, a destroyed configured avatar, and exhausted recovery are
+terminal. Every rejected candidate setup reports whether its immediate rollback
+was proven. If that rollback or a later configured-avatar restoration fails, the
+adapter enters `RestoreFailed` and blocks all later avatar writes—including
+EndPlay restoration—instead of repeatedly mutating an unverified actor.

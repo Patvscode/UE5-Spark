@@ -51,4 +51,7 @@ printf 'ARM64 game executable: %s\n' "$game_binary"
 printf 'Starting Unreal with Vulkan; no system settings will be changed.\n'
 
 cd "$launcher_dir"
-exec "$launcher" -vulkan -log "$@"
+# AutomationTool's generated launcher starts the game as a child of /bin/sh
+# instead of replacing the shell.  Execute the already verified binary here so
+# callers own one stable PID and TERM cannot strand an Unreal child.
+exec "$game_binary" FayAvatarRuntime -vulkan -log "$@"

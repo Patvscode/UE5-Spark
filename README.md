@@ -181,8 +181,11 @@ runner, see [reliability and private progress](docs/reliability-and-progress.md)
    After a package has passed short rendered validation, use the owned soak
    wrapper for a qualification or endurance gate. It launches exactly one
    reviewed package, proves the executable and rendered arguments, runs the
-   strict harness, sends `TERM` only to that Unreal PID, verifies that Fay
-   survived, and rechecks the package seal:
+   strict harness, sends `TERM` only after revalidating that Unreal PID's exact
+   executable and `/proc` start time, verifies that Fay survived, and rechecks
+   the package seal. Its private evidence preserves the exact NUL-delimited
+   runtime arguments and the package/seal hashes. A production result remains
+   pending until that teardown and post-run seal check have passed:
 
    ```bash
    ./scripts/run-spark-avatar-soak.sh \
@@ -198,6 +201,13 @@ runner, see [reliability and private progress](docs/reliability-and-progress.md)
      /path/to/FayAvatarRuntime-Arm64.sh \
      FAY_PID /path/below/logs-private/idle-diagnostic 720 0
    ```
+
+   Speech runs default to production qualification; zero-turn and scene-only
+   runs are explicitly diagnostic. Set `FAY_SOAK_EVIDENCE_MODE=diagnostic` for
+   controlled speech/profiling isolation. Diagnostics may disable reviewed
+   face, hair, groom, or Live Link health paths, but their summaries are marked
+   diagnostic-only. Production qualification rejects those overrides and CSV
+   profiling.
 
 Full instructions are in [build and deploy](docs/build-and-deploy.md). The
 experimental all-Spark source-build route is documented in

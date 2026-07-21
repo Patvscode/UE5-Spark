@@ -568,6 +568,157 @@ for module_name in (
 if "FayMetaHumanEditorTools" in main_build or "FayMetaHumanEditorTools" in runtime_build:
     reject("Editor-only MetaHuman tools must not be a Game/runtime module dependency")
 
+runtime_launcher = Path("scripts/run-cooked-package.sh").read_text()
+runtime_launcher_code_lines = [
+    line.strip()
+    for line in runtime_launcher.splitlines()
+    if line.strip() and not line.lstrip().startswith("#")
+]
+direct_runtime_exec = 'exec "$game_binary" FayAvatarRuntime -vulkan -log "$@"'
+if runtime_launcher_code_lines[-1:] != [direct_runtime_exec]:
+    reject("the guarded package runner must exec the verified game binary as its stable PID")
+if re.search(r'(?m)^\s*exec\s+(?:--\s+)?["\']?\$launcher["\']?(?:\s|$)', runtime_launcher) or re.search(
+    r'(?m)^\s*["\']?\$launcher["\']?\s+(?![<>|&])', runtime_launcher
+):
+    reject("the guarded package runner must not leave AutomationTool's shell launcher as a parent")
+
+soak_wrapper = Path("scripts/run-spark-avatar-soak.sh").read_text()
+soak_harness = Path("scripts/soak-spark-avatar.sh").read_text()
+for marker in (
+    "add_diagnostic_override extra-unreal-arguments",
+    "add_diagnostic_override resolution-override",
+    "add_diagnostic_override resource-policy-override",
+    'setsid "$soak_runner"',
+    "harness_timeout_seconds=",
+    "promote_expected_launcher_transition",
+    'kill -TERM "$runtime_pid"',
+    'kill -KILL "$runtime_pid"',
+    'wait "$launcher_pid"',
+    "capture_post_teardown_evidence",
+    'fay_http_ready 5000 /',
+    'fay_http_ready 5010 /',
+    'fay_http_ready 8766 /sse',
+    "cleanup_runtime 1\nfinalize_evidence_summary",
+):
+    if marker not in soak_wrapper:
+        reject(f"the guarded soak wrapper is missing its reliability contract: {marker}")
+cleanup_start = soak_wrapper.find("cleanup_runtime()")
+cleanup_end = soak_wrapper.find("finalize_evidence_summary()", cleanup_start)
+cleanup_body = soak_wrapper[cleanup_start:cleanup_end]
+term_position = cleanup_body.find('kill -TERM "$runtime_pid"')
+kill_position = cleanup_body.find('kill -KILL "$runtime_pid"')
+capture_position = cleanup_body.find("capture_post_teardown_evidence")
+verify_position = cleanup_body.find('"$package_verifier" "$package_launcher_dir"')
+if min(term_position, kill_position, capture_position, verify_position) < 0:
+    reject("the guarded soak teardown sequence is incomplete")
+elif not term_position < kill_position < capture_position < verify_position:
+    reject("the guarded soak teardown must TERM, escalate, capture evidence, then verify the seal")
+for marker in (
+    "FAY_SOAK_EXPECTED_FAY_EXE",
+    "FAY_SOAK_EXPECTED_FAY_STARTTIME",
+    "process_matches_identity \"$fay_pid\" \"$fay_exe\" \"$fay_starttime\"",
+    "reviewed_runtime_argv=(",
+    "nonreviewed-runtime-arguments",
+    "actual_elapsed_seconds=$((end - start))",
+    "idle_measurement_window_start=",
+    "idle_measurement_sample_count",
+    "runtime_exit_status=pending",
+    "post_teardown_runtime_failure_count=pending",
+):
+    if marker not in soak_harness:
+        reject(f"the strict soak harness is missing its reliability contract: {marker}")
+
+speech_header = Path(
+    "Project/FayAvatarRuntime/Plugins/FayMetaHumanRuntime/Source/"
+    "FayMetaHumanRuntime/Public/FayMetaHumanSpeechDriverComponent.h"
+).read_text()
+speech_source = Path(
+    "Project/FayAvatarRuntime/Plugins/FayMetaHumanRuntime/Source/"
+    "FayMetaHumanRuntime/Private/FayMetaHumanSpeechDriverComponent.cpp"
+).read_text()
+game_mode_source = Path(
+    "Project/FayAvatarRuntime/Source/FayAvatarRuntime/Private/"
+    "FayAvatarBootstrapGameMode.cpp"
+).read_text()
+for marker in (
+    "EFayMetaHumanLiveLinkState::RecoveryBackoff",
+    "EFayMetaHumanLiveLinkState::TerminalFailure",
+    "OnLiveLinkStateChanged.Broadcast",
+    "TWeakObjectPtr<AActor> ReviewedAvatar",
+    "bAvatarMutationPermanentlyBlocked",
+    "EFayMetaHumanLiveLinkFailure::AvatarUnavailable",
+    "bool RetryLastAvatarConfiguration()",
+):
+    if marker not in speech_header and marker not in speech_source:
+        reject(f"the sealed Live Link recovery contract is missing: {marker}")
+if re.search(r"RetryLastAvatarConfiguration\s*\([^)]*[A-Za-z_]", speech_header):
+    reject("Live Link recovery must remain parameterless and reject arbitrary avatars")
+configure_start = speech_source.find(
+    "bool UFayMetaHumanSpeechDriverComponent::ConfigureAvatar"
+)
+configure_end = speech_source.find(
+    "bool UFayMetaHumanSpeechDriverComponent::TryConfigurePendingAvatar",
+    configure_start,
+)
+configure_body = speech_source[configure_start:configure_end]
+invalid_end = configure_body.find("if (bAvatarMutationPermanentlyBlocked)")
+if configure_start < 0 or configure_end < 0 or invalid_end < 0:
+    reject("the sealed ConfigureAvatar contract is missing")
+elif "EnterTerminalFailure" in configure_body[:invalid_end]:
+    reject("invalid ConfigureAvatar input must not change an existing valid state")
+if "Degraded states do no Live Link polling" not in speech_source:
+    reject("degraded Live Link states must return before heartbeat and health polling")
+if "const bool bRestored = RestoreConfiguredAvatar();" not in speech_source:
+    reject("runtime Live Link failure must record its single verified restore attempt")
+for marker in (
+    "if (!bAvatarMutationPermanentlyBlocked)",
+    "if (bAvatarMutationPermanentlyBlocked)",
+    "Bridge != nullptr && Bridge->HasPendingSpeechWork()",
+    "without changing the current runtime state",
+):
+    if marker not in speech_source:
+        reject(f"the fail-closed Live Link lifecycle is missing: {marker}")
+configuring_tick = speech_source.find(
+    "if (LiveLinkState == EFayMetaHumanLiveLinkState::Configuring)"
+)
+pending_budget = speech_source.find(
+    "PendingConfigurationElapsedSeconds += SafeDeltaSeconds",
+    configuring_tick,
+)
+speech_pause = speech_source.find(
+    "Bridge != nullptr && Bridge->HasPendingSpeechWork()",
+    configuring_tick,
+)
+if min(configuring_tick, pending_budget, speech_pause) < 0 or speech_pause > pending_budget:
+    reject("speech work must pause the pending Live Link timeout before it advances")
+if "Ada's" in speech_source or "Keeping Ada configured" in speech_source:
+    reject("Live Link runtime diagnostics must remain character-neutral")
+if "SpeechDriver->IsAvatarConfigured()" in game_mode_source:
+    reject("GameMode must consume transition events instead of allocating exact-state polls")
+for marker in (
+    "{1.0, 2.0, 4.0, 8.0, 16.0}",
+    "LiveLinkRecoveryHealthyResetSeconds = 10.0",
+    "SpeechDriver->IsLiveLinkHealthyCached()",
+    "SpeechDriver->GetConsecutiveLiveLinkHealthySeconds()",
+    "Bridge->HasPendingSpeechWork()",
+    "BodyMotion->CanEnterDormancy()",
+    "SpeechDriver->RetryLastAvatarConfiguration()",
+    "FaceMesh->SetMorphTarget(JawMorphTarget, 0.0f, false)",
+):
+    if marker not in game_mode_source:
+        reject(f"the bounded Live Link recovery orchestrator is missing: {marker}")
+handler_start = game_mode_source.find(
+    "void AFayAvatarBootstrapGameMode::HandleLiveLinkStateChanged"
+)
+handler_end = game_mode_source.find(
+    "void AFayAvatarBootstrapGameMode::TickLiveLinkRecovery",
+    handler_start,
+)
+if handler_start < 0 or handler_end < 0:
+    reject("GameMode Live Link transition handler is missing")
+elif "LiveLinkRecoveryAttemptCount = 0" in game_mode_source[handler_start:handler_end]:
+    reject("a transient Configured event must not reset the Live Link recovery episode")
+
 game_config_path = Path("Project/FayAvatarRuntime/Config/DefaultGame.ini")
 game_config = game_config_path.read_text()
 always_cook_paths = re.findall(

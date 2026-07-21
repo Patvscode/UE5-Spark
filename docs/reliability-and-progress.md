@@ -42,9 +42,48 @@ driver events cannot contaminate a new result.
 Use `scripts/run-spark-avatar-soak.sh` for rendered testing. It owns one cold
 launch of the selected sealed package, discovers exactly one matching process,
 waits for the Fay and character readiness markers, invokes the strict harness,
-sends `TERM` only to that process, verifies that Fay still owns its listeners,
-and rechecks the package seal after teardown. It never starts, stops, or
-reconfigures Fay.
+sends `TERM` only to that process, and waits up to 30 seconds for an ordinary
+exit. If the same executable and Linux `/proc` start time are still present, it
+sends `KILL`, reaps the owned child, and fails the run rather than leaving a
+project process behind or treating forced termination as qualification. The
+launcher may retain its PID and start time while changing only from the Bash
+wrapper to the expected sealed Unreal executable; any other executable
+transition is refused and never signaled.
+
+The strict harness runs in a project-owned process session with a derived,
+finite wall-clock deadline. `HUP`, `INT`, `TERM`, timeout, and ordinary error
+paths cancel and reap that session before Unreal teardown. After Unreal exits,
+the wrapper recaptures the complete launch-to-shutdown runtime log and kernel
+journal, reruns the fatal/Vulkan/kernel scans, proves that the original Fay
+executable and `/proc` start time still own all four listeners, repeats the Fay
+HTTP health probes, and rechecks the package seal. It never starts, stops, or
+reconfigures Fay or another model service. A shell-level identity check still
+cannot eliminate the final check-to-signal race the way a native Linux
+`pidfd_send_signal` helper could.
+
+Every private result directory includes the exact NUL-delimited runtime command
+line (`runtime-argv.nul`), a readable shell-escaped rendering, and a package
+identity record containing the executable, launcher, character-manifest, and
+deep-verification-seal hashes. The summary repeats the command-line and seal
+digests, allowing evidence to be tied to one exact invocation and sealed build.
+Production status remains pending in the inner harness output; only the owning
+wrapper changes it to passed after exact-process teardown, child reaping,
+launch-to-shutdown failure rescanning, stable Fay identity and health, and the
+post-run package-seal verification all succeed. The finalized summary records
+the Unreal wait status, whether forced termination was required, the post-run
+seal digest, and the post-teardown failure counts.
+
+The default evidence class is `production` only for the exact reviewed policy:
+rendered speech, a reviewed Ada or Aoi profile, 1280x720, the standard audio and
+motion requirements, the default resource and facial-performance limits, no
+CSV profiling, and no additional Unreal arguments. Any changed resolution,
+limit, diagnostic switch, or extra Unreal argument automatically makes an
+otherwise unspecified run diagnostic. Explicitly requesting `production` with
+any such deviation fails closed. Set `FAY_SOAK_EVIDENCE_MODE=diagnostic` for a
+speech, profiling, renderer-isolation, or alternate-threshold experiment.
+Diagnostic mode preserves those controlled experiments but marks the summary
+`diagnostic-only-not-production-qualification` and lists the detected policy
+deviations. A diagnostic pass is never reported as production qualification.
 
 Set the turn count to zero for an idle-only rendered diagnostic. The same
 launcher, exact-PID ownership, five-second resource sampling, failure scanning,
@@ -59,13 +98,28 @@ second launch path:
   FAY_PID /path/below/logs-private/rendered-idle 720 0
 ```
 
-The reviewed idle gate ignores its first 120 seconds, then requires no more
-than 96 MiB of post-warm-up growth, an ordinary-least-squares slope no greater
-than 128 KiB/s across both the measured interval and final five minutes, and no
-more than two 7--18 MiB step-like increases in that final window. It aborts if
+The reviewed idle gate ignores its first 120 seconds, then evaluates one
+bounded final measurement window using the actual elapsed run time. Growth,
+ordinary-least-squares slope, and 7--18 MiB step-like increases all use that same
+window; the summary records its actual start, end, and sample count. The gate
+requires no more than 96 MiB of growth, a slope no greater than 128 KiB/s, and
+no more than two step-like increases. It aborts if
 Unreal exceeds 2.9 GiB RSS or unified `MemAvailable` drops below 48 GiB. These
 limits distinguish a stable warm-up from the recurring allocation staircase
 that a short endpoint-only gate can miss.
+
+The idle measurement window is 300 seconds by default. Short, diagnostic-only
+isolation runs may explicitly set
+`FAY_SOAK_IDLE_MEASUREMENT_SECONDS` from 30 through 3600; the result remains a
+diagnostic and cannot qualify a production package.
+
+When dormancy is enabled, the gate parses the ordered history and requires
+`Enter, (Wake for accepted Fay message, Enter)*`: one accepted-message wake per
+requested turn, strict alternation, exactly one more enter than wake, and
+`Enter` as the latest transition. Production qualification permits no
+dormancy-preparation cancellations. A diagnostic may set
+`FAY_SOAK_MAX_DORMANCY_CANCELLATIONS` to a reviewed non-negative bound, which is
+recorded in the summary.
 
 Run a four-minute, four-turn 1280x720 qualification before the final endurance
 gate:

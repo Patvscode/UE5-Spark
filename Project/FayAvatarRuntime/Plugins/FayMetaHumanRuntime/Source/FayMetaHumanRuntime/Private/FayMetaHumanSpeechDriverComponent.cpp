@@ -36,6 +36,8 @@ constexpr int32 ExpectedSolverCurveCount = 81;
 constexpr int32 ExpectedRawControlCount = 251;
 constexpr float LiveLinkHeartbeatSeconds = 0.10f;
 constexpr float LiveLinkPendingGraceSeconds = 2.0f;
+constexpr float LiveLinkConfigurationAuditSeconds = 0.10f;
+constexpr float LiveLinkConfigurationTimeoutSeconds = 5.0f;
 constexpr float DormantLiveLinkHealthCeilingSeconds = 1.0f;
 constexpr float MinimumHeadGestureDegrees = 4.0f;
 constexpr float HardMaximumHeadGestureDegrees = 12.0f;
@@ -69,6 +71,54 @@ enum class EFayLiveLinkSubjectReadiness : uint8
     Collision,
     Invalid
 };
+
+const TCHAR* GetLiveLinkStateName(const EFayMetaHumanLiveLinkState State)
+{
+    switch (State)
+    {
+    case EFayMetaHumanLiveLinkState::Unconfigured:
+        return TEXT("unconfigured");
+    case EFayMetaHumanLiveLinkState::Configuring:
+        return TEXT("configuring");
+    case EFayMetaHumanLiveLinkState::Configured:
+        return TEXT("configured");
+    case EFayMetaHumanLiveLinkState::RecoveryBackoff:
+        return TEXT("recovery-backoff");
+    case EFayMetaHumanLiveLinkState::TerminalFailure:
+        return TEXT("terminal-failure");
+    default:
+        return TEXT("unknown");
+    }
+}
+
+const TCHAR* GetLiveLinkFailureName(const EFayMetaHumanLiveLinkFailure Failure)
+{
+    switch (Failure)
+    {
+    case EFayMetaHumanLiveLinkFailure::None:
+        return TEXT("none");
+    case EFayMetaHumanLiveLinkFailure::PendingTimeout:
+        return TEXT("pending-timeout");
+    case EFayMetaHumanLiveLinkFailure::ConsumerLost:
+        return TEXT("consumer-lost");
+    case EFayMetaHumanLiveLinkFailure::AvatarUnavailable:
+        return TEXT("avatar-unavailable");
+    case EFayMetaHumanLiveLinkFailure::SourceUnavailable:
+        return TEXT("source-unavailable");
+    case EFayMetaHumanLiveLinkFailure::SubjectCollision:
+        return TEXT("subject-collision");
+    case EFayMetaHumanLiveLinkFailure::SubjectInvalid:
+        return TEXT("subject-invalid");
+    case EFayMetaHumanLiveLinkFailure::RestoreFailed:
+        return TEXT("restore-failed");
+    case EFayMetaHumanLiveLinkFailure::ConfigurationRejected:
+        return TEXT("configuration-rejected");
+    case EFayMetaHumanLiveLinkFailure::RecoveryExhausted:
+        return TEXT("recovery-exhausted");
+    default:
+        return TEXT("unknown");
+    }
+}
 
 struct FFayHeadPose
 {
@@ -805,7 +855,7 @@ bool HasVerifiedLiveLinkConsumer(
     USkeletalMeshComponent* BodyMesh = FindBodyMeshComponent(InAvatar);
     if (BodyMesh == nullptr)
     {
-        return Fail(TEXT("Ada's Body component is missing"));
+        return Fail(TEXT("the reviewed avatar's Body component is missing"));
     }
 
     ULiveLinkInstance* BodyAnimation = BodyMesh != nullptr
@@ -815,7 +865,7 @@ bool HasVerifiedLiveLinkConsumer(
     {
         const UAnimInstance* ActualAnimation = BodyMesh->GetAnimInstance();
         return Fail(FString::Printf(
-            TEXT("Ada's Body animation instance is %s instead of ULiveLinkInstance"),
+            TEXT("the reviewed avatar's Body animation instance is %s instead of ULiveLinkInstance"),
             ActualAnimation != nullptr
                 ? *ActualAnimation->GetClass()->GetPathName()
                 : TEXT("null")));
@@ -823,7 +873,7 @@ bool HasVerifiedLiveLinkConsumer(
     if (!GetBooleanProperty(InAvatar, TEXT("UseLiveLink"), bUseLiveLink) ||
         !bUseLiveLink)
     {
-        return Fail(TEXT("Ada's UseLiveLink actor property is unavailable or false"));
+        return Fail(TEXT("the reviewed avatar's UseLiveLink actor property is unavailable or false"));
     }
     if (!GetLiveLinkSubjectProperty(
             InAvatar,
@@ -832,13 +882,13 @@ bool HasVerifiedLiveLinkConsumer(
         ActorSubject != SubjectName)
     {
         return Fail(FString::Printf(
-            TEXT("Ada's actor subject is '%s' instead of '%s'"),
+            TEXT("the reviewed avatar's actor subject is '%s' instead of '%s'"),
             *ActorSubject.ToString(),
             *SubjectName.ToString()));
     }
     if (!BodyAnimation->GetEnableLiveLinkEvaluation())
     {
-        return Fail(TEXT("Ada's native Body Live Link evaluation is disabled"));
+        return Fail(TEXT("the reviewed avatar's native Body Live Link evaluation is disabled"));
     }
     return true;
 }
@@ -980,6 +1030,131 @@ UFayMetaHumanSpeechDriverComponent::UFayMetaHumanSpeechDriverComponent()
     PrimaryComponentTick.TickGroup = TG_PostUpdateWork;
 }
 
+void UFayMetaHumanSpeechDriverComponent::SetLiveLinkState(
+    const EFayMetaHumanLiveLinkState NewState,
+    const EFayMetaHumanLiveLinkFailure Failure)
+{
+    if (LiveLinkState == NewState && LiveLinkFailure == Failure)
+    {
+        return;
+    }
+
+    if (LiveLinkState != NewState)
+    {
+        ConsecutiveLiveLinkHealthySeconds = 0.0;
+    }
+    LiveLinkState = NewState;
+    LiveLinkFailure = Failure;
+    UE_LOG(LogFayMetaHumanRuntime, Display,
+        TEXT("Fay Live Link state changed (state=%s, failure=%s)."),
+        GetLiveLinkStateName(LiveLinkState),
+        GetLiveLinkFailureName(LiveLinkFailure));
+    if (!bEndingPlay)
+    {
+        OnLiveLinkStateChanged.Broadcast(LiveLinkState, LiveLinkFailure);
+    }
+}
+
+void UFayMetaHumanSpeechDriverComponent::ResetPendingConfigurationTimers()
+{
+    PendingConfigurationElapsedSeconds = 0.0;
+    PendingConfigurationAuditElapsedSeconds = 0.0;
+    LiveLinkHeartbeatElapsedSeconds = 0.0;
+}
+
+void UFayMetaHumanSpeechDriverComponent::EnterRecoveryBackoff(
+    const EFayMetaHumanLiveLinkFailure Failure)
+{
+    PendingAvatar = nullptr;
+    ResetPendingConfigurationTimers();
+    LiveLinkHealthCheckElapsedSeconds = 0.0;
+    LiveLinkPendingElapsedSeconds = 0.0;
+    bLiveLinkPendingGraceLogged = false;
+    bLiveLinkHealthPending = false;
+    bDormancyPrepared = false;
+    bDormancyWakePending = false;
+    if (bAvatarMutationPermanentlyBlocked || !bReviewedAvatarSealed ||
+        !ReviewedAvatar.IsValid() || !IsSolverReady())
+    {
+        EnterTerminalFailure(
+            IsSolverReady()
+                ? EFayMetaHumanLiveLinkFailure::ConfigurationRejected
+                : EFayMetaHumanLiveLinkFailure::SourceUnavailable,
+            true);
+        return;
+    }
+    SetLiveLinkState(EFayMetaHumanLiveLinkState::RecoveryBackoff, Failure);
+}
+
+void UFayMetaHumanSpeechDriverComponent::EnterTerminalFailure(
+    const EFayMetaHumanLiveLinkFailure Failure,
+    const bool bRemoveSource)
+{
+    if (Failure == EFayMetaHumanLiveLinkFailure::RestoreFailed)
+    {
+        // A failed rollback leaves the actor contract unproven. From this
+        // point onward, including EndPlay, this adapter may never write it.
+        bAvatarMutationPermanentlyBlocked = true;
+    }
+    PendingAvatar = nullptr;
+    ResetPendingConfigurationTimers();
+    LiveLinkHealthCheckElapsedSeconds = 0.0;
+    LiveLinkPendingElapsedSeconds = 0.0;
+    bLiveLinkPendingGraceLogged = false;
+    bLiveLinkHealthPending = false;
+    bDormancyPrepared = false;
+    bDormancyWakePending = false;
+    if (bRemoveSource)
+    {
+        ShutdownSource();
+    }
+    SetLiveLinkState(EFayMetaHumanLiveLinkState::TerminalFailure, Failure);
+}
+
+bool UFayMetaHumanSpeechDriverComponent::RetryLastAvatarConfiguration()
+{
+    if (LiveLinkState != EFayMetaHumanLiveLinkState::RecoveryBackoff ||
+        bAvatarMutationPermanentlyBlocked || !bReviewedAvatarSealed ||
+        !ReviewedAvatar.IsValid() ||
+        IsValid(PendingAvatar) || IsValid(Avatar))
+    {
+        if (LiveLinkState == EFayMetaHumanLiveLinkState::RecoveryBackoff)
+        {
+            EnterTerminalFailure(
+                EFayMetaHumanLiveLinkFailure::ConfigurationRejected,
+                true);
+        }
+        return false;
+    }
+    if (!IsSolverReady())
+    {
+        EnterTerminalFailure(
+            EFayMetaHumanLiveLinkFailure::SourceUnavailable,
+            true);
+        return false;
+    }
+
+    PendingAvatar = ReviewedAvatar.Get();
+    bPendingSubjectWaitLogged = false;
+    bTerminalSubjectFailureLogged = false;
+    ResetPendingConfigurationTimers();
+    SetLiveLinkState(
+        EFayMetaHumanLiveLinkState::Configuring,
+        EFayMetaHumanLiveLinkFailure::None);
+    return TryConfigurePendingAvatar();
+}
+
+void UFayMetaHumanSpeechDriverComponent::AbandonAvatarRecovery()
+{
+    if (LiveLinkState != EFayMetaHumanLiveLinkState::RecoveryBackoff)
+    {
+        return;
+    }
+    EnterTerminalFailure(
+        EFayMetaHumanLiveLinkFailure::RecoveryExhausted,
+        true);
+}
+
 void UFayMetaHumanSpeechDriverComponent::BeginPlay()
 {
     Super::BeginPlay();
@@ -1056,13 +1231,21 @@ void UFayMetaHumanSpeechDriverComponent::BeginPlay()
 
 void UFayMetaHumanSpeechDriverComponent::EndPlay(const EEndPlayReason::Type EndPlayReason)
 {
+    bEndingPlay = true;
+    OnLiveLinkStateChanged.Clear();
     AttachBridge(nullptr);
-    if (RuntimeState.IsValid())
+    if (!bAvatarMutationPermanentlyBlocked && RuntimeState.IsValid())
     {
         RuntimeState->PushNeutral();
     }
-    RestoreConfiguredAvatar();
+    if (!bAvatarMutationPermanentlyBlocked)
+    {
+        RestoreConfiguredAvatar();
+    }
+    Avatar = nullptr;
     PendingAvatar = nullptr;
+    ReviewedAvatar.Reset();
+    bReviewedAvatarSealed = false;
     ShutdownSource();
     ResetSpeechState();
     bActionHeadGestureActive = false;
@@ -1112,7 +1295,8 @@ bool UFayMetaHumanSpeechDriverComponent::IsSolverReady() const
 
 bool UFayMetaHumanSpeechDriverComponent::IsAvatarConfigured() const
 {
-    if (!IsSolverReady() || !IsValid(Avatar) ||
+    if (LiveLinkState != EFayMetaHumanLiveLinkState::Configured ||
+        !IsSolverReady() || !IsValid(Avatar) ||
         !HasVerifiedLiveLinkConsumer(Avatar, LiveLinkSubjectName))
     {
         return false;
@@ -1136,7 +1320,8 @@ bool UFayMetaHumanSpeechDriverComponent::IsAvatarConfigurationPending() const
 
 bool UFayMetaHumanSpeechDriverComponent::IsFaceIdleForDormancy() const
 {
-    return IsSolverReady() && IsValid(Avatar) &&
+    return LiveLinkState == EFayMetaHumanLiveLinkState::Configured &&
+        IsSolverReady() && IsValid(Avatar) &&
         bHasOriginalAvatarConfiguration && !IsValid(PendingAvatar) &&
         !bLiveLinkHealthPending && !bDormancyWakePending &&
         !bActionHeadGestureActive &&
@@ -1179,6 +1364,13 @@ bool UFayMetaHumanSpeechDriverComponent::PrepareAvatarForDormancy()
 
 bool UFayMetaHumanSpeechDriverComponent::WakeAvatarFromDormancy()
 {
+    if (LiveLinkState != EFayMetaHumanLiveLinkState::Configured)
+    {
+        bDormancyPrepared = false;
+        bDormancyWakePending = false;
+        bLiveLinkHealthPending = false;
+        return false;
+    }
     const bool bWakeWasAlreadyPending = bDormancyWakePending;
     // Clear the exception before auditing so any failure wakes/restores rather
     // than being mistaken for intentional idle dormancy.
@@ -1347,8 +1539,41 @@ void UFayMetaHumanSpeechDriverComponent::ShutdownSource()
 
 bool UFayMetaHumanSpeechDriverComponent::ConfigureAvatar(AActor* InAvatar)
 {
-    if (!IsSolverReady() || !IsValid(InAvatar) || LiveLinkSubjectName.IsNone())
+    if (!IsValid(InAvatar) || LiveLinkSubjectName.IsNone())
     {
+        UE_LOG(LogFayMetaHumanRuntime, Warning,
+            TEXT("Fay rejected an invalid avatar or empty Live Link subject without changing the current runtime state."));
+        return false;
+    }
+    if (bAvatarMutationPermanentlyBlocked)
+    {
+        UE_LOG(LogFayMetaHumanRuntime, Error,
+            TEXT("Fay rejected avatar configuration because a prior rollback left mutation permanently blocked."));
+        return false;
+    }
+    if (bReviewedAvatarSealed && ReviewedAvatar.Get() != InAvatar)
+    {
+        UE_LOG(LogFayMetaHumanRuntime, Warning,
+            TEXT("Fay rejected an avatar outside the sealed reviewed-character instance."));
+        return false;
+    }
+    if (!bReviewedAvatarSealed)
+    {
+        ReviewedAvatar = InAvatar;
+        bReviewedAvatarSealed = true;
+    }
+    if (LiveLinkState == EFayMetaHumanLiveLinkState::RecoveryBackoff ||
+        LiveLinkState == EFayMetaHumanLiveLinkState::TerminalFailure)
+    {
+        UE_LOG(LogFayMetaHumanRuntime, Warning,
+            TEXT("Fay rejected direct reconfiguration after a runtime failure; bounded recovery accepts no avatar argument."));
+        return false;
+    }
+    if (!IsSolverReady())
+    {
+        EnterTerminalFailure(
+            EFayMetaHumanLiveLinkFailure::SourceUnavailable,
+            true);
         return false;
     }
 
@@ -1365,6 +1590,9 @@ bool UFayMetaHumanSpeechDriverComponent::ConfigureAvatar(AActor* InAvatar)
         }
         if (!RestoreConfiguredAvatar())
         {
+            EnterTerminalFailure(
+                EFayMetaHumanLiveLinkFailure::RestoreFailed,
+                true);
             return false;
         }
     }
@@ -1381,15 +1609,41 @@ bool UFayMetaHumanSpeechDriverComponent::ConfigureAvatar(AActor* InAvatar)
         PendingAvatar = InAvatar;
         bPendingSubjectWaitLogged = false;
         bTerminalSubjectFailureLogged = false;
+        ResetPendingConfigurationTimers();
     }
+    SetLiveLinkState(
+        EFayMetaHumanLiveLinkState::Configuring,
+        EFayMetaHumanLiveLinkFailure::None);
     return TryConfigurePendingAvatar();
 }
 
 bool UFayMetaHumanSpeechDriverComponent::TryConfigurePendingAvatar()
 {
+    if (bAvatarMutationPermanentlyBlocked)
+    {
+        return false;
+    }
     if (!IsValid(PendingAvatar))
     {
         PendingAvatar = nullptr;
+        EnterTerminalFailure(
+            EFayMetaHumanLiveLinkFailure::ConfigurationRejected,
+            true);
+        return false;
+    }
+    if (!bReviewedAvatarSealed || PendingAvatar.Get() != ReviewedAvatar.Get())
+    {
+        UE_LOG(LogFayMetaHumanRuntime, Error,
+            TEXT("Fay cancelled a pending configuration outside the sealed reviewed avatar."));
+        EnterTerminalFailure(
+            EFayMetaHumanLiveLinkFailure::ConfigurationRejected,
+            true);
+        return false;
+    }
+    if (Bridge != nullptr && Bridge->HasPendingSpeechWork())
+    {
+        // Keep the jaw fallback for the complete utterance that arrived before
+        // Live Link was ready. Configuration timeout is paused in Tick too.
         return false;
     }
     if (!IsSolverReady())
@@ -1401,7 +1655,9 @@ bool UFayMetaHumanSpeechDriverComponent::TryConfigurePendingAvatar()
                      "or Live Link source became unavailable."));
             bTerminalSubjectFailureLogged = true;
         }
-        PendingAvatar = nullptr;
+        EnterTerminalFailure(
+            EFayMetaHumanLiveLinkFailure::SourceUnavailable,
+            true);
         return false;
     }
 
@@ -1431,30 +1687,47 @@ bool UFayMetaHumanSpeechDriverComponent::TryConfigurePendingAvatar()
                 *ReadinessReason);
             bTerminalSubjectFailureLogged = true;
         }
-        PendingAvatar = nullptr;
         // Remove only this adapter's source. The pre-existing subject owner is
         // deliberately left untouched, and IsSolverReady becomes false.
-        ShutdownSource();
+        EnterTerminalFailure(
+            Readiness == EFayLiveLinkSubjectReadiness::Collision
+                ? EFayMetaHumanLiveLinkFailure::SubjectCollision
+                : EFayMetaHumanLiveLinkFailure::SubjectInvalid,
+            true);
         return false;
     }
 
     bPendingSubjectWaitLogged = false;
     bTerminalSubjectFailureLogged = false;
     AActor* CandidateAvatar = PendingAvatar;
-    if (!ApplyAvatarConfiguration(CandidateAvatar))
+    if (Bridge != nullptr && Bridge->HasPendingSpeechWork())
     {
-        PendingAvatar = nullptr;
+        return false;
+    }
+    const EFayMetaHumanLiveLinkFailure ConfigurationFailure =
+        ApplyAvatarConfiguration(CandidateAvatar);
+    if (ConfigurationFailure != EFayMetaHumanLiveLinkFailure::None)
+    {
+        EnterTerminalFailure(
+            ConfigurationFailure,
+            true);
         return false;
     }
     PendingAvatar = nullptr;
+    ResetPendingConfigurationTimers();
+    SetLiveLinkState(
+        EFayMetaHumanLiveLinkState::Configured,
+        EFayMetaHumanLiveLinkFailure::None);
     return true;
 }
 
-bool UFayMetaHumanSpeechDriverComponent::ApplyAvatarConfiguration(AActor* InAvatar)
+EFayMetaHumanLiveLinkFailure
+UFayMetaHumanSpeechDriverComponent::ApplyAvatarConfiguration(AActor* InAvatar)
 {
-    if (!IsValid(InAvatar) || IsValid(Avatar))
+    if (bAvatarMutationPermanentlyBlocked || !IsValid(InAvatar) ||
+        IsValid(Avatar))
     {
-        return false;
+        return EFayMetaHumanLiveLinkFailure::ConfigurationRejected;
     }
 
     UFunction* SetupFunction = InAvatar->FindFunction(TEXT("LiveLinkSetup"));
@@ -1479,17 +1752,17 @@ bool UFayMetaHumanSpeechDriverComponent::ApplyAvatarConfiguration(AActor* InAvat
         UE_LOG(LogFayMetaHumanRuntime, Warning,
             TEXT("The assembled avatar lacks the complete UE 5.8 Live Link actor contract; "
                  "Fay facial animation remains unconfigured."));
-        return false;
+        return EFayMetaHumanLiveLinkFailure::ConfigurationRejected;
     }
 
     if (OriginalUseLiveLink || Cast<ULiveLinkInstance>(BodyMesh->GetAnimInstance()) != nullptr)
     {
         UE_LOG(LogFayMetaHumanRuntime, Warning,
             TEXT("Fay will not replace an avatar that already has a Live Link consumer."));
-        return false;
+        return EFayMetaHumanLiveLinkFailure::ConfigurationRejected;
     }
 
-    const auto RollBackCandidate = [&]()
+    const auto RollBackCandidate = [&]() -> bool
     {
         const bool bActorSubjectRestored = SetLiveLinkSubjectProperty(
             InAvatar,
@@ -1524,6 +1797,7 @@ bool UFayMetaHumanSpeechDriverComponent::ApplyAvatarConfiguration(AActor* InAvat
             UE_LOG(LogFayMetaHumanRuntime, Error,
                 TEXT("Fay could not completely roll back a rejected MetaHuman Live Link setup."));
         }
+        return bRollbackSucceeded;
     };
 
     const bool bActorSubjectSet = SetLiveLinkSubjectProperty(
@@ -1534,23 +1808,27 @@ bool UFayMetaHumanSpeechDriverComponent::ApplyAvatarConfiguration(AActor* InAvat
         SetBooleanProperty(InAvatar, TEXT("UseLiveLink"), true);
     if (!bActorSubjectSet || !bUseLiveLinkSet)
     {
-        RollBackCandidate();
+        const bool bRollbackSucceeded = RollBackCandidate();
         UE_LOG(LogFayMetaHumanRuntime, Warning,
             TEXT("The assembled avatar rejected the Fay Live Link actor configuration."));
-        return false;
+        return bRollbackSucceeded
+            ? EFayMetaHumanLiveLinkFailure::ConfigurationRejected
+            : EFayMetaHumanLiveLinkFailure::RestoreFailed;
     }
 
-    // In the Editor, changing UseLiveLink reruns Ada's construction logic and
+    // In the Editor, changing UseLiveLink reruns the MetaHuman construction logic and
     // installs this class before LiveLinkSetup. Runtime property reflection
     // deliberately does not rerun construction scripts, so mirror that one
     // public-engine operation explicitly in a packaged build.
     BodyMesh->SetAnimInstanceClass(ULiveLinkInstance::StaticClass());
     if (Cast<ULiveLinkInstance>(BodyMesh->GetAnimInstance()) == nullptr)
     {
-        RollBackCandidate();
+        const bool bRollbackSucceeded = RollBackCandidate();
         UE_LOG(LogFayMetaHumanRuntime, Warning,
-            TEXT("Ada's Body rejected UE 5.8's native LiveLinkInstance class."));
-        return false;
+            TEXT("The assembled avatar's Body rejected UE 5.8's native LiveLinkInstance class."));
+        return bRollbackSucceeded
+            ? EFayMetaHumanLiveLinkFailure::ConfigurationRejected
+            : EFayMetaHumanLiveLinkFailure::RestoreFailed;
     }
 
     if (!ApplyMetaHumanLiveLinkSetup(
@@ -1559,10 +1837,12 @@ bool UFayMetaHumanSpeechDriverComponent::ApplyAvatarConfiguration(AActor* InAvat
             LiveLinkSubjectName,
             true))
     {
-        RollBackCandidate();
+        const bool bRollbackSucceeded = RollBackCandidate();
         UE_LOG(LogFayMetaHumanRuntime, Warning,
             TEXT("The assembled avatar rejected the UE 5.8 LiveLinkSetup contract."));
-        return false;
+        return bRollbackSucceeded
+            ? EFayMetaHumanLiveLinkFailure::ConfigurationRejected
+            : EFayMetaHumanLiveLinkFailure::RestoreFailed;
     }
 
     // UE 5.8 does not expose a public getter for ULiveLinkInstance's subject.
@@ -1575,10 +1855,12 @@ bool UFayMetaHumanSpeechDriverComponent::ApplyAvatarConfiguration(AActor* InAvat
         : nullptr;
     if (BodyAnimation == nullptr)
     {
-        RollBackCandidate();
+        const bool bRollbackSucceeded = RollBackCandidate();
         UE_LOG(LogFayMetaHumanRuntime, Warning,
             TEXT("The assembled avatar did not install UE 5.8's native Body LiveLinkInstance."));
-        return false;
+        return bRollbackSucceeded
+            ? EFayMetaHumanLiveLinkFailure::ConfigurationRejected
+            : EFayMetaHumanLiveLinkFailure::RestoreFailed;
     }
     FLiveLinkSubjectName NativeSubject;
     NativeSubject.Name = LiveLinkSubjectName;
@@ -1591,11 +1873,13 @@ bool UFayMetaHumanSpeechDriverComponent::ApplyAvatarConfiguration(AActor* InAvat
     if (!bConfigurationReadBack || !IsSolverReady() ||
         !RuntimeState->PushNeutral())
     {
-        RollBackCandidate();
+        const bool bRollbackSucceeded = RollBackCandidate();
         UE_LOG(LogFayMetaHumanRuntime, Warning,
             TEXT("The assembled avatar did not expose a verified Body LiveLinkInstance consumer "
                  "for the Fay Live Link subject; facial animation remains unconfigured."));
-        return false;
+        return bRollbackSucceeded
+            ? EFayMetaHumanLiveLinkFailure::ConfigurationRejected
+            : EFayMetaHumanLiveLinkFailure::RestoreFailed;
     }
 
     OriginalActorLiveLinkSubject = OriginalActorSubject;
@@ -1614,11 +1898,15 @@ bool UFayMetaHumanSpeechDriverComponent::ApplyAvatarConfiguration(AActor* InAvat
     UE_LOG(LogFayMetaHumanRuntime, Display,
         TEXT("Configured assembled MetaHuman Body LiveLinkInstance to consume the local Fay "
              "Live Link speech subject."));
-    return true;
+    return EFayMetaHumanLiveLinkFailure::None;
 }
 
 bool UFayMetaHumanSpeechDriverComponent::RestoreConfiguredAvatar()
 {
+    if (bAvatarMutationPermanentlyBlocked)
+    {
+        return false;
+    }
     if (!bHasOriginalAvatarConfiguration)
     {
         Avatar = nullptr;
@@ -1914,21 +2202,76 @@ void UFayMetaHumanSpeechDriverComponent::TickComponent(
         }
     }
 
-    if (IsValid(PendingAvatar))
+    if (LiveLinkState == EFayMetaHumanLiveLinkState::RecoveryBackoff ||
+        LiveLinkState == EFayMetaHumanLiveLinkState::TerminalFailure ||
+        LiveLinkState == EFayMetaHumanLiveLinkState::Unconfigured)
     {
+        // Degraded states do no Live Link polling, heartbeat publication, or
+        // avatar mutation. The orchestrator alone owns bounded retries.
+        return;
+    }
+
+    if (LiveLinkState == EFayMetaHumanLiveLinkState::Configuring)
+    {
+        if (!IsValid(PendingAvatar))
+        {
+            EnterTerminalFailure(
+                EFayMetaHumanLiveLinkFailure::ConfigurationRejected,
+                true);
+            return;
+        }
+        if (Bridge != nullptr && Bridge->HasPendingSpeechWork())
+        {
+            // Do not consume the five-second configuration budget or attach a
+            // Live Link consumer halfway through fallback-driven speech.
+            return;
+        }
         // A source registered during the first game frame can remain pending
         // if its one bootstrap frame is processed before Live Link has fully
-        // attached the subject. Keep publishing the same bounded neutral frame
-        // until the exact source becomes evaluable; this also makes a cold
-        // launch independent of scheduler timing.
-        LiveLinkHeartbeatElapsedSeconds += SafeDeltaSeconds;
-        if (IsSolverReady() &&
-            LiveLinkHeartbeatElapsedSeconds >= LiveLinkHeartbeatSeconds)
+        // attached the subject. Audit and republish at a bounded 10 Hz rather
+        // than allocating exact-subject snapshots on every rendered frame.
+        PendingConfigurationElapsedSeconds += SafeDeltaSeconds;
+        PendingConfigurationAuditElapsedSeconds += SafeDeltaSeconds;
+        if (PendingConfigurationElapsedSeconds >=
+            LiveLinkConfigurationTimeoutSeconds)
+        {
+            UE_LOG(LogFayMetaHumanRuntime, Warning,
+                TEXT("The exact Fay Live Link source remained pending beyond %.1f seconds; entering bounded recovery."),
+                LiveLinkConfigurationTimeoutSeconds);
+            EnterRecoveryBackoff(
+                EFayMetaHumanLiveLinkFailure::PendingTimeout);
+            return;
+        }
+        if (PendingConfigurationAuditElapsedSeconds <
+            LiveLinkConfigurationAuditSeconds)
+        {
+            return;
+        }
+        PendingConfigurationAuditElapsedSeconds = 0.0;
+        if (IsSolverReady())
         {
             RuntimeState->PushNeutral();
-            LiveLinkHeartbeatElapsedSeconds = 0.0;
         }
         TryConfigurePendingAvatar();
+        if (LiveLinkState != EFayMetaHumanLiveLinkState::Configured)
+        {
+            return;
+        }
+    }
+
+    if (LiveLinkState != EFayMetaHumanLiveLinkState::Configured)
+    {
+        return;
+    }
+    if (!IsValid(Avatar))
+    {
+        UE_LOG(LogFayMetaHumanRuntime, Error,
+            TEXT("The configured reviewed avatar became invalid; terminating Live Link without a retry."));
+        ResetSpeechState();
+        EnterTerminalFailure(
+            EFayMetaHumanLiveLinkFailure::AvatarUnavailable,
+            true);
+        return;
     }
 
     if (IsValid(Avatar) && IsSolverReady())
@@ -1997,6 +2340,7 @@ void UFayMetaHumanSpeechDriverComponent::TickComponent(
                 (SubjectReadiness == EFayLiveLinkSubjectReadiness::SnapshotDormant &&
                     !bExpectedIdleDormancy)))
         {
+            ConsecutiveLiveLinkHealthySeconds = 0.0;
             // Once a pending subject is observed, return to per-frame audits so
             // the existing two-second grace remains wall-clock accurate and
             // speech/action work stays paused until the subject recovers.
@@ -2015,7 +2359,7 @@ void UFayMetaHumanSpeechDriverComponent::TickComponent(
             if (!bLiveLinkPendingGraceLogged)
             {
                 UE_LOG(LogFayMetaHumanRuntime, Display,
-                    TEXT("Keeping Ada configured while the exact Fay Live Link subject is "
+                    TEXT("Keeping the reviewed MetaHuman configured while the exact Fay Live Link subject is "
                          "temporarily pending (%s)."),
                     *ReadinessReason);
                 bLiveLinkPendingGraceLogged = true;
@@ -2047,7 +2391,7 @@ void UFayMetaHumanSpeechDriverComponent::TickComponent(
             if (!bTerminalSubjectFailureLogged)
             {
                 UE_LOG(LogFayMetaHumanRuntime, Error,
-                    TEXT("The Fay MetaHuman runtime contract failed; restoring Ada "
+                    TEXT("The Fay MetaHuman runtime contract failed; restoring the reviewed MetaHuman "
                          "(consumer=%s; source=%s)."),
                     bConsumerReady ? TEXT("ready") : *ConsumerReason,
                     SubjectReadiness == EFayLiveLinkSubjectReadiness::Ready
@@ -2059,17 +2403,69 @@ void UFayMetaHumanSpeechDriverComponent::TickComponent(
             {
                 RuntimeState->PushNeutral();
             }
-            RestoreConfiguredAvatar();
+            AActor* FailedAvatar = Avatar;
+            EFayMetaHumanLiveLinkFailure Failure =
+                EFayMetaHumanLiveLinkFailure::PendingTimeout;
+            bool bRemoveSource = false;
+            if (!bSolverReady)
+            {
+                Failure = EFayMetaHumanLiveLinkFailure::SourceUnavailable;
+                bRemoveSource = true;
+            }
+            else if (SubjectReadiness == EFayLiveLinkSubjectReadiness::Collision)
+            {
+                Failure = EFayMetaHumanLiveLinkFailure::SubjectCollision;
+                bRemoveSource = true;
+            }
+            else if (SubjectReadiness == EFayLiveLinkSubjectReadiness::Invalid)
+            {
+                Failure = EFayMetaHumanLiveLinkFailure::SubjectInvalid;
+                bRemoveSource = true;
+            }
+            else if (!bConsumerReady)
+            {
+                Failure = EFayMetaHumanLiveLinkFailure::ConsumerLost;
+            }
+
+            // Restore exactly once before announcing degradation. If the
+            // original state cannot be proven, never mutate the avatar again.
+            const bool bRestored = RestoreConfiguredAvatar();
             ResetSpeechState();
             bLiveLinkHealthPending = false;
             bDormancyWakePending = false;
-            if (SubjectReadiness == EFayLiveLinkSubjectReadiness::Collision ||
-                SubjectReadiness == EFayLiveLinkSubjectReadiness::Invalid)
+            if (!bRestored)
             {
-                ShutdownSource();
+                EnterTerminalFailure(
+                    EFayMetaHumanLiveLinkFailure::RestoreFailed,
+                    true);
+            }
+            else if (bRemoveSource)
+            {
+                EnterTerminalFailure(Failure, true);
+            }
+            else if (IsValid(FailedAvatar) && bReviewedAvatarSealed &&
+                ReviewedAvatar.Get() == FailedAvatar)
+            {
+                EnterRecoveryBackoff(Failure);
+            }
+            else
+            {
+                EnterTerminalFailure(
+                    EFayMetaHumanLiveLinkFailure::ConfigurationRejected,
+                    true);
             }
             return;
         }
+    }
+
+    if (IsLiveLinkHealthyCached())
+    {
+        ConsecutiveLiveLinkHealthySeconds +=
+            static_cast<double>(SafeDeltaSeconds);
+    }
+    else
+    {
+        ConsecutiveLiveLinkHealthySeconds = 0.0;
     }
 
     const bool bSpeechDriving = bSpeechPrepared && bSpeechStarted;
