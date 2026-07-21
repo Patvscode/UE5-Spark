@@ -24,6 +24,7 @@ from embedding_contract import (
 from pose_protocol import (
     BATCH_FRAMES,
     COORDINATE_SYSTEM,
+    CORE27_HIERARCHY,
     CORE27_JOINTS,
     EXCLUDED_GENERATED_JOINTS,
     FPS,
@@ -213,7 +214,10 @@ class ArdyPoseProvider:
         )
         if self._model.gen_horizon_len != BATCH_FRAMES or self._model.motion_rep.fps != FPS:
             raise RuntimeError("ARDY model does not match the sealed 8-frame/20-FPS contract")
-        if tuple(self._model.skeleton.bone_order_names_with_parents) != tuple(CORE27_JOINTS):
+        model_hierarchy = tuple(
+            tuple(entry) for entry in self._model.skeleton.bone_order_names_with_parents
+        )
+        if model_hierarchy != CORE27_HIERARCHY:
             raise RuntimeError("ARDY model does not expose the exact sealed Core27 skeleton")
         self._embeddings = self._load_embeddings(self._models_root / "embeddings")
         self._history = None

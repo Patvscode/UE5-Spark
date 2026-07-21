@@ -43,7 +43,14 @@ models_parent=$(dirname "$models_root")
 [[ -d $models_parent && ! -L $models_parent ]] || \
     fail 'checkpoint parent must be a real directory'
 encoder_cache="$models_parent/.hf-text-encoder-cache"
-mkdir -p "$encoder_cache"
+if [[ -L $encoder_cache || ( -e $encoder_cache && ! -d $encoder_cache ) ]]; then
+    fail 'encoder cache must be a real directory'
+fi
+if [[ ! -e $encoder_cache ]]; then
+    mkdir -- "$encoder_cache"
+fi
+[[ -d $encoder_cache && ! -L $encoder_cache ]] || \
+    fail 'encoder cache must be a real directory'
 chmod 700 "$encoder_cache"
 
 gpu_args=()

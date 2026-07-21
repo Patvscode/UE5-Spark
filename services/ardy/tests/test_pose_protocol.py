@@ -10,6 +10,7 @@ SERVICE_ROOT = Path(__file__).resolve().parents[1] / "service"
 sys.path.insert(0, str(SERVICE_ROOT))
 
 from pose_protocol import (  # noqa: E402
+    CORE27_HIERARCHY,
     CORE27_JOINTS,
     PoseRequest,
     ProtocolError,
@@ -20,6 +21,12 @@ from providers import MockPoseProvider  # noqa: E402
 
 
 class PoseProtocolTests(unittest.TestCase):
+    def test_core27_hierarchy_is_exact_and_ordered(self) -> None:
+        self.assertEqual(len(CORE27_HIERARCHY), 27)
+        self.assertEqual(tuple(name for name, _ in CORE27_HIERARCHY), CORE27_JOINTS)
+        self.assertEqual(CORE27_HIERARCHY[0], ("Hips", None))
+        self.assertEqual(CORE27_HIERARCHY[-1], ("LeftToeBase", "LeftFoot"))
+
     def test_request_is_allowlisted(self) -> None:
         request = PoseRequest.from_json({"behavior": " WAVE ", "intensity": 0.8, "duration": 2})
         self.assertEqual(request.behavior, "wave")

@@ -51,11 +51,14 @@ OWNED_PROJECT_PLUGINS = {
 }
 
 FORBIDDEN_DIRECTORY_NAMES = {
+    ".hf-text-encoder-cache",
     "binaries",
     "captures",
     "deriveddatacache",
     "intermediate",
+    "models-private",
     "saved",
+    "secrets-private",
     "screenshots",
     "stagedbuilds",
 }
@@ -187,7 +190,10 @@ SECRET_PATTERNS = (
     ("OpenAI token", re.compile(r"sk-(?:proj-)?[A-Za-z0-9_-]{20,}")),
     ("AWS access key", re.compile(r"(?:AKIA|ASIA)[A-Z0-9]{16}")),
     ("Slack token", re.compile(r"xox[baprs]-[A-Za-z0-9-]{10,}")),
-    ("Hugging Face token", re.compile(r"hf_[A-Za-z0-9]{20,}")),
+    (
+        "Hugging Face token",
+        re.compile(r"(?<![A-Za-z0-9])hf_[A-Za-z0-9._~-]{20,}"),
+    ),
     (
         "Authorization credential",
         re.compile(r"(?i)authorization\s*:\s*(?:basic|bearer)\s+[A-Za-z0-9._~+/=-]{8,}"),
@@ -195,7 +201,8 @@ SECRET_PATTERNS = (
     (
         "credential assignment",
         re.compile(
-            r"(?i)\b(?:api[_-]?key|access[_-]?token|client[_-]?secret|password|passwd)"
+            r"(?i)\b(?:api[_-]?key|access[_-]?token|hf[_-]?token|refresh[_-]?token|"
+            r"client[_-]?secret|password|passwd)"
             r"\s*[:=]\s*(?P<value>[^\s#;,]+)"
         ),
     ),

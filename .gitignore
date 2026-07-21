@@ -107,6 +107,8 @@ Project/FayAvatarRuntime/Plugins/*/Content/
 # Credentials and machine-local configuration
 .private-media/
 logs-private/
+models-private/
+**/models-private/
 secrets-private/
 **/secrets-private/
 .hf-text-encoder-cache/
