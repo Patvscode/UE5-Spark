@@ -20,6 +20,7 @@
 #include "SpeechAnimationSolverTypes.h"
 #include "SpeechAnimationSolverV4.h"
 #include "UObject/Class.h"
+#include "UObject/GarbageCollection.h"
 #include "UObject/Package.h"
 #include "UObject/UnrealType.h"
 
@@ -1674,12 +1675,14 @@ void UFayMetaHumanSpeechDriverComponent::TickComponent(
         if (PendingMemoryTrimSeconds <= 0.0f &&
             (Bridge == nullptr || !Bridge->IsSpeechPlaying()))
         {
-            const double TrimStarted = FPlatformTime::Seconds();
+            const double MaintenanceStarted = FPlatformTime::Seconds();
+            CollectGarbage(GARBAGE_COLLECTION_KEEPFLAGS, true);
             FMemory::Trim(true);
             PendingMemoryTrimSeconds = -1.0f;
             UE_LOG(LogFayMetaHumanRuntime, Display,
-                TEXT("Released delayed render/audio allocator pools in %.2f ms."),
-                (FPlatformTime::Seconds() - TrimStarted) * 1000.0);
+                TEXT("Collected completed speech objects and released delayed "
+                     "render/audio allocator pools in %.2f ms."),
+                (FPlatformTime::Seconds() - MaintenanceStarted) * 1000.0);
         }
     }
 
