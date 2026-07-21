@@ -1663,6 +1663,18 @@ void UFayMetaHumanSpeechDriverComponent::TickComponent(
 
     if (IsValid(PendingAvatar))
     {
+        // A source registered during the first game frame can remain pending
+        // if its one bootstrap frame is processed before Live Link has fully
+        // attached the subject. Keep publishing the same bounded neutral frame
+        // until the exact source becomes evaluable; this also makes a cold
+        // launch independent of scheduler timing.
+        LiveLinkHeartbeatElapsedSeconds += FMath::Max(DeltaTime, 0.0f);
+        if (IsSolverReady() &&
+            LiveLinkHeartbeatElapsedSeconds >= LiveLinkHeartbeatSeconds)
+        {
+            RuntimeState->PushNeutral();
+            LiveLinkHeartbeatElapsedSeconds = 0.0;
+        }
         TryConfigurePendingAvatar();
     }
 
