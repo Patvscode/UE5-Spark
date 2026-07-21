@@ -108,9 +108,14 @@ content remain private and are not part of this repository.
   Fay remained alive. The soak tool now detects sustained shared-GPU saturation.
 - The sealed dual-character v15 package adds repeated neutral Live Link
   bootstrap frames to remove a measured cold-start scheduler race and caps
-  rendering at 30 FPS to retain compute headroom. Its final uncontended soak is
-  pending shared-GPU availability; v14 remains the measured memory-regression
-  reference and v13 remains the rollback package.
+  rendering at 30 FPS to retain compute headroom. Its first cold launch
+  configured Ada immediately, then a GPU-isolated Null-RHI gate completed 20
+  turns over 1,803 seconds: 6,552 exact facial frames over 127.040 speech
+  seconds, zero frame-accounting failures, 11.69 ms worst p95, and no fatal,
+  assertion, OOM, or queue-overflow marker. RSS moved from 539,300 KiB to
+  542,560 KiB overall and only 616 KiB across the latter half, demonstrating a
+  plateau instead of v13's linear growth. The externally managed Fay process
+  remained alive through verified teardown.
 - The private Tailscale progress hub is live independently of the avatar stack.
   It serves only allowlisted private milestone media, supports mobile video
   ranges, and links to the existing agent board without exposing private data
@@ -152,10 +157,10 @@ deployable application.
   presentation for a polished long-running character experience.
 - Assemble and validate a second reviewed female preset. Aoi already proves the
   no-character-specific-C++ portability requirement but is male in UE 5.8.
-- Complete the uncontended v15 30-minute mixed-action soak. Malformed envelope
-  and stale-sequence live injections already passed while speech/facial output
-  continued; the remaining gate is sustained runtime under available GPU
-  headroom.
+- Complete a rendered v15/v16 face-plus-body soak under available GPU headroom.
+  The 30-minute speech/face/memory gate and the earlier malformed-envelope,
+  stale-sequence, and service-recovery injections pass; visual motion,
+  sustained Vulkan frame rate, foot sliding, and head-conflict review remain.
 
 ## Publication boundary
 
