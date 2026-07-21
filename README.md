@@ -116,6 +116,7 @@ scripts/build-ardy-container.sh           Build isolated ARM64 PyTorch service
 scripts/run-ardy-container.sh             Run loopback-only hardened pose service
 services/ardy/                            Strict Core27 protocol and providers
 tools/fay-avatar-smoke-test.py            Test Fay without Unreal
+tools/progress_hub.py                     Private allowlisted milestone/media page
 docs/                                     Architecture and deployment guides
 ```
 
@@ -124,6 +125,9 @@ as the second v13 portability fixture because it proved that the runtime,
 speech adapter, and body retargeter are character-independent. Ada remains the
 female demonstration character; another reviewed female preset can use the
 same guarded builder and profile path.
+
+For the optional Tailscale progress page and the guarded 30-minute reliability
+runner, see [reliability and private progress](docs/reliability-and-progress.md).
 
 ## Quick path
 

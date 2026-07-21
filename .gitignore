@@ -105,6 +105,8 @@ Project/FayAvatarRuntime/Plugins/*/Content/
 *.xlsx
 
 # Credentials and machine-local configuration
+.private-media/
+logs-private/
 .env
 .env.*
 *.env

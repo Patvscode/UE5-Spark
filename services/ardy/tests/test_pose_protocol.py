@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import sys
 import unittest
+from copy import deepcopy
 from pathlib import Path
 
 
@@ -13,6 +14,7 @@ from pose_protocol import (  # noqa: E402
     PoseRequest,
     ProtocolError,
     ardy_translation_to_unreal_cm,
+    validate_batch,
 )
 from providers import MockPoseProvider  # noqa: E402
 
@@ -45,6 +47,25 @@ class PoseProtocolTests(unittest.TestCase):
 
     def test_coordinate_mapping(self) -> None:
         self.assertEqual(ardy_translation_to_unreal_cm([2, 3, 4]), [400, 200, 300])
+
+    def test_malformed_and_out_of_order_frames_fail_closed(self) -> None:
+        provider = MockPoseProvider()
+        batch = provider.generate(PoseRequest("idle", 0.5, 1.0, 0))
+
+        repeated_time = deepcopy(batch)
+        repeated_time["frames"][1]["time"] = repeated_time["frames"][0]["time"]
+        with self.assertRaises(ProtocolError):
+            validate_batch(repeated_time)
+
+        wrong_joint_count = deepcopy(batch)
+        wrong_joint_count["frames"][0]["joints"].pop()
+        with self.assertRaises(ProtocolError):
+            validate_batch(wrong_joint_count)
+
+        non_finite = deepcopy(batch)
+        non_finite["frames"][0]["root"][0] = float("nan")
+        with self.assertRaises(ProtocolError):
+            validate_batch(non_finite)
 
 
 if __name__ == "__main__":
