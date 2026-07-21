@@ -92,6 +92,7 @@ working default. See [the Spark FEX cooker](docs/spark-fex-cooker.md) and the
 ```text
 Project/FayAvatarRuntime/                 Minimal UE 5.8 project
   Plugins/FayAvatarBridge/                Source-only runtime bridge
+  Plugins/FayBodyMotion/                  Allowlisted baked/ARDY motion boundary
   Plugins/FayMetaHumanRuntime/            Source-only local facial adapter
   Plugins/FayMetaHumanEditorTools/        Editor-only Ada assembly helper
   Source/FayAvatarRuntimeEditor.Target.cs x86-64 Editor/cooker target
@@ -109,6 +110,9 @@ scripts/verify-cooked-package.sh           Deep-check and hash-seal the package
 scripts/verify-spark.sh                   Read-only Spark/Vulkan preflight
 scripts/run-cooked-package.sh             Guarded packaged-app launcher
 scripts/run-spark-digital-human.sh        Discover Fay/MCP and launch the stack
+scripts/build-ardy-container.sh           Build isolated ARM64 PyTorch service
+scripts/run-ardy-container.sh             Run loopback-only hardened pose service
+services/ardy/                            Strict Core27 protocol and providers
 tools/fay-avatar-smoke-test.py            Test Fay without Unreal
 docs/                                     Architecture and deployment guides
 ```
@@ -192,6 +196,13 @@ count while the window was minimized. Semantic action events reach Unreal and
 the source contains conservative head-control mappings for a small action set,
 but those head gestures have not been visually verified. Authored body mappings
 and montages for actions such as wave and invite are not implemented.
+
+The `FayBodyMotion` plugin routes the same semantic intent through a strict
+allowlist and interchangeable baked/ARDY providers. Its ARDY client validates
+versioned Core27 batches from `127.0.0.1:8777`, buffers eight 20 FPS frames, and
+interpolates poses at render rate. Generated motion deliberately remains behind
+the retarget safety gate until the MetaHuman post-evaluation rig proves it does
+not replace or fight the verified StreamingADA Body/Face path.
 
 The [MCP integration boundary](docs/mcp-integration.md) explains how Fay owns
 tools and credentials while Unreal receives presentation-only events.

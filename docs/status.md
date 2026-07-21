@@ -54,6 +54,19 @@ content remain private and are not part of this repository.
   solver, exact Live Link consumer, Fay WebSocket, and background-throttle
   markers on each run, then completed clean teardown without leaving a runtime
   process behind.
+- The project-owned ARDY image builds on Spark from NVIDIA's ARM64 PyTorch
+  25.05 image and the reviewed official ARDY commit. Inside the container,
+  PyTorch 2.8 detects the GB10 GPU. Runtime checks confirmed a read-only root
+  filesystem/checkpoint mount, dropped capabilities, `no-new-privileges`, PID
+  limit, and a loopback-only `127.0.0.1:8777` listener.
+- Both approved Core27 checkpoints downloaded into the private model mount. The
+  eager Horizon40 model generated 40 frames in 1.682 seconds. Horizon8 then ran
+  six steady eight-frame generations in 59-153 ms with 132 ms p95, passing the
+  400 ms buffer target after warmup. No TensorRT was installed or used.
+- The strict mock pose service passed schema, sequence, allowlist, Core27,
+  neck/head-exclusion, and coordinate-mapping tests. The real Horizon8 provider
+  loads without network/token access and fails closed because the account does
+  not yet have access to the separate gated Meta Llama text encoder.
 
 ## Important boundary
 
@@ -70,11 +83,16 @@ deployable application.
 
 ## Remaining work
 
-- Add the character-neutral `FayBodyMotion` provider boundary, deterministic
-  baked fallback gestures, and the normalized pose contract.
-- Prove ARDY core inference in an isolated ARM64 NVIDIA PyTorch container, then
-  connect it only through the loopback pose service after the credential-free
-  mock path passes.
+- Complete the MetaHuman post-evaluation Control Rig/IK retarget adapter and
+  prove it does not replace or fight StreamingADA. The character-neutral
+  `FayBodyMotion` boundary, baked-provider precedence, loopback client, strict
+  pose parser, eight-frame interpolating buffer, and automatic idle fallback
+  already compile natively on Spark.
+- Author or generate the private deterministic gesture clips. The current
+  baked provider fails safely to idle when no compatible reviewed montage is
+  configured.
+- Cache approved ARDY text embeddings after Meta Llama access is granted. The
+  real provider currently reports degraded and returns 503 without them.
 - Visually validate and tune the source-level semantic head-control mappings for
   `nod`, `shake`, `think`, and `warn`.
 - Add reviewed, MetaHuman-compatible body animations and explicit mappings for

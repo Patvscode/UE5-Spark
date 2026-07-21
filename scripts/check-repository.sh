@@ -45,6 +45,7 @@ PROJECT_CONTENT_ROOT = PROJECT_ROOT / "Content"
 PROJECT_PLUGINS_ROOT = PROJECT_ROOT / "Plugins"
 OWNED_PROJECT_PLUGINS = {
     "FayAvatarBridge",
+    "FayBodyMotion",
     "FayMetaHumanEditorTools",
     "FayMetaHumanRuntime",
 }
@@ -355,6 +356,11 @@ python_sources = (
     Path("scripts/cook-state.py"),
     Path("scripts/inspect-metahuman-runtime-contract.py"),
     Path("scripts/metahuman-preflight.py"),
+    Path("services/ardy/service/ardy_pose_service.py"),
+    Path("services/ardy/service/download_checkpoint.py"),
+    Path("services/ardy/service/pose_protocol.py"),
+    Path("services/ardy/service/providers.py"),
+    Path("services/ardy/tests/test_pose_protocol.py"),
     Path(
         "Project/FayAvatarRuntime/Plugins/FayMetaHumanEditorTools/"
         "Scripts/build_ada.py"
@@ -368,6 +374,10 @@ json_sources = (
     Path(
         "Project/FayAvatarRuntime/Plugins/FayAvatarBridge/"
         "FayAvatarBridge.uplugin"
+    ),
+    Path(
+        "Project/FayAvatarRuntime/Plugins/FayBodyMotion/"
+        "FayBodyMotion.uplugin"
     ),
     Path(
         "Project/FayAvatarRuntime/Plugins/FayMetaHumanEditorTools/"
@@ -390,6 +400,7 @@ expected_project_plugins = {
     "AnimationData",
     "ControlRigSpline",
     "FayAvatarBridge",
+    "FayBodyMotion",
     "FayMetaHumanEditorTools",
     "FayMetaHumanRuntime",
     "InterchangeAssets",
@@ -398,13 +409,14 @@ expected_project_plugins = {
 if len(project.get("Plugins", [])) != len(plugins) or set(plugins) != expected_project_plugins:
     reject(
         "FayAvatarRuntime.uproject plugin list must contain only the reviewed bridge, "
-        "runtime, Editor helper, AnimationData, ControlRigSpline, InterchangeAssets, "
-        "and MetaHumanCharacter entries"
+        "body-motion/runtime plugins, Editor helper, AnimationData, ControlRigSpline, "
+        "InterchangeAssets, and MetaHumanCharacter entries"
     )
 
 for plugin_name in (
     "ControlRigSpline",
     "FayAvatarBridge",
+    "FayBodyMotion",
     "FayMetaHumanRuntime",
     "InterchangeAssets",
     "MetaHumanCharacter",
@@ -454,6 +466,24 @@ validate_contentless_plugin(
     "FayAvatarBridge",
     "Runtime",
 )
+
+body_motion_path = Path(
+    "Project/FayAvatarRuntime/Plugins/FayBodyMotion/FayBodyMotion.uplugin"
+)
+validate_contentless_plugin(
+    parsed_json[body_motion_path],
+    body_motion_path,
+    "FayBodyMotion",
+    "Runtime",
+)
+body_motion_dependencies = {
+    entry.get("Name"): entry
+    for entry in parsed_json[body_motion_path].get("Plugins", [])
+}
+if set(body_motion_dependencies) != {"FayAvatarBridge"} or not body_motion_dependencies[
+    "FayAvatarBridge"
+].get("Enabled"):
+    reject("FayBodyMotion must keep only its enabled FayAvatarBridge dependency")
 
 helper_path = Path(
     "Project/FayAvatarRuntime/Plugins/FayMetaHumanEditorTools/"
@@ -513,8 +543,17 @@ runtime_build = Path(
     "Project/FayAvatarRuntime/Plugins/FayMetaHumanRuntime/Source/"
     "FayMetaHumanRuntime/FayMetaHumanRuntime.Build.cs"
 ).read_text()
+body_motion_build = Path(
+    "Project/FayAvatarRuntime/Plugins/FayBodyMotion/Source/"
+    "FayBodyMotion/FayBodyMotion.Build.cs"
+).read_text()
 if '"FayMetaHumanRuntime"' not in main_build:
     reject("the Game module must depend on FayMetaHumanRuntime")
+if '"FayBodyMotion"' not in main_build:
+    reject("the Game module must depend on FayBodyMotion")
+for module_name in ("Core", "CoreUObject", "Engine", "FayAvatarBridge", "HTTP", "Json"):
+    if f'"{module_name}"' not in body_motion_build:
+        reject(f"FayBodyMotion.Build.cs is missing {module_name}")
 for module_name in (
     "AudioPlatformConfiguration",
     "FayAvatarBridge",

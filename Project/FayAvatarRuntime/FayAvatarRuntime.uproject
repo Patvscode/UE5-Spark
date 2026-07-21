@@ -21,6 +21,10 @@
       "Enabled": true
     },
     {
+      "Name": "FayBodyMotion",
+      "Enabled": true
+    },
+    {
       "Name": "AnimationData",
       "Enabled": true,
       "TargetAllowList": [

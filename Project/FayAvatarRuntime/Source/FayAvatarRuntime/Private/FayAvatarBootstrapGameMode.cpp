@@ -8,6 +8,8 @@
 #include "Engine/SkeletalMesh.h"
 #include "Engine/World.h"
 #include "FayAvatarBridgeComponent.h"
+#include "FayArdyPoseClientComponent.h"
+#include "FayBodyMotionComponent.h"
 #include "FayMetaHumanSpeechDriverComponent.h"
 #include "GameFramework/PlayerController.h"
 #include "HAL/PlatformProcess.h"
@@ -77,6 +79,8 @@ AFayAvatarBootstrapGameMode::AFayAvatarBootstrapGameMode()
     Camera->SetActive(true);
 
     Bridge = CreateDefaultSubobject<UFayAvatarBridgeComponent>(TEXT("FayAvatarBridge"));
+    ArdyPoseClient = CreateDefaultSubobject<UFayArdyPoseClientComponent>(TEXT("FayArdyPoseClient"));
+    BodyMotion = CreateDefaultSubobject<UFayBodyMotionComponent>(TEXT("FayBodyMotion"));
     SpeechDriver = CreateDefaultSubobject<UFayMetaHumanSpeechDriverComponent>(TEXT("FayMetaHumanSpeechDriver"));
 
     KeyLight = CreateDefaultSubobject<UPointLightComponent>(TEXT("KeyLight"));
@@ -120,6 +124,11 @@ void AFayAvatarBootstrapGameMode::BeginPlay()
     if (SpeechDriver != nullptr)
     {
         SpeechDriver->AttachBridge(Bridge);
+    }
+    if (BodyMotion != nullptr)
+    {
+        BodyMotion->AttachBridge(Bridge);
+        BodyMotion->AttachArdyClient(ArdyPoseClient);
     }
     bCharacterProfileValid = LoadCharacterProfile();
     TrySpawnMetaHuman();
@@ -306,6 +315,10 @@ void AFayAvatarBootstrapGameMode::TrySpawnMetaHuman()
     }
 
     ResolveFaceAndJawMorph();
+    if (BodyMotion != nullptr)
+    {
+        BodyMotion->ConfigureAvatar(MetaHumanActor, BodyComponentName);
+    }
     bLiveLinkConfigured = false;
     bLiveLinkConfigurationRequested = SpeechDriver != nullptr &&
         SpeechDriver->IsSolverReady();
