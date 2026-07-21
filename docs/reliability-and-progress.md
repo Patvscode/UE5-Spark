@@ -14,9 +14,22 @@ memory plus available `nvidia-smi` memory data after every turn.
 
 The required validation invocation is 1,800 seconds and 20 turns. Logs must be
 written below a private `logs-private` or `media-private` directory and must not
-be committed. A passing harness run does not itself prove bounded memory; review
-the first, last, and maximum RSS values and the Unreal log for queue, crash, and
-facial-solver failures.
+be committed. The harness now fails when RSS grows by more than 256 MiB across
+the latter half of a run; override that explicit limit only with
+`FAY_SOAK_MAX_TAIL_RSS_GROWTH_KB`. DGX Spark does not expose a separate
+`memory.used` value through `nvidia-smi` for its unified memory, so the report
+records `-1` for that field and treats process RSS as the enforceable memory
+signal. A pass still requires log review for exact facial-frame accounting,
+queue failures, render-driver errors, and crashes.
+
+Run long tests only when another project is not saturating the shared GPU. A
+kernel NVIDIA Xid is an infrastructure failure even when Fay and the HTTP test
+harness remain healthy; preserve the kernel and Unreal evidence and rerun after
+the conflicting workload has ended. The harness records utilization and aborts
+after three consecutive samples above 85 percent; that guard can be adjusted
+explicitly with `FAY_SOAK_MAX_GPU_UTILIZATION_PERCENT`. The packaged avatar
+caps rendering at 30 FPS to retain compute headroom for speech and motion
+rather than rendering unused frames as quickly as possible.
 
 ## Tailscale progress hub
 
@@ -38,4 +51,3 @@ status document, process log, screenshots, and videos outside Git.
 The hub is deliberately a small visibility aid rather than a dependency of the
 avatar stack. Unreal, Fay, StreamingADA, and ARDY continue to run if the hub is
 stopped.
-

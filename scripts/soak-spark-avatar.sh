@@ -17,12 +17,15 @@ output_input=$3
 duration=$4
 turn_count=$5
 max_tail_rss_growth_kb=${FAY_SOAK_MAX_TAIL_RSS_GROWTH_KB:-262144}
+max_gpu_utilization_percent=${FAY_SOAK_MAX_GPU_UTILIZATION_PERCENT:-85}
 [[ $unreal_pid =~ ^[1-9][0-9]*$ && $fay_pid =~ ^[1-9][0-9]*$ ]] || \
     fail 'PIDs must be positive integers'
 [[ $duration =~ ^[1-9][0-9]*$ && $turn_count =~ ^[1-9][0-9]*$ ]] || \
     fail 'duration and turn count must be positive integers'
 [[ $max_tail_rss_growth_kb =~ ^[0-9]+$ ]] || \
     fail 'FAY_SOAK_MAX_TAIL_RSS_GROWTH_KB must be a non-negative integer'
+[[ $max_gpu_utilization_percent =~ ^([0-9]|[1-9][0-9]|100)$ ]] || \
+    fail 'FAY_SOAK_MAX_GPU_UTILIZATION_PERCENT must be an integer from 0 through 100'
 (( duration >= turn_count && turn_count <= 100 )) || \
     fail 'duration must cover every turn and turn count must not exceed 100'
 for command_name in curl date mkdir nvidia-smi ps readlink ss; do
@@ -47,7 +50,7 @@ fay_host=${fay_address%:5000}
 
 metrics="$output_dir/soak-metrics.tsv"
 summary="$output_dir/soak-summary.txt"
-printf 'elapsed_seconds\tturn\tunreal_rss_kb\tgpu_memory_mib\n' >"$metrics"
+printf 'elapsed_seconds\tturn\tunreal_rss_kb\tgpu_memory_mib\tgpu_utilization_percent\n' >"$metrics"
 messages=(
     '例如, Ada can explain this reusable digital human pipeline clearly.'
     '欢迎, this is a dependable live speech and avatar reliability check.'
@@ -57,6 +60,7 @@ messages=(
 )
 
 start=$(date +%s)
+high_gpu_samples=0
 for ((turn = 1; turn <= turn_count; ++turn)); do
     kill -0 "$unreal_pid" 2>/dev/null || fail "Unreal exited before turn $turn"
     kill -0 "$fay_pid" 2>/dev/null || fail "Fay exited before turn $turn"
@@ -74,12 +78,27 @@ for ((turn = 1; turn <= turn_count; ++turn)); do
     gpu=$(nvidia-smi --query-gpu=memory.used --format=csv,noheader,nounits 2>/dev/null \
         | head -n1 | tr -d ' ' || true)
     [[ $gpu =~ ^[0-9]+$ ]] || gpu=-1
-    printf '%s\t%s\t%s\t%s\n' "$elapsed" "$turn" "$rss" "$gpu" >>"$metrics"
+    gpu_utilization=$(nvidia-smi --query-gpu=utilization.gpu \
+        --format=csv,noheader,nounits 2>/dev/null | head -n1 | tr -d ' ' || true)
+    [[ $gpu_utilization =~ ^([0-9]|[1-9][0-9]|100)$ ]] || gpu_utilization=-1
+    printf '%s\t%s\t%s\t%s\t%s\n' \
+        "$elapsed" "$turn" "$rss" "$gpu" "$gpu_utilization" >>"$metrics"
 
     target=$((start + (duration * turn / turn_count)))
     while (( $(date +%s) < target )); do
         kill -0 "$unreal_pid" 2>/dev/null || fail "Unreal exited after turn $turn"
         kill -0 "$fay_pid" 2>/dev/null || fail "Fay exited after turn $turn"
+        gpu_utilization=$(nvidia-smi --query-gpu=utilization.gpu \
+            --format=csv,noheader,nounits 2>/dev/null | head -n1 | tr -d ' ' || true)
+        if [[ $gpu_utilization =~ ^([0-9]|[1-9][0-9]|100)$ ]] &&
+            (( gpu_utilization > max_gpu_utilization_percent )); then
+            ((++high_gpu_samples))
+        else
+            high_gpu_samples=0
+        fi
+        if (( high_gpu_samples >= 3 )); then
+            fail "shared GPU utilization exceeded ${max_gpu_utilization_percent}% for three consecutive samples"
+        fi
         sleep 5
     done
 done
@@ -88,6 +107,7 @@ end=$(date +%s)
 first_rss=$(awk 'NR==2 {print $3}' "$metrics")
 last_rss=$(awk 'END {print $3}' "$metrics")
 max_rss=$(awk 'NR>1 && $3>m {m=$3} END {print m+0}' "$metrics")
+max_gpu_utilization=$(awk 'NR>1 && $5>m {m=$5} END {print m+0}' "$metrics")
 tail_start_row=$((2 + turn_count / 2))
 tail_start_rss=$(awk -v row="$tail_start_row" 'NR==row {print $3}' "$metrics")
 tail_rss_growth_kb=$((last_rss - tail_start_rss))
@@ -108,6 +128,8 @@ fi
     printf 'rss_tail_start_kb=%s\n' "$tail_start_rss"
     printf 'rss_tail_growth_kb=%s\n' "$tail_rss_growth_kb"
     printf 'rss_tail_growth_limit_kb=%s\n' "$max_tail_rss_growth_kb"
+    printf 'gpu_utilization_max_percent=%s\n' "$max_gpu_utilization"
+    printf 'gpu_utilization_limit_percent=%s\n' "$max_gpu_utilization_percent"
 } >"$summary"
 if [[ $status != passed ]]; then
     fail "Unreal RSS grew by ${tail_rss_growth_kb} KB in the latter half of the soak (limit: ${max_tail_rss_growth_kb} KB)"
