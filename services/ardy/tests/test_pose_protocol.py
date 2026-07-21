@@ -17,10 +17,26 @@ from pose_protocol import (  # noqa: E402
     ardy_translation_to_unreal_cm,
     validate_batch,
 )
-from providers import MockPoseProvider, _serialize_contact_values  # noqa: E402
+from providers import (  # noqa: E402
+    MockPoseProvider,
+    _generation_window_frames,
+    _serialize_contact_values,
+)
+
+
+class FakeHistory:
+    def __init__(self, frames: int) -> None:
+        self.shape = (1, frames, 148)
 
 
 class PoseProtocolTests(unittest.TestCase):
+    def test_generation_window_includes_bounded_history(self) -> None:
+        self.assertEqual(_generation_window_frames(None), 8)
+        self.assertEqual(_generation_window_frames(FakeHistory(8)), 16)
+        self.assertEqual(_generation_window_frames(FakeHistory(192)), 200)
+        with self.assertRaises(RuntimeError):
+            _generation_window_frames(FakeHistory(200))
+
     def test_boolean_contacts_are_serialized_as_protocol_numbers(self) -> None:
         values = _serialize_contact_values([True, False, True, False])
         self.assertEqual(values, [1.0, 0.0, 1.0, 0.0])

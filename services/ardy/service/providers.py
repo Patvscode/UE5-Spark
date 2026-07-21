@@ -36,6 +36,7 @@ from pose_protocol import (
 
 
 IDENTITY = [0.0, 0.0, 0.0, 1.0]
+MAX_HISTORY_FRAMES = 192
 
 
 def _sha256(path: Path) -> str:
@@ -56,6 +57,24 @@ def _serialize_contact_values(values: object) -> list[float]:
     if len(result) != 4 or not all(math.isfinite(value) for value in result):
         raise RuntimeError("ARDY foot contacts must contain four finite values")
     return result
+
+
+def _generation_window_frames(history: object | None) -> int:
+    """Return ARDY's total visible window: retained history plus one horizon."""
+
+    if history is None:
+        return BATCH_FRAMES
+    try:
+        history_frames = int(history.shape[1])  # type: ignore[union-attr]
+    except (AttributeError, IndexError, TypeError, ValueError) as error:
+        raise RuntimeError("ARDY history has an invalid tensor shape") from error
+    if (
+        history_frames < BATCH_FRAMES
+        or history_frames > MAX_HISTORY_FRAMES
+        or history_frames % BATCH_FRAMES != 0
+    ):
+        raise RuntimeError("ARDY history length violates the sealed window contract")
+    return history_frames + BATCH_FRAMES
 
 
 def load_embedding_cache(root: Path, np_module: object) -> dict[str, tuple[object, object]]:
@@ -273,7 +292,7 @@ class ArdyPoseProvider:
             text_feat, text_pad_mask = embedding
             started = time.perf_counter()
             samples = self._model.autoregressive_step(
-                num_frames=BATCH_FRAMES,
+                num_frames=_generation_window_frames(self._history),
                 num_denoising_steps=int(self._model.diffusion.num_base_steps),
                 motion_mask=None,
                 observed_motion=None,
@@ -287,7 +306,7 @@ class ArdyPoseProvider:
             self._generation_times_ms.append((time.perf_counter() - started) * 1000.0)
             self._generation_times_ms = self._generation_times_ms[-256:]
             # Bound history to the trained ten-second window minus one horizon.
-            self._history = samples[:, -192:].detach()
+            self._history = samples[:, -MAX_HISTORY_FRAMES:].detach()
             unnormalized = self._model.motion_rep.unnormalize(samples)
             output = self._model.motion_rep.inverse(unnormalized, is_normalized=False)
             local_matrices = output["local_rot_mats"][:, -BATCH_FRAMES:].detach().cpu().numpy()
