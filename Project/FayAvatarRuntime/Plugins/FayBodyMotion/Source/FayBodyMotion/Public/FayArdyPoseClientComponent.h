@@ -45,6 +45,8 @@ public:
 private:
     void ProbeHealth();
     void RequestPoseBatch();
+    void RetireHealthRequest();
+    void RetirePoseRequest();
     void HandleHealthResponse(FHttpRequestPtr Request, FHttpResponsePtr Response, bool bSucceeded);
     void HandlePoseResponse(FHttpRequestPtr Request, FHttpResponsePtr Response, bool bSucceeded);
     void SetReady(bool bReady);
@@ -58,10 +60,15 @@ private:
     TSharedPtr<IHttpRequest, ESPMode::ThreadSafe> PoseRequest;
     int64 LastSequence = 0;
     double PlaybackTimeSeconds = 0.0;
+    double LastFrameTimeSeconds = -1.0;
+    FVector3f LastRootTranslationMetres = FVector3f::ZeroVector;
     double HealthRetryElapsedSeconds = 0.0;
     float ActiveIntensity = 0.5f;
     float ActiveDurationSeconds = 1.0f;
     bool bClientEnabled = true;
+    bool bAllowDiagnosticProvider = false;
     bool bServiceReady = false;
     bool bPlaybackStarted = false;
+    bool bHasLastRootTranslation = false;
+    bool bAllowActionTransitionGap = false;
 };

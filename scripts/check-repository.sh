@@ -365,6 +365,7 @@ python_sources = (
     Path("tools/fay-avatar-smoke-test.py"),
     Path("tools/validate_ardy_service.py"),
     Path("tools/tests/test_activate_ardy_provider.py"),
+    Path("tools/tests/test_ardy_unreal_contract.py"),
     Path("tools/tests/test_run_spark_avatar_gate.py"),
     Path("tools/tests/test_validate_ardy_service.py"),
     Path("scripts/character-profiles.py"),
@@ -1054,6 +1055,7 @@ fi
 
 if [[ -n $python_bin ]] && ! "$python_bin" -m unittest \
     tools.tests.test_activate_ardy_provider \
+    tools.tests.test_ardy_unreal_contract \
     tools.tests.test_run_spark_avatar_gate \
     tools.tests.test_validate_ardy_service; then
     fail 'guarded Spark ARDY and avatar gate tests failed'

@@ -15,7 +15,8 @@ The current verified boundary provides:
 - a strict loopback ARDY client for versioned 20 FPS Core27 batches;
 - an eight-frame/400 ms buffer with render-rate quaternion interpolation;
 - rejection of malformed, oversized, stale, out-of-order, non-finite, or
-  non-Core27 data; and
+  non-Core27 data, including non-unit rotations, time-step drift, out-of-range
+  contacts, excess root translation, or generated neck/head control; and
 - forced exclusion of facial, neck, and head ownership from generated motion.
 
 The ARDY client, provider, and guarded UE 5.8 post-evaluation retarget adapter
@@ -36,6 +37,14 @@ compatible private montage transparently takes precedence.
 
 Licensed character assets, animation montages, checkpoints, prompt embeddings,
 and cooked packages are not part of this repository.
+
+Production health accepts only the real Horizon8 provider, three sealed
+embeddings, excluded facial control, and a positive finite p95 below the 400 ms
+buffer. The runtime rechecks that health every five seconds; a disconnect,
+identity change, or later slowdown clears generated poses and preserves the
+baked fallback.
+For bounded isolation testing, `-FayAllowDiagnosticArdy=1` permits the fixed
+loopback mock/fault provider without weakening the production default.
 
 For bounded isolation testing, `-FayDisableArdy=1` disables the loopback ARDY
 client before its first health probe and disables that component's tick. Baked

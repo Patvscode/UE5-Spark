@@ -10,6 +10,10 @@ canary_container_id=''
 target_container_id=''
 old_container_id=''
 evidence_root=''
+recovery_mode=0
+rollback_attempted=0
+rollback_status='not-required'
+cleanup_status='not-required'
 
 usage() {
     printf 'Usage: %s MODELS_ROOT PRIVATE_EVIDENCE_DIR\n' "${0##*/}" >&2
@@ -72,11 +76,17 @@ esac
 [[ ! -e $evidence_root && ! -L $evidence_root ]] || \
     fail 'PRIVATE_EVIDENCE_DIR must not already exist'
 
-lock_file="$private_root/.ardy-activation.lock"
+lock_parent="/run/user/$(id -u)"
+[[ -d $lock_parent && ! -L $lock_parent ]] || \
+    fail 'the fixed per-user runtime directory is missing or unsafe'
+lock_parent=$(cd "$lock_parent" && pwd -P)
+[[ $lock_parent == "/run/user/$(id -u)" ]] || \
+    fail 'the fixed per-user runtime directory resolved unexpectedly'
+lock_file="$lock_parent/ue5-spark-ardy.activation.lock"
 [[ ! -L $lock_file ]] || fail 'the ARDY activation lock is a symlink'
 exec 9>>"$lock_file"
 chmod 600 "$lock_file"
-flock -n 9 || fail 'another guarded ARDY activation owns this private root'
+flock -n 9 || fail 'another guarded ARDY activation is already running for this user'
 [[ ! -e $evidence_root && ! -L $evidence_root ]] || \
     fail 'PRIVATE_EVIDENCE_DIR appeared while acquiring the lock'
 mkdir -m 700 -- "$evidence_root"
@@ -121,7 +131,7 @@ container_id_for_name() {
 
 loopback_listener_owned_by_pid() {
     local port=$1 pid=$2 listeners line endpoint other_owner count=0
-    listeners=$(ss -H -ltnp "sport = :$port" 2>/dev/null || true)
+    listeners=$(ss -H -ltnp "sport = :$port" 2>/dev/null) || return 1
     while IFS= read -r line; do
         [[ -n $line ]] || continue
         [[ $line == *"pid=$pid,"* ]] || return 1
@@ -136,6 +146,12 @@ loopback_listener_owned_by_pid() {
         count=$((count + 1))
     done <<<"$listeners"
     (( count == 1 ))
+}
+
+loopback_port_is_unused() {
+    local listeners
+    listeners=$(ss -H -ltn "sport = :$1" 2>/dev/null) || return 1
+    [[ -z $listeners ]]
 }
 
 capture_verified_container() {
@@ -346,7 +362,7 @@ cleanup_canary() {
 }
 
 restore_rollback() {
-    local current_id rollback_id
+    local current_id rollback_id attempt
     local -a rollback_snapshot=()
     if [[ -n $old_container_id ]] && \
         docker inspect --type container "$old_container_id" >/dev/null 2>&1; then
@@ -366,9 +382,35 @@ restore_rollback() {
             "$evidence_root/failed-target-container.log"
         docker stop --time 20 "$target_container_id" >/dev/null 2>&1 || true
     fi
+    for attempt in $(seq 1 30); do
+        current_id=$(container_id_for_name "$PRODUCTION_CONTAINER" 2>/dev/null || true)
+        if [[ -z $current_id ]] && \
+            ! docker inspect --type container "$target_container_id" >/dev/null 2>&1 && \
+            loopback_port_is_unused "$PRODUCTION_PORT"; then
+            break
+        fi
+        sleep 1
+    done
+    if [[ -n $target_container_id ]] && \
+        docker inspect --type container "$target_container_id" >/dev/null 2>&1; then
+        write_record "$evidence_root/rollback-blocked.txt" \
+            'reason=exact-failed-target-still-exists' \
+            "observed_container_id=$target_container_id" || true
+        return 1
+    fi
     current_id=$(container_id_for_name "$PRODUCTION_CONTAINER" 2>/dev/null || true)
-    [[ -z $current_id ]] || return 1
-    rollback_id=$(launch_container "$PRODUCTION_CONTAINER" "$ROLLBACK_IMAGE" \
+    if [[ -n $current_id ]]; then
+        write_record "$evidence_root/rollback-blocked.txt" \
+            'reason=production-container-name-is-owned' \
+            "observed_container_id=$current_id" || true
+        return 1
+    fi
+    if ! loopback_port_is_unused "$PRODUCTION_PORT"; then
+        write_record "$evidence_root/rollback-blocked.txt" \
+            'reason=production-port-is-owned-or-could-not-be-inspected' || true
+        return 1
+    fi
+    rollback_id=$(launch_container "$PRODUCTION_CONTAINER" "$rollback_image_id" \
         "$PRODUCTION_PORT" "$ROLLBACK_PROVIDER" true) || return 1
     [[ $rollback_id =~ ^[0-9a-f]{64}$ ]] || return 1
     if ! wait_for_mock_health "$PRODUCTION_PORT" \
@@ -376,7 +418,7 @@ restore_rollback() {
         return 1
     fi
     capture_verified_container rollback_snapshot "$rollback_id" "$PRODUCTION_CONTAINER" \
-        "$ROLLBACK_IMAGE" "$rollback_image_id" "$ROLLBACK_PROVIDER" \
+        "$rollback_image_id" "$rollback_image_id" "$ROLLBACK_PROVIDER" \
         "$PRODUCTION_PORT" true rollback || return 1
     rollback_verified=1
 }
@@ -384,9 +426,26 @@ restore_rollback() {
 on_exit() {
     local status=$?
     set +e
-    cleanup_canary
+    if cleanup_canary; then
+        cleanup_status='verified'
+    else
+        cleanup_status='failed'
+        printf 'EMERGENCY: the exact ARDY canary could not be cleaned up; inspect %s\n' \
+            "$evidence_root" >&2
+        if (( status == 0 )); then
+            status=1
+            last_error='canary-cleanup-failed-during-exit'
+        fi
+    fi
     if (( status != 0 && rollback_armed == 1 && activation_complete == 0 )); then
-        restore_rollback
+        rollback_attempted=1
+        if restore_rollback; then
+            rollback_status='verified'
+        else
+            rollback_status='failed'
+            printf 'EMERGENCY: sealed ARDY rollback could not be verified; inspect %s\n' \
+                "$evidence_root" >&2
+        fi
     fi
     if [[ -n $evidence_root && -d $evidence_root && \
         ! -e $evidence_root/activation-result.txt ]]; then
@@ -397,7 +456,10 @@ on_exit() {
             "error=$last_error" \
             "activation_complete=$activation_complete" \
             "rollback_armed=$rollback_armed" \
+            "rollback_attempted=$rollback_attempted" \
             "rollback_verified=$rollback_verified" \
+            "rollback_status=$rollback_status" \
+            "cleanup_status=$cleanup_status" \
             "old_container_id=$old_container_id" \
             "target_container_id=$target_container_id" \
             "target_image_id=${target_image_id:-unavailable}" \
@@ -424,15 +486,31 @@ rollback_image_id=$(image_id "$ROLLBACK_IMAGE") || fail "missing rollback image:
 existing_canary_id=$(container_id_for_name "$CANARY_CONTAINER" 2>/dev/null || true)
 [[ -z $existing_canary_id ]] || \
     fail 'the fixed canary container name is already in use; it was not touched'
-old_container_id=$(container_id_for_name "$PRODUCTION_CONTAINER") || \
-    fail 'the fixed production ARDY container is not running'
-
-current_image_tag=$(docker inspect --type container --format '{{.Config.Image}}' \
-    "$old_container_id") || fail 'could not identify the production ARDY image tag'
 declare -a production_before=() production_reverified=() production_after=()
-if [[ $current_image_tag == "$TARGET_IMAGE" ]]; then
+old_container_id=$(container_id_for_name "$PRODUCTION_CONTAINER" 2>/dev/null || true)
+if [[ -z $old_container_id ]]; then
+    loopback_port_is_unused "$PRODUCTION_PORT" || \
+        fail 'production ARDY is absent but its fixed loopback port is unexpectedly owned'
+    recovery_mode=1
+    current_image_reference=absent
+    current_runtime_image_id=absent
+    # If the real canary or relaunch fails, restore the sealed mock endpoint.
+    rollback_armed=1
+else
+    current_image_reference=$(docker inspect --type container --format '{{.Config.Image}}' \
+        "$old_container_id") || fail 'could not identify the production ARDY image tag'
+    current_runtime_image_id=$(docker inspect --type container --format '{{.Image}}' \
+        "$old_container_id") || fail 'could not identify the production ARDY image ID'
+    [[ $current_runtime_image_id =~ ^sha256:[0-9a-f]{64}$ ]] || \
+        fail 'the production ARDY image ID is malformed'
+fi
+if [[ $current_runtime_image_id == "$target_image_id" ]]; then
+    [[ $current_image_reference == "$TARGET_IMAGE" || \
+        $current_image_reference == "$target_image_id" ]] || \
+        fail 'the real production container uses an unexpected image reference'
     capture_verified_container production_before "$old_container_id" \
-        "$PRODUCTION_CONTAINER" "$TARGET_IMAGE" "$target_image_id" "$TARGET_PROVIDER" \
+        "$PRODUCTION_CONTAINER" "$current_image_reference" "$target_image_id" \
+        "$TARGET_PROVIDER" \
         "$PRODUCTION_PORT" true production-already-active || \
         fail 'the existing real production container failed its identity contract'
     "$validator" --port "$PRODUCTION_PORT" --batches 30 --startup-timeout 180 \
@@ -446,27 +524,34 @@ if [[ $current_image_tag == "$TARGET_IMAGE" ]]; then
         "$evidence_root"
     exit 0
 fi
-[[ $current_image_tag == "$ROLLBACK_IMAGE" ]] || \
-    fail 'production uses neither the sealed rollback nor target image tag'
-capture_verified_container production_before "$old_container_id" \
-    "$PRODUCTION_CONTAINER" "$ROLLBACK_IMAGE" "$rollback_image_id" "$ROLLBACK_PROVIDER" \
-    "$PRODUCTION_PORT" true production-before || \
-    fail 'the current mock rollback failed its identity and isolation contract'
-wait_for_mock_health "$PRODUCTION_PORT" "$evidence_root/production-before-health.json" || \
-    fail 'the current mock rollback failed its exact health contract'
+if (( recovery_mode == 0 )); then
+    [[ $current_runtime_image_id == "$rollback_image_id" ]] || \
+        fail 'production uses neither the sealed rollback nor target image tag'
+    [[ $current_image_reference == "$ROLLBACK_IMAGE" || \
+        $current_image_reference == "$rollback_image_id" ]] || \
+        fail 'the mock production container uses an unexpected image reference'
+    capture_verified_container production_before "$old_container_id" \
+        "$PRODUCTION_CONTAINER" "$current_image_reference" "$rollback_image_id" \
+        "$ROLLBACK_PROVIDER" "$PRODUCTION_PORT" true production-before || \
+        fail 'the current mock rollback failed its identity and isolation contract'
+    wait_for_mock_health "$PRODUCTION_PORT" \
+        "$evidence_root/production-before-health.json" || \
+        fail 'the current mock rollback failed its exact health contract'
+fi
 
 write_record "$evidence_root/activation-before.txt" \
     'schema=1' \
     "started_utc=$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
     "models_root=$models_root" \
-    "old_container_id=$old_container_id" \
+    "old_container_id=${old_container_id:-absent-recovery}" \
+    "recovery_mode=$recovery_mode" \
     "target_image=$TARGET_IMAGE" \
     "target_image_id=$target_image_id" \
     "rollback_image=$ROLLBACK_IMAGE" \
     "rollback_image_id=$rollback_image_id" || \
     fail 'could not publish the activation preflight record'
 
-canary_container_id=$(launch_container "$CANARY_CONTAINER" "$TARGET_IMAGE" \
+canary_container_id=$(launch_container "$CANARY_CONTAINER" "$target_image_id" \
     "$CANARY_PORT" "$TARGET_PROVIDER" false) || fail 'could not launch the retained real canary'
 [[ $canary_container_id =~ ^[0-9a-f]{64}$ ]] || fail 'canary returned an invalid container ID'
 "$validator" --port "$CANARY_PORT" --batches 30 --startup-timeout 180 \
@@ -476,40 +561,47 @@ canary_container_id=$(launch_container "$CANARY_CONTAINER" "$TARGET_IMAGE" \
 chmod 600 "$evidence_root"/canary-validation.*
 declare -a canary_snapshot=()
 capture_verified_container canary_snapshot "$canary_container_id" "$CANARY_CONTAINER" \
-    "$TARGET_IMAGE" "$target_image_id" "$TARGET_PROVIDER" "$CANARY_PORT" false canary || \
+    "$target_image_id" "$target_image_id" "$TARGET_PROVIDER" "$CANARY_PORT" false canary || \
     fail 'the qualified canary failed its identity and isolation contract'
 cleanup_canary || fail 'the exact retained canary could not be removed safely'
 canary_container_id=''
 
-capture_verified_container production_reverified "$old_container_id" \
-    "$PRODUCTION_CONTAINER" "$ROLLBACK_IMAGE" "$rollback_image_id" "$ROLLBACK_PROVIDER" \
-    "$PRODUCTION_PORT" true production-reverified || \
-    fail 'production changed while the isolated canary was qualifying'
-[[ ${production_before[0]} == "${production_reverified[0]}" && \
-    ${production_before[1]} == "${production_reverified[1]}" && \
-    ${production_before[2]} == "${production_reverified[2]}" ]] || \
-    fail 'production identity changed while the isolated canary was qualifying'
-wait_for_mock_health "$PRODUCTION_PORT" \
-    "$evidence_root/production-reverified-health.json" || \
-    fail 'the mock rollback health changed during canary qualification'
+if (( recovery_mode == 0 )); then
+    capture_verified_container production_reverified "$old_container_id" \
+        "$PRODUCTION_CONTAINER" "$current_image_reference" "$rollback_image_id" \
+        "$ROLLBACK_PROVIDER" "$PRODUCTION_PORT" true production-reverified || \
+        fail 'production changed while the isolated canary was qualifying'
+    [[ ${production_before[0]} == "${production_reverified[0]}" && \
+        ${production_before[1]} == "${production_reverified[1]}" && \
+        ${production_before[2]} == "${production_reverified[2]}" ]] || \
+        fail 'production identity changed while the isolated canary was qualifying'
+    wait_for_mock_health "$PRODUCTION_PORT" \
+        "$evidence_root/production-reverified-health.json" || \
+        fail 'the mock rollback health changed during canary qualification'
 
-rollback_armed=1
-docker stop --time 20 "$old_container_id" >"$evidence_root/production-stop.txt" || \
-    fail 'could not stop the exact recorded mock rollback container'
-chmod 600 "$evidence_root/production-stop.txt"
-for _ in $(seq 1 30); do
-    if ! docker inspect --type container "$old_container_id" >/dev/null 2>&1 && \
-        ! container_id_for_name "$PRODUCTION_CONTAINER" >/dev/null 2>&1; then
-        break
-    fi
-    sleep 1
-done
-! docker inspect --type container "$old_container_id" >/dev/null 2>&1 || \
-    fail 'the exact mock rollback container did not disappear after stop'
+    rollback_armed=1
+    docker stop --time 20 "$old_container_id" >"$evidence_root/production-stop.txt" || \
+        fail 'could not stop the exact recorded mock rollback container'
+    chmod 600 "$evidence_root/production-stop.txt"
+    for _ in $(seq 1 30); do
+        if ! docker inspect --type container "$old_container_id" >/dev/null 2>&1 && \
+            ! container_id_for_name "$PRODUCTION_CONTAINER" >/dev/null 2>&1; then
+            break
+        fi
+        sleep 1
+    done
+    ! docker inspect --type container "$old_container_id" >/dev/null 2>&1 || \
+        fail 'the exact mock rollback container did not disappear after stop'
+else
+    ! container_id_for_name "$PRODUCTION_CONTAINER" >/dev/null 2>&1 || \
+        fail 'the production container name was claimed during recovery qualification'
+    loopback_port_is_unused "$PRODUCTION_PORT" || \
+        fail 'the production loopback port was claimed during recovery qualification'
+fi
 ! container_id_for_name "$PRODUCTION_CONTAINER" >/dev/null 2>&1 || \
     fail 'the production container name was unexpectedly reclaimed'
 
-target_container_id=$(launch_container "$PRODUCTION_CONTAINER" "$TARGET_IMAGE" \
+target_container_id=$(launch_container "$PRODUCTION_CONTAINER" "$target_image_id" \
     "$PRODUCTION_PORT" "$TARGET_PROVIDER" true) || fail 'could not launch the real provider'
 [[ $target_container_id =~ ^[0-9a-f]{64}$ ]] || fail 'target returned an invalid container ID'
 "$validator" --port "$PRODUCTION_PORT" --batches 30 --startup-timeout 180 \
@@ -518,7 +610,7 @@ target_container_id=$(launch_container "$PRODUCTION_CONTAINER" "$TARGET_IMAGE" \
     fail 'the real production provider failed strict qualification'
 chmod 600 "$evidence_root"/production-validation.*
 capture_verified_container production_after "$target_container_id" "$PRODUCTION_CONTAINER" \
-    "$TARGET_IMAGE" "$target_image_id" "$TARGET_PROVIDER" "$PRODUCTION_PORT" true \
+    "$target_image_id" "$target_image_id" "$TARGET_PROVIDER" "$PRODUCTION_PORT" true \
     production-after || fail 'the real provider failed its final identity and isolation contract'
 
 last_error='none'
@@ -526,7 +618,8 @@ write_record "$evidence_root/activation-after.txt" \
     'schema=1' \
     "completed_utc=$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
     'status=passed' \
-    "old_container_id=$old_container_id" \
+    "old_container_id=${old_container_id:-absent-recovery}" \
+    "recovery_mode=$recovery_mode" \
     "target_container_id=$target_container_id" \
     "target_image_id=$target_image_id" \
     'provider=ardy' \

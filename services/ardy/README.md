@@ -49,6 +49,13 @@ revalidates the untouched mock production container, switches only the fixed
 ARDY container, and then repeats the 30-batch qualification on port 8777. A
 post-switch failure recreates the exact sealed `0.1.0` mock configuration. It
 never manages Fay, Unreal, Voxtral, system services, drivers, or CUDA.
+If the fixed container is absent after a crash, rerun the same activator with a
+new private evidence directory. It first requires the canonical name and port
+to be unused, repeats the retained canary, and then restores the real endpoint;
+a failed recovery attempt tries to restore and strictly verify the sealed mock
+endpoint instead, and emits an emergency error plus evidence if the fixed name
+or port prevents safe rollback. All launches use the captured immutable image
+ID, and one fixed per-user lock serializes activation across evidence roots.
 
 The first Spark qualification generated 240 frames in both canary and
 production stages. Production steady request latency was 83.775 ms mean,

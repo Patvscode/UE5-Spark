@@ -97,6 +97,53 @@ class ActivateArdyProviderTests(unittest.TestCase):
         self.assertIn("restore_rollback", self.source)
         self.assertIn("rollback_verified=1", self.source)
 
+    def test_launches_use_captured_immutable_image_ids(self) -> None:
+        for marker in (
+            'launch_container "$CANARY_CONTAINER" "$target_image_id"',
+            'launch_container "$PRODUCTION_CONTAINER" "$target_image_id"',
+            'launch_container "$PRODUCTION_CONTAINER" "$rollback_image_id"',
+            'current_runtime_image_id=$(docker inspect',
+            'current_runtime_image_id == "$target_image_id"',
+            'current_runtime_image_id == "$rollback_image_id"',
+        ):
+            self.assertIn(marker, self.source)
+        self.assertNotIn(
+            'launch_container "$CANARY_CONTAINER" "$TARGET_IMAGE"',
+            self.source,
+        )
+
+    def test_absent_service_recovery_requires_an_unused_fixed_port(self) -> None:
+        for marker in (
+            "recovery_mode=1",
+            'loopback_port_is_unused "$PRODUCTION_PORT"',
+            "production ARDY is absent but its fixed loopback port is unexpectedly owned",
+            "If the real canary or relaunch fails, restore the sealed mock endpoint.",
+            "the production container name was claimed during recovery qualification",
+            "the production loopback port was claimed during recovery qualification",
+            '"recovery_mode=$recovery_mode"',
+        ):
+            self.assertIn(marker, self.source)
+        port_check = self.source[
+            self.source.index("loopback_port_is_unused()") :
+            self.source.index("capture_verified_container()")
+        ]
+        self.assertNotIn("|| true", port_check)
+
+    def test_lock_and_exit_recovery_are_global_and_auditable(self) -> None:
+        for marker in (
+            'lock_file="$lock_parent/ue5-spark-ardy.activation.lock"',
+            "rollback_attempted=1",
+            "rollback_status='verified'",
+            "rollback_status='failed'",
+            "cleanup_status='failed'",
+            "EMERGENCY: sealed ARDY rollback could not be verified",
+            '"rollback_status=$rollback_status"',
+            '"cleanup_status=$cleanup_status"',
+            'rollback-blocked.txt',
+        ):
+            self.assertIn(marker, self.source)
+        self.assertNotIn('lock_file="$private_root/.ardy-activation.lock"', self.source)
+
     def test_private_evidence_and_runtime_isolation_are_sealed(self) -> None:
         for marker in (
             "PRIVATE_EVIDENCE_DIR must not already exist",
