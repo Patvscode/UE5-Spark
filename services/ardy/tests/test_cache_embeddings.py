@@ -23,6 +23,7 @@ if np is not None:
         EmbeddingCacheError,
         _encoded_arrays,
         generate_cache,
+        verify_encoder_revisions,
     )
 
 
@@ -85,6 +86,25 @@ class EmbeddingCacheTests(unittest.TestCase):
             self.assertEqual(set(loaded), set(APPROVED_EMBEDDING_BEHAVIORS))
             with self.assertRaises(EmbeddingCacheError):
                 generate_cache(root, FakeEncoder(), "bfloat16")
+
+    def test_encoder_revisions_are_exact(self) -> None:
+        from embedding_contract import ENCODER_REVISIONS
+
+        with tempfile.TemporaryDirectory() as directory:
+            cache = Path(directory)
+            for repository, revision in ENCODER_REVISIONS.items():
+                repository_cache = cache / ("models--" + repository.replace("/", "--"))
+                (repository_cache / "refs").mkdir(parents=True)
+                (repository_cache / "refs" / "main").write_text(revision)
+                (repository_cache / "snapshots" / revision).mkdir(parents=True)
+            self.assertEqual(verify_encoder_revisions(cache), ENCODER_REVISIONS)
+            first_repository = next(iter(ENCODER_REVISIONS))
+            repository_cache = cache / (
+                "models--" + first_repository.replace("/", "--")
+            )
+            (repository_cache / "refs" / "main").write_text("0" * 40)
+            with self.assertRaises(EmbeddingCacheError):
+                verify_encoder_revisions(cache)
 
     def test_tampered_embedding_fails_closed(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

@@ -15,6 +15,7 @@ from embedding_contract import (
     BASE_ENCODER_REPOSITORY,
     EMBEDDING_SCHEMA_VERSION,
     EMBEDDING_WIDTH,
+    ENCODER_REVISIONS,
     SUPERVISED_ENCODER_REPOSITORY,
     UPSTREAM_LLAMA_REPOSITORY,
     prompt_sha256,
@@ -75,6 +76,7 @@ def load_embedding_cache(root: Path, np_module: object) -> dict[str, tuple[objec
         encoder.get("baseRepository") != BASE_ENCODER_REPOSITORY
         or encoder.get("supervisedRepository") != SUPERVISED_ENCODER_REPOSITORY
         or encoder.get("upstreamRepository") != UPSTREAM_LLAMA_REPOSITORY
+        or encoder.get("revisions") != ENCODER_REVISIONS
         or encoder.get("precision") not in {"bfloat16", "float32"}
         or encoder.get("outputDtype") != "float32"
     ):
@@ -211,8 +213,8 @@ class ArdyPoseProvider:
         )
         if self._model.gen_horizon_len != BATCH_FRAMES or self._model.motion_rep.fps != FPS:
             raise RuntimeError("ARDY model does not match the sealed 8-frame/20-FPS contract")
-        if len(self._model.skeleton.bone_order_names_with_parents) != len(CORE27_JOINTS):
-            raise RuntimeError("ARDY model does not expose the sealed Core27 skeleton")
+        if tuple(self._model.skeleton.bone_order_names_with_parents) != tuple(CORE27_JOINTS):
+            raise RuntimeError("ARDY model does not expose the exact sealed Core27 skeleton")
         self._embeddings = self._load_embeddings(self._models_root / "embeddings")
         self._history = None
         self._lock = threading.Lock()

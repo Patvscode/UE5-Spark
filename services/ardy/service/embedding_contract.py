@@ -12,6 +12,11 @@ SUPERVISED_ENCODER_REPOSITORY = (
     "McGill-NLP/LLM2Vec-Meta-Llama-3-8B-Instruct-mntp-supervised"
 )
 UPSTREAM_LLAMA_REPOSITORY = "meta-llama/Meta-Llama-3-8B-Instruct"
+ENCODER_REVISIONS = {
+    UPSTREAM_LLAMA_REPOSITORY: "8afb486c1db24fe5011ec46dfbe5b5dccdb575c2",
+    BASE_ENCODER_REPOSITORY: "31474e395ada192e8ed1586db6be79fb3b70c9c0",
+    SUPERVISED_ENCODER_REPOSITORY: "baa8ebf04a1c2500e61288e7dad65e8ae42601a7",
+}
 EMBEDDING_WIDTH = 4096
 
 # These are deliberately physical, neutral descriptions. Arbitrary prompts never

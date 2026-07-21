@@ -30,14 +30,16 @@ and shares host networking only so the process can bind loopback. The normal
 runtime receives no Hugging Face token. Separate one-shot tools mount the token
 read-only and write only approved checkpoint IDs or the three reviewed text
 embeddings. Embedding generation uses a private Hugging Face cache and publishes
-the complete cache atomically with prompt, encoder, shape, and file hash seals.
+the complete cache atomically with prompt, exact encoder revision, shape, and
+file hash seals. The large one-time encoder cache is a sibling of the runtime
+model root, so the host-networked normal service cannot read it.
 
 ```bash
 ./scripts/build-ardy-container.sh
 ./scripts/download-ardy-checkpoint.sh \
-  ARDY-Core-RP-20FPS-Horizon8 /private/checkpoints ~/.cache/huggingface/token
+  ARDY-Core-RP-20FPS-Horizon8 /private/checkpoints /private/hf-token
 ./scripts/cache-ardy-embeddings.sh \
-  /private/checkpoints ~/.cache/huggingface/token cpu bfloat16
+  /private/checkpoints /private/hf-token cpu bfloat16
 ./scripts/run-ardy-container.sh /private/checkpoints mock
 ```
 

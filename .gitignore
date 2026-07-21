@@ -107,6 +107,12 @@ Project/FayAvatarRuntime/Plugins/*/Content/
 # Credentials and machine-local configuration
 .private-media/
 logs-private/
+secrets-private/
+**/secrets-private/
+.hf-text-encoder-cache/
+**/.hf-text-encoder-cache/
+token
+stored_tokens
 .env
 .env.*
 *.env
@@ -120,6 +126,7 @@ secrets.*
 .git-credentials
 .ssh/
 *.token
+*.npz
 *.keystore
 *.jks
 *.p8

@@ -20,6 +20,7 @@ from embedding_contract import (
     BASE_ENCODER_REPOSITORY,
     EMBEDDING_SCHEMA_VERSION,
     EMBEDDING_WIDTH,
+    ENCODER_REVISIONS,
     SUPERVISED_ENCODER_REPOSITORY,
     UPSTREAM_LLAMA_REPOSITORY,
     prompt_sha256,
@@ -55,6 +56,30 @@ def _encoded_arrays(encoder: Any, prompt: str) -> tuple[np.ndarray, np.ndarray]:
     if not np.isfinite(features).all():
         raise EmbeddingCacheError("encoder returned a non-finite value")
     return features, mask
+
+
+def verify_encoder_revisions(cache_root: Path) -> dict[str, str]:
+    """Require Hugging Face's resolved main refs to match reviewed commits."""
+
+    if cache_root.is_symlink():
+        raise EmbeddingCacheError("Hugging Face cache root must not be a symlink")
+    cache_root = cache_root.resolve(strict=True)
+    resolved: dict[str, str] = {}
+    for repository, expected in ENCODER_REVISIONS.items():
+        repository_cache = "models--" + repository.replace("/", "--")
+        ref = cache_root / repository_cache / "refs" / "main"
+        if not ref.is_file() or ref.is_symlink() or ref.stat().st_size > 128:
+            raise EmbeddingCacheError(f"missing resolved revision for {repository}")
+        revision = ref.read_text(encoding="ascii").strip()
+        if revision != expected:
+            raise EmbeddingCacheError(
+                f"encoder revision drift for {repository}: {revision or 'empty'}"
+            )
+        snapshot = cache_root / repository_cache / "snapshots" / revision
+        if not snapshot.is_dir() or snapshot.is_symlink():
+            raise EmbeddingCacheError(f"resolved snapshot is missing for {repository}")
+        resolved[repository] = revision
+    return resolved
 
 
 def generate_cache(models_root: Path, encoder: Any, precision: str) -> Path:
@@ -102,6 +127,7 @@ def generate_cache(models_root: Path, encoder: Any, precision: str) -> Path:
                 "baseRepository": BASE_ENCODER_REPOSITORY,
                 "supervisedRepository": SUPERVISED_ENCODER_REPOSITORY,
                 "upstreamRepository": UPSTREAM_LLAMA_REPOSITORY,
+                "revisions": dict(ENCODER_REVISIONS),
                 "precision": precision,
                 "outputDtype": "float32",
             },
@@ -139,6 +165,10 @@ def main() -> int:
         fp32=args.fp32,
         device=args.device,
     )
+    cache_value = os.environ.get("HUGGINGFACE_CACHE_DIR", "")
+    if not cache_value:
+        raise EmbeddingCacheError("HUGGINGFACE_CACHE_DIR is required")
+    verify_encoder_revisions(Path(cache_value))
     destination = generate_cache(args.models_root, encoder, precision)
     print(
         "generated reviewed ARDY embeddings: "

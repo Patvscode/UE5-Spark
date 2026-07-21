@@ -103,6 +103,7 @@ FORBIDDEN_SUFFIXES = {
     ".mp3",
     ".mp4",
     ".node",
+    ".npz",
     ".obj",
     ".o",
     ".onnx",
@@ -155,6 +156,8 @@ FORBIDDEN_CREDENTIAL_NAMES = {
     ".netrc",
     ".npmrc",
     ".pypirc",
+    "stored_tokens",
+    "token",
 }
 FORBIDDEN_CREDENTIAL_PREFIXES = (
     "credentials",
@@ -184,6 +187,7 @@ SECRET_PATTERNS = (
     ("OpenAI token", re.compile(r"sk-(?:proj-)?[A-Za-z0-9_-]{20,}")),
     ("AWS access key", re.compile(r"(?:AKIA|ASIA)[A-Z0-9]{16}")),
     ("Slack token", re.compile(r"xox[baprs]-[A-Za-z0-9-]{10,}")),
+    ("Hugging Face token", re.compile(r"hf_[A-Za-z0-9]{20,}")),
     (
         "Authorization credential",
         re.compile(r"(?i)authorization\s*:\s*(?:basic|bearer)\s+[A-Za-z0-9._~+/=-]{8,}"),
@@ -1007,6 +1011,9 @@ ignore_probes = (
     "Project/FayAvatarRuntime/Content/FayMetaHumans/Built/AdaFay/BP_AdaFay.uasset",
     "Project/FayAvatarRuntime/Content/AnyProjectAsset.uasset",
     "Project/FayAvatarRuntime/Plugins/FayMetaHumanRuntime/Content/Model.uasset",
+    "secrets-private/hf-ardy-device/token",
+    "models-private/.hf-text-encoder-cache/hub/model.safetensors",
+    "models-private/ardy/embeddings/idle.npz",
 )
 for probe in ignore_probes:
     ignored = subprocess.run(
