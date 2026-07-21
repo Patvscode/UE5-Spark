@@ -284,6 +284,31 @@ content remain private and are not part of this repository.
   process-identity checks; capture overhead is not part of the production or CSV
   results above.
 
+## Real ARDY qualification
+
+- Exact access to ARDY's original Meta Llama 3 text encoder was used once in an
+  isolated CPU-only generator. It emitted only the reviewed `idle`, `listen`,
+  and `explain` embeddings. Each private NPZ and the manifest are hash-sealed;
+  ordinary runtime receives neither the Hugging Face token nor the 16 GiB text
+  encoder cache.
+- The guarded real-provider activation first ran 30 batches / 240 frames on a
+  retained canary, enough to cross the complete 192-frame history boundary.
+  Canary steady latency was 86.602 ms mean, 173.577 ms p95, and 215.318 ms
+  maximum. It then repeated the same 30-batch qualification on the fixed
+  production endpoint: 83.775 ms mean, 155.470 ms p95, and 210.926 ms maximum.
+- Ada subsequently passed a 302-second / five-turn rendered production gate.
+  Wave, invite, think, and warn used their deterministic fallbacks. Explain used
+  the real generated provider for 7.20 seconds and explicitly returned to baked
+  idle. Five facial summaries completed with 8.39 ms worst p95, and all five
+  speech playbacks, allocator releases, and delayed collections completed.
+- Tail Unreal RSS growth was 1,408 KiB, peak GPU utilization was 78 percent,
+  and minimum `MemAvailable` was 53,318,704 KiB. Runtime, kernel, bridge,
+  procedural-action, frame-policy, and teardown failures were all zero.
+- The exact real ARDY container and host process identities remained unchanged,
+  restart count stayed zero, final ARDY p95 was 151.57 ms, Fay retained its
+  original PID/listeners, Voxtral restored, no Unreal process remained, and the
+  v28 package seal still matched.
+
 ## Important boundary
 
 The packaged application is native Linux ARM64. The full Editor is not a native

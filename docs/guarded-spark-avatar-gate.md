@@ -45,7 +45,10 @@ never starts, stops, restarts, or reconfigures either one. It snapshots Fay's
 PID, executable, Linux start time, listener bindings, and health. It snapshots
 ARDY's container and image identities, host PID, Linux process identity,
 restart count, isolation settings, read-only model mount, loopback listener,
-and protocol health. Both snapshots must match after the run.
+and sealed real-provider health. Provider, Horizon8 checkpoint, three-embedding
+count, and every immutable identity field must match after the run. The measured
+p95 may change as Unreal requests poses, but every snapshot must remain finite,
+positive, and below the 400 ms playback buffer.
 
 The rendered-soak runner is launched as one owned process session. Normal exit,
 runner failure, shell error, and `HUP`, `INT`, or `TERM` all enter the same

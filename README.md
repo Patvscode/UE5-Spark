@@ -14,9 +14,12 @@ local MetaHuman facial-animation adapter.
 > applicable service-integrity checks. Sealed v27 remains the prior
 > production-qualified rollback, although a later 12,000-frame diagnostic
 > proved that its intended 30 FPS cap had been
-> reset and it averaged 170.125 FPS. The guarded Core27 test provider and
-> retarget route work; real prompt-conditioned ARDY remains gated on Meta Llama
-> encoder access.
+> reset and it averaged 170.125 FPS. The token-free real ARDY Horizon8 provider
+> is now production-active on loopback: a 30-batch canary, a second 30-batch
+> production qualification, and a five-turn rendered Ada gate all passed. The
+> rendered gate completed a 7.2-second generated `explain` action while
+> StreamingADA retained exclusive face/head control; deterministic gestures
+> remained the timing-safe fallback.
 
 This repository does **not** redistribute Unreal Engine, MetaHuman assets,
 Marketplace plugins, cooked packages, or private Epic source patches.
@@ -56,7 +59,7 @@ required for this project.
 | Free optimized Ada MetaHuman renders on Spark | Verified with skin, hair, clothing, and portrait lighting |
 | MetaHuman learned speech motion | Verified visibly and at the complete 50 Hz solve cadence |
 | Reviewed character profiles and repeatable profile-driven cooking | Verified with Ada and Aoi in sealed v28; unknown profiles fail closed |
-| Fay-driven motion routing | V27's allowlisted control matrix selected the guarded Core27 test provider and deterministic fallbacks as designed; fresh private v28 media visually verifies Ada's speech and wave; remaining motions need visual tuning; real prompt-conditioned ARDY remains gated |
+| Fay-driven motion routing | Real Horizon8 ARDY is production-active for sealed `idle`, `listen`, and `explain` embeddings; Ada completed generated `explain` and returned to baked idle, while wave/invite/think/warn retained deterministic fallbacks |
 | V28 frame-rate policy | Verified by an exact 6,000-frame diagnostic: 5,670 post-trim frames averaged 30.001596 FPS with 38.4833 ms p95 and complete duration accounting |
 | Rendered reliability | Ada passed 20 turns over 1,803 seconds with 6.56 ms worst facial p95, 6,328 KiB tail RSS growth, and clean teardown; Aoi passed its 241-second four-turn qualification |
 | Native ARM64 Unreal Editor/cooker | Not required; x86 Editor uses FEX |

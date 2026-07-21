@@ -260,6 +260,22 @@ The hub is deliberately a small visibility aid rather than a dependency of the
 avatar stack. Unreal, Fay, StreamingADA, and ARDY continue to run if the hub is
 stopped.
 
+## Real ARDY milestone
+
+The sealed Horizon8 provider is now active at `127.0.0.1:8777`. Both the
+30-batch retained canary and the 30-batch production validator passed the exact
+Core27, sequence/time, normalized-quaternion, numeric-contact, face-exclusion,
+checkpoint, embedding-count, isolation, and 400 ms latency contracts. The
+production validator measured 83.775 ms steady mean, 155.470 ms p95, and
+210.926 ms maximum request latency.
+
+The first rendered integration gate ran five Ada speech turns over 302 seconds
+so the behavior matrix reached generated `explain`. Unreal logged the real ARDY
+provider for 7.20 seconds and a clean return to baked idle. Worst StreamingADA
+face p95 was 8.39 ms, tail RSS growth was 1,408 KiB, and every audio, allocator,
+action, teardown, package-seal, Fay-continuity, ARDY-identity, and Voxtral-
+restoration check passed. Private evidence and media remain outside Git.
+
 ## Private progress media capture
 
 Capture media only in a separate diagnostic run after production qualification

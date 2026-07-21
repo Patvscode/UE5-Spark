@@ -21,8 +21,8 @@ Two providers exist:
   `listen`, and `explain` embeddings. It reports degraded health and returns
   503 when those private embeddings are absent.
 
-Image `0.2.0` adds the sealed embedding contract. Keep `0.1.0` available as the
-mock-provider rollback while qualifying the real provider.
+Image `0.2.0` adds the sealed embedding contract and is the qualified real
+provider. Keep `0.1.0` available as the automatic mock-provider rollback.
 
 The runtime wrapper uses a read-only root filesystem and checkpoint mount,
 drops every Linux capability, enables `no-new-privileges`, applies a PID limit,
@@ -40,8 +40,19 @@ model root, so the host-networked normal service cannot read it.
   ARDY-Core-RP-20FPS-Horizon8 /private/checkpoints /private/hf-token
 ./scripts/cache-ardy-embeddings.sh \
   /private/checkpoints /private/hf-token cpu bfloat16
-./scripts/run-ardy-container.sh /private/checkpoints mock
+./scripts/activate-ardy-provider.sh \
+  /private/checkpoints /private/logs-private/ardy-activation-UNIQUE-ID
 ```
 
-Use `ardy` instead of `mock` only after approved embeddings exist and the
-Unreal retarget adapter has passed its safety gates.
+The guarded activator validates a retained real canary for 30 pose batches,
+revalidates the untouched mock production container, switches only the fixed
+ARDY container, and then repeats the 30-batch qualification on port 8777. A
+post-switch failure recreates the exact sealed `0.1.0` mock configuration. It
+never manages Fay, Unreal, Voxtral, system services, drivers, or CUDA.
+
+The first Spark qualification generated 240 frames in both canary and
+production stages. Production steady request latency was 83.775 ms mean,
+155.470 ms p95, and 210.926 ms maximum against a 400 ms playback buffer. A
+subsequent five-turn rendered Ada gate completed a 7.20-second real `explain`
+action and returned to baked idle with ARDY p95 at 151.57 ms. The exact ARDY
+container identity remained unchanged and its restart count remained zero.
