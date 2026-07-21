@@ -280,8 +280,22 @@ records no audio.
   180
 ```
 
+For a real generated-motion progress clip, pass the optional sealed
+`ardy-explain` phase after the wait bound. The watcher then waits for the exact
+allowlisted ARDY `explain` start marker before capturing; arbitrary log markers
+are not accepted.
+
+```bash
+./scripts/capture-spark-avatar-window.sh \
+  /path/to/FayAvatarRuntime/Binaries/LinuxArm64/FayAvatarRuntime \
+  /path/to/FayAvatarRuntime/Saved/Logs/FayAvatarRuntime.log \
+  Ada /private/media-root/v28/ada-real-ardy.png \
+  /private/media-root/v28/ada-real-ardy-8s.mp4 480 ardy-explain
+```
+
 Run that watcher in parallel with an explicitly diagnostic one-turn rendered
-test. The capture revalidates executable, Linux start time, X11 window PID,
+test, or a five-turn diagnostic when capturing `ardy-explain`. The capture
+revalidates executable, Linux start time, X11 window PID,
 visibility, geometry, image dimensions, video frame rate, and duration before
 no-clobber publishing the private PNG/MP4 pair. NVENC and X11 capture add GPU
 work, so media runs must never be promoted to production evidence. Add a file

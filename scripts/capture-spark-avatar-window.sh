@@ -3,7 +3,7 @@ set -euo pipefail
 umask 077
 
 usage() {
-    printf 'Usage: %s EXPECTED_UNREAL_EXE RUNTIME_LOG CHARACTER OUTPUT_PNG OUTPUT_MP4 WAIT_SECONDS\n' \
+    printf 'Usage: %s EXPECTED_UNREAL_EXE RUNTIME_LOG CHARACTER OUTPUT_PNG OUTPUT_MP4 WAIT_SECONDS [speech|ardy-explain]\n' \
         "${0##*/}" >&2
     printf 'Waits for one fresh reviewed avatar run, then captures only its exact 1280x720 X11 client window.\n' >&2
 }
@@ -13,7 +13,7 @@ fail() {
     exit 1
 }
 
-if (( $# != 6 )); then
+if (( $# < 6 || $# > 7 )); then
     usage
     exit 64
 fi
@@ -30,8 +30,11 @@ character=$3
 output_png_input=$4
 output_mp4_input=$5
 wait_seconds=$6
+capture_phase=${7:-speech}
 [[ $character == Ada || $character == Aoi ]] || \
     fail 'CHARACTER must be a reviewed Ada or Aoi profile'
+[[ $capture_phase == speech || $capture_phase == ardy-explain ]] || \
+    fail 'capture phase must be speech or ardy-explain'
 [[ $wait_seconds =~ ^[1-9][0-9]*$ && $wait_seconds -le 600 ]] || \
     fail 'WAIT_SECONDS must be an integer from 1 through 600'
 
@@ -160,11 +163,18 @@ while (( $(date +%s) < deadline )); do
             launch_log_start=${latest_log_open%%:*}
             if [[ $launch_log_start =~ ^[1-9][0-9]*$ ]]; then
                 launch_log=$(tail -n "+$launch_log_start" "$runtime_log")
+                phase_ready=0
+                if [[ $capture_phase == speech ]] || \
+                    grep -Fq "Using ARDY generated motion provider for 'explain'" \
+                        <<<"$launch_log"; then
+                    phase_ready=1
+                fi
                 if grep -Fq "Selected reviewed character profile '$character'" <<<"$launch_log" &&
                     grep -Fq "Spawned character '$character'" <<<"$launch_log" &&
                     grep -Fq 'Connected to the Fay avatar WebSocket.' <<<"$launch_log" &&
                     grep -Fq 'Activated the visible Spark studio camera and lighting rig.' <<<"$launch_log" &&
-                    grep -Fq 'Started Fay speech playback' <<<"$launch_log"; then
+                    grep -Fq 'Started Fay speech playback' <<<"$launch_log" &&
+                    (( phase_ready == 1 )); then
                     capture_ready=1
                     break
                 fi
@@ -276,6 +286,7 @@ rm -- "$temporary_png" "$temporary_mp4"
 trap - EXIT HUP INT TERM
 printf 'capture_status=passed\n'
 printf 'character=%s\n' "$character"
+printf 'capture_phase=%s\n' "$capture_phase"
 printf 'runtime_pid=%s\n' "$runtime_pid"
 printf 'runtime_starttime=%s\n' "$runtime_starttime"
 printf 'window_id=%s\n' "$window_id"

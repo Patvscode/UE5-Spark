@@ -797,6 +797,8 @@ for marker in (
     "Spawned character",
     "Connected to the Fay avatar WebSocket.",
     "Started Fay speech playback",
+    "capture phase must be speech or ardy-explain",
+    "Using ARDY generated motion provider for 'explain'",
     "_NET_WM_PID",
     "width == 1280 && $height == 720",
     'xwininfo -id "$candidate"',
