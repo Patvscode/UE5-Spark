@@ -55,7 +55,7 @@ required for this project.
 | Free optimized Ada MetaHuman renders on Spark | Verified with skin, hair, clothing, and portrait lighting |
 | MetaHuman learned speech motion | Verified visibly and at the complete 50 Hz solve cadence |
 | Reviewed character profiles and repeatable profile-driven cooking | Verified with Ada and Aoi in sealed v13; unknown profiles fail closed |
-| Fay-driven body gestures | Core27 transport/retarget/fallback verified with mock provider; polished clips pending |
+| Fay-driven body gestures | Core27 transport/retarget/recovery and v16 procedural `wave`/`invite` routing verified; rendered tuning and optional polished clips pending |
 | Native ARM64 Unreal Editor/cooker | Not required; x86 Editor uses FEX |
 
 See [the detailed status](docs/status.md) for the exact boundary.

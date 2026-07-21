@@ -120,6 +120,18 @@ content remain private and are not part of this repository.
   It serves only allowlisted private milestone media, supports mobile video
   ranges, and links to the existing agent board without exposing private data
   through this public repository.
+- A fresh dual-character v16 cook rebuilt 947 LinuxArm64 packages, then native
+  Clang 20.1.8 compiled the changed body-motion and MetaHuman runtime modules,
+  linked the AArch64 Game, staged a Pak-only archive, and passed deep Ada/Aoi,
+  StreamingADA, garment, ONNX Runtime, architecture, and immutable-file checks.
+- v16 cold-launched Ada without an NVIDIA context under Null RHI and connected
+  Fay, StreamingADA, and ARDY. Live Fay actions selected the character-neutral
+  procedural `wave` and `invite` fallbacks and the face driver explicitly
+  delegated those actions without taking body ownership. Three completed
+  speech turns retained exact frame accounting (98/1.760 s, 162/3.040 s, and
+  346/6.720 s), all at 6.27 ms p95 or lower. No fatal marker appeared and Fay
+  remained alive after verified teardown. Rendered gesture-angle review is
+  still required before calling the poses polished.
 
 ## Important boundary
 
@@ -141,7 +153,7 @@ deployable application.
   buffer, baseline calibration, head/face mask, bounded root motion, blend-in,
   cached-pose fade-out, and automatic service recovery now run natively on
   Spark without replacing StreamingADA.
-- Build and visually tune the source-complete deterministic procedural gesture
+- Visually tune the compiled and packaged deterministic procedural gesture
   fallback. It supplies character-neutral `wave`, `invite`, `think`, `warn`,
   and conversational arm/wrist poses when no reviewed montage is configured;
   compatible private montages retain precedence. `nod` and `shake` remain
