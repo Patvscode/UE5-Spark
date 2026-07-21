@@ -1,0 +1,204 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+usage() {
+    printf 'Usage: %s PACKAGE_LAUNCHER FAY_PID PRIVATE_OUTPUT_DIR DURATION_SECONDS TURN_COUNT [Unreal arguments...]\n' \
+        "${0##*/}" >&2
+}
+
+fail() {
+    printf 'error: %s\n' "$*" >&2
+    exit 1
+}
+
+if (( $# < 5 )); then
+    usage
+    exit 64
+fi
+if [[ $(uname -s) != Linux || $(uname -m) != aarch64 ]]; then
+    fail 'the rendered soak runner requires Linux/aarch64 on DGX Spark'
+fi
+if (( ${EUID:-$(id -u)} == 0 )); then
+    fail 'run the rendered soak as the normal workspace owner, not root'
+fi
+
+package_launcher_input=$1
+fay_pid=$2
+output_input=$3
+duration=$4
+turn_count=$5
+shift 5
+[[ $fay_pid =~ ^[1-9][0-9]*$ ]] || fail 'FAY_PID must be a positive integer'
+[[ $duration =~ ^[1-9][0-9]*$ && $turn_count =~ ^[1-9][0-9]*$ ]] || \
+    fail 'duration and turn count must be positive integers'
+
+for command_name in basename grep kill mkdir ps readlink realpath seq sleep ss tail wc; do
+    command -v "$command_name" >/dev/null 2>&1 || fail "missing command: $command_name"
+done
+
+script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)
+digital_human_launcher="$script_dir/run-spark-digital-human.sh"
+soak_runner="$script_dir/soak-spark-avatar.sh"
+package_verifier="$script_dir/verify-cooked-package.sh"
+[[ -x $digital_human_launcher && -x $soak_runner && -x $package_verifier ]] || \
+    fail 'one or more guarded runtime scripts are unavailable'
+
+package_launcher_dir=$(cd "$(dirname "$package_launcher_input")" && pwd -P)
+package_launcher="$package_launcher_dir/$(basename "$package_launcher_input")"
+[[ -x $package_launcher && ${package_launcher##*/} == FayAvatarRuntime-Arm64.sh ]] || \
+    fail 'expected an executable FayAvatarRuntime-Arm64.sh package launcher'
+expected_unreal_exe=$(realpath \
+    "$package_launcher_dir/FayAvatarRuntime/Binaries/LinuxArm64/FayAvatarRuntime")
+[[ -x $expected_unreal_exe ]] || fail 'the packaged Unreal executable is missing'
+
+output_dir=$(mkdir -p "$output_input" && cd "$output_input" && pwd -P)
+case "$output_dir/" in
+    */media-private/*|*/logs-private/*) ;;
+    *) fail 'output directory must be below a private media or log root' ;;
+esac
+
+res_x=${FAY_SOAK_EXPECTED_RES_X:-1280}
+res_y=${FAY_SOAK_EXPECTED_RES_Y:-720}
+character=${FAY_SOAK_CHARACTER:-Ada}
+[[ $res_x =~ ^[1-9][0-9]*$ && $res_y =~ ^[1-9][0-9]*$ ]] || \
+    fail 'FAY_SOAK_EXPECTED_RES_X/Y must be positive integers'
+[[ $character == Ada || $character == Aoi ]] || \
+    fail 'FAY_SOAK_CHARACTER must name a reviewed packaged profile'
+for argument in "$@"; do
+    case "${argument,,}" in
+        -nullrhi|-resx=*|-resy=*)
+            fail 'the soak runner owns RHI and resolution arguments'
+            ;;
+    esac
+done
+
+runtime_log="$package_launcher_dir/FayAvatarRuntime/Saved/Logs/FayAvatarRuntime.log"
+runtime_log_start_lines=0
+if [[ -f $runtime_log ]]; then
+    runtime_log_start_lines=$(wc -l <"$runtime_log")
+fi
+launcher_log="$output_dir/launcher.log"
+
+find_runtime_pids() {
+    local process_dir process_exe
+    for process_dir in /proc/[1-9]*; do
+        process_exe=$(readlink "$process_dir/exe" 2>/dev/null || true)
+        if [[ $process_exe == "$expected_unreal_exe" ]]; then
+            printf '%s\n' "${process_dir##*/}"
+        fi
+    done
+}
+
+mapfile -t existing_runtime_pids < <(find_runtime_pids)
+(( ${#existing_runtime_pids[@]} == 0 )) || \
+    fail 'the selected package already has a running Unreal process'
+kill -0 "$fay_pid" 2>/dev/null || fail 'Fay is not alive before launch'
+
+launcher_pid=''
+runtime_pid=''
+cleanup_completed=0
+cleanup_runtime() {
+    local cleanup_status=0
+    if [[ -n $runtime_pid ]] && kill -0 "$runtime_pid" 2>/dev/null; then
+        kill -TERM "$runtime_pid" 2>/dev/null || cleanup_status=1
+        for _ in $(seq 1 30); do
+            if ! kill -0 "$runtime_pid" 2>/dev/null; then
+                break
+            fi
+            sleep 1
+        done
+        if kill -0 "$runtime_pid" 2>/dev/null; then
+            printf 'error: Unreal did not stop within 30 seconds after TERM\n' >&2
+            cleanup_status=1
+        fi
+    fi
+    if [[ -n $launcher_pid && $launcher_pid != "$runtime_pid" ]] &&
+        kill -0 "$launcher_pid" 2>/dev/null; then
+        kill -TERM "$launcher_pid" 2>/dev/null || cleanup_status=1
+    fi
+    mapfile -t remaining_runtime_pids < <(find_runtime_pids)
+    if (( ${#remaining_runtime_pids[@]} != 0 )); then
+        printf 'error: a project-owned Unreal process remains after teardown\n' >&2
+        cleanup_status=1
+    fi
+    if ! kill -0 "$fay_pid" 2>/dev/null; then
+        printf 'error: the externally managed Fay process exited during the soak\n' >&2
+        cleanup_status=1
+    fi
+    for port in 5000 5010 8766 10002; do
+        listeners=$(ss -H -ltnp "sport = :$port" 2>/dev/null || true)
+        if [[ $listeners != *"pid=$fay_pid,"* ]]; then
+            printf 'error: Fay no longer owns required port %s\n' "$port" >&2
+            cleanup_status=1
+        fi
+    done
+    if ! "$package_verifier" "$package_launcher_dir"; then
+        cleanup_status=1
+    fi
+    cleanup_completed=1
+    return "$cleanup_status"
+}
+
+handle_exit() {
+    local original_status=$?
+    if (( cleanup_completed == 0 )); then
+        cleanup_runtime || true
+    fi
+    exit "$original_status"
+}
+trap handle_exit EXIT
+
+"$digital_human_launcher" "$package_launcher" \
+    "-FayCharacter=$character" \
+    -FayResetSpeechCache=0 \
+    -FayTrimSpeechMemory=1 \
+    "-ResX=$res_x" "-ResY=$res_y" -Windowed -WinX=0 -WinY=0 \
+    -csvCaptureFrames=60000 -csvCompression=0 "$@" >"$launcher_log" 2>&1 &
+launcher_pid=$!
+
+for _ in $(seq 1 90); do
+    mapfile -t discovered_runtime_pids < <(find_runtime_pids)
+    if (( ${#discovered_runtime_pids[@]} > 1 )); then
+        fail 'more than one matching Unreal process appeared during launch'
+    fi
+    if (( ${#discovered_runtime_pids[@]} == 1 )); then
+        runtime_pid=${discovered_runtime_pids[0]}
+        break
+    fi
+    if ! kill -0 "$launcher_pid" 2>/dev/null; then
+        fail "the guarded launcher exited before Unreal started; inspect $launcher_log"
+    fi
+    sleep 1
+done
+[[ -n $runtime_pid ]] || fail 'Unreal did not start within 90 seconds'
+
+runtime_ready=0
+for _ in $(seq 1 90); do
+    kill -0 "$runtime_pid" 2>/dev/null || \
+        fail "Unreal exited during readiness; inspect $launcher_log"
+    if [[ -f $runtime_log ]]; then
+        new_runtime_log=$(tail -n "+$((runtime_log_start_lines + 1))" "$runtime_log")
+        if grep -Fq 'Connected to the Fay avatar WebSocket.' <<<"$new_runtime_log" &&
+            grep -Fq "Spawned character '$character'" <<<"$new_runtime_log"; then
+            runtime_ready=1
+            break
+        fi
+    fi
+    sleep 1
+done
+(( runtime_ready == 1 )) || fail 'Unreal did not reach the Fay/character readiness markers'
+
+export FAY_SOAK_REQUIRE_RENDERED=1
+export FAY_SOAK_REQUIRE_NORMAL_AUDIO=1
+export FAY_SOAK_REQUIRE_PROCEDURAL_ACTIONS=1
+export FAY_SOAK_EXPECTED_UNREAL_EXE="$expected_unreal_exe"
+export FAY_SOAK_EXPECTED_RES_X="$res_x"
+export FAY_SOAK_EXPECTED_RES_Y="$res_y"
+export FAY_SOAK_MAX_TAIL_RSS_GROWTH_KB=${FAY_SOAK_MAX_TAIL_RSS_GROWTH_KB:-131072}
+export FAY_SOAK_MAX_RSS_KB=${FAY_SOAK_MAX_RSS_KB:-3145728}
+export FAY_SOAK_MAX_GPU_UTILIZATION_PERCENT=${FAY_SOAK_MAX_GPU_UTILIZATION_PERCENT:-95}
+
+"$soak_runner" "$runtime_pid" "$fay_pid" "$output_dir" "$duration" "$turn_count"
+cleanup_runtime
+trap - EXIT
+printf 'Rendered avatar soak and verified teardown passed.\n'

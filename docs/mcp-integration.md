@@ -67,6 +67,14 @@ on `0.0.0.0` or the public Internet. If a renderer or MCP client must be
 remote, use a private authenticated network and apply authentication at the
 service boundary.
 
+The MCP process must post back to the same interface on which Fay HTTP is
+actually listening. If a private deployment intentionally binds Fay to its
+tailnet address instead of loopback, set both `FAY_BROADCAST_API` and
+`FAY_AVATAR_ACTION_API` in Fay's private environment file to that same private
+HTTP origin. The loopback defaults must not be assumed to work when no
+loopback HTTP listener exists. Validate the path with a real MCP tool call and
+registered avatar socket; listing the tool alone is not an end-to-end test.
+
 ## Guarded Spark stack launch
 
 With Fay and its optional MCP endpoints already running, launch the packaged

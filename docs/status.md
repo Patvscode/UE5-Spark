@@ -148,6 +148,22 @@ content remain private and are not part of this repository.
   unified memory available; NVIDIA reported `NV_ERR_NO_MEMORY`. No unrelated
   workload was stopped. The launcher now requires a reviewed 48 GiB unified-
   memory reserve before Vulkan startup, while allowing Null-RHI diagnostics.
+- The companion Fay runtime was fast-forwarded to its reviewed `d86d6a4`
+  branch and restarted under its existing user service without changing the
+  unit, DGX OS, drivers, or CUDA. All backend health probes passed after normal
+  listener warmup. The live MCP advertised `avatar_perform_action`; an actual
+  MCP call produced an allowlisted `invite` event on the registered avatar
+  WebSocket, while a non-allowlisted direct action returned HTTP 400. A separate
+  post-deployment turn returned the exact requested text, synthesized a
+  fetchable WAV, and preserved all existing MCP connections.
+- The rendered reliability tools now reject a weaker false positive observed in
+  the earlier Null-RHI evidence: headless audio used the queue watchdog and did
+  not prove normal audio-device completion or the delayed object-collection
+  marker. Rendered mode now requires exact executable/arguments, exact Fay port
+  ownership, normal playback and delayed collection once per turn, strict
+  facial-summary equality, five-second RSS/GPU/unified-memory sampling, new
+  runtime and kernel failure scanning, mixed deterministic actions, owned TERM
+  teardown, Fay survival, and package-seal verification.
 
 ## Important boundary
 
@@ -185,11 +201,16 @@ deployable application.
   presentation for a polished long-running character experience.
 - Assemble and validate a second reviewed female preset. Aoi already proves the
   no-character-specific-C++ portability requirement but is male in UE 5.8.
-- Complete the rendered v19 face-plus-body soak when at least 48 GiB of unified
-  memory is available.
-  The 30-minute speech/face/memory gate and the earlier malformed-envelope,
-  stale-sequence, and service-recovery injections pass; visual motion,
-  sustained Vulkan frame rate, foot sliding, and head-conflict review remain.
+- When at least 48 GiB of unified memory is available, complete the new
+  four-minute/four-turn rendered v19 qualification and only then the 30-minute
+  face-plus-body endurance gate. The earlier malformed-envelope,
+  stale-sequence, and service-recovery injections pass; normal rendered audio
+  cleanup, sustained Vulkan frame rate, foot sliding, and head-conflict review
+  remain final gates.
+- Keep the free modular Casual Girl Fab character as a deferred private
+  compatibility target. Reliability, MCP control, deterministic motion, and
+  real ARDY activation take precedence; no Fab content belongs in this public
+  repository.
 
 ## Publication boundary
 

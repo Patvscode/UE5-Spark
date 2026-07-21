@@ -8,38 +8,65 @@ drivers, CUDA, or system services.
 
 `scripts/soak-spark-avatar.sh` accepts the exact Unreal PID, exact externally
 managed Fay PID, a private output directory, duration, and turn count. It
-refuses unrelated processes, discovers Fay's concrete private listener without
-printing it, checks both PIDs throughout the run, and records Unreal resident
-memory plus available `nvidia-smi` memory data after every turn.
+refuses unrelated executables and proves that the supplied Fay PID owns HTTP,
+avatar WebSocket, MCP administration, and MCP SSE. Rendered mode additionally
+requires the exact sealed executable, explicit Vulkan, the expected resolution,
+and the absence of Null RHI.
 
-The required validation invocation is 1,800 seconds and 20 turns. Logs must be
-written below a private `logs-private` or `media-private` directory and must not
-be committed. The harness now fails when RSS grows by more than 256 MiB across
-the latter half of a run; override that explicit limit only with
-`FAY_SOAK_MAX_TAIL_RSS_GROWTH_KB`. DGX Spark does not expose a separate
-`memory.used` value through `nvidia-smi` for its unified memory, so the report
-records `-1` for that field and treats process RSS as the enforceable memory
-signal. The harness snapshots the packaged runtime log at startup and requires
-at least one new facial summary per requested turn. Every summary must contain
-exactly 50 solver frames per speech second plus the configured 10-frame tail,
-and facial p95 must remain at or below 20 ms. The p95 ceiling is explicitly
-adjustable with `FAY_SOAK_MAX_FACE_P95_MS`; queue failures, render-driver
-errors, and crashes still require log review.
+The harness samples Unreal RSS, shared-GPU utilization, and unified
+`MemAvailable` every five seconds. It aborts after three consecutive excessive
+GPU samples, rejects an optional absolute RSS ceiling, and measures tail growth
+from the time-based midpoint rather than from sparse per-turn samples. Spark
+does not expose a useful separate `memory.used` value through `nvidia-smi`, so
+that column may be `-1` while RSS and `MemAvailable` remain enforceable.
 
-Run long tests only when another project is not saturating the shared GPU. A
-kernel NVIDIA Xid is an infrastructure failure even when Fay and the HTTP test
-harness remain healthy; preserve the kernel and Unreal evidence and rerun after
-the conflicting workload has ended. The harness records utilization and aborts
-after three consecutive samples above 85 percent; that guard can be adjusted
-explicitly with `FAY_SOAK_MAX_GPU_UTILIZATION_PERCENT`. The packaged avatar
-launcher also refuses three consecutive startup samples above 85 percent
-(`UE5_SPARK_MAX_START_GPU_UTILIZATION`) before it creates an Unreal process.
-Because Spark uses unified memory, the launcher separately requires 48 GiB of
-`MemAvailable` for a Vulkan launch even when GPU utilization is idle. Override
-that reviewed reserve with `UE5_SPARK_MIN_AVAILABLE_MEMORY_GIB`; `-nullrhi`
-diagnostics skip only this Vulkan-specific memory gate.
-The packaged avatar caps rendering at 30 FPS to retain compute headroom for
-speech and motion rather than rendering unused frames as quickly as possible.
+Every requested speech turn must produce exactly one facial summary, exactly
+50 solver frames per speech second plus the ten-frame tail, and facial p95 at
+or below 20 ms. A rendered gate also requires one normal Unreal audio
+completion, allocator release, and delayed speech-object collection per turn.
+Audio watchdog fallbacks and bridge warnings fail the gate instead of being
+mistaken for successful playback. Mixed prompts exercise wave, invite, think,
+warn, explain, and the bounded head path; the available procedural body actions
+must appear in the new runtime log.
+
+All new runtime-log lines and kernel-journal lines are preserved privately.
+Fatal/assertion/OOM/Vulkan failures, project error markers, queue overflow, new
+NVIDIA Xids, context-switch timeouts, allocation failures, or a fallen GPU fail
+automatically. The kernel cursor is captured before the run so historical
+driver events cannot contaminate a new result.
+
+Use `scripts/run-spark-avatar-soak.sh` for rendered testing. It owns one cold
+launch of the selected sealed package, discovers exactly one matching process,
+waits for the Fay and character readiness markers, invokes the strict harness,
+sends `TERM` only to that process, verifies that Fay still owns its listeners,
+and rechecks the package seal after teardown. It never starts, stops, or
+reconfigures Fay.
+
+Run a four-minute, four-turn 1280x720 qualification before the final endurance
+gate:
+
+```bash
+./scripts/run-spark-avatar-soak.sh \
+  /path/to/FayAvatarRuntime-Arm64.sh \
+  FAY_PID /path/below/logs-private/rendered-qualification 240 4
+```
+
+Only after that passes, cold-launch again for 1,800 seconds and 20 turns. The
+rendered defaults enforce tail RSS growth at or below 128 MiB, total Unreal RSS
+at or below 3 GiB, facial p95 at or below 20 ms, and no three consecutive GPU
+samples above 95 percent. Preserve CSV timing and private beginning/midpoint/end
+media for the final visual review. A short 1080p gate follows the 720p endurance
+pass; do not substitute a 30-minute 1080p run for the qualification sequence.
+
+Run rendered tests only when enough unified memory is genuinely available. The
+launcher requires 48 GiB of `MemAvailable` even when GPU utilization is idle,
+because resident model servers can otherwise make Vulkan fail with
+`NV_ERR_NO_MEMORY`. Never lower this reserve, and never pause an unrelated
+workload without explicit operator approval. Null-RHI diagnostics skip the
+Vulkan-memory gate but do not
+prove audio-device completion, skin/hair rendering, frame rate, or the delayed
+rendered cleanup path. The packaged avatar caps rendering at 30 FPS to retain
+compute headroom for speech and motion.
 
 ## Tailscale progress hub
 

@@ -5,17 +5,15 @@ Unreal Engine 5.8 digital-human application natively on NVIDIA DGX Spark. It
 contains a minimal Unreal project, a Fay speech/event bridge, and source for a
 local MetaHuman facial-animation adapter.
 
-> **Engineering-preview status:** the character-independent v12 pipeline has
-> rebuilt the free female Ada MetaHuman, cooked it from a reviewed profile, and
-> run it as a sealed native Linux ARM64 package on DGX Spark. Ada renders,
-> speaks, and animates through the local StreamingADA model while the guarded
-> Core27 body adapter consumes an isolated loopback pose service. The same Spark runs
-> the x86-64 UE 5.8 Editor/cooker through rootless FEX. Fay audio/WebSocket
-> integration, MCP readiness, learned facial motion, background-window
-> operation, package integrity, generated-motion recovery, and repeated
-> launch/teardown have been verified. Real ARDY prompt conditioning remains
-> gated on approved Meta Llama access; deterministic gesture authoring and a
-> second female-preset polish pass are the next implementation stages.
+> **Engineering-preview status:** the character-independent v19 pipeline has
+> rebuilt Ada and Aoi from reviewed profiles and runs as a sealed native Linux
+> ARM64 package on DGX Spark. Ada renders, speaks, animates through the local
+> StreamingADA model, and performs allowlisted procedural body gestures while a
+> guarded Core27 adapter consumes an isolated loopback pose service. The same
+> Spark runs the x86-64 UE 5.8 Editor/cooker through rootless FEX. A 30-minute
+> headless stability gate and a short rendered gate pass; the final 30-minute
+> rendered v19 gate remains pending sufficient free unified memory. Real ARDY
+> prompt conditioning remains gated on approved Meta Llama access.
 
 This repository does **not** redistribute Unreal Engine, MetaHuman assets,
 Marketplace plugins, cooked packages, or private Epic source patches.
@@ -112,6 +110,8 @@ scripts/verify-cooked-package.sh           Deep-check and hash-seal the package
 scripts/verify-spark.sh                   Read-only Spark/Vulkan preflight
 scripts/run-cooked-package.sh             Guarded packaged-app launcher
 scripts/run-spark-digital-human.sh        Discover Fay/MCP and launch the stack
+scripts/run-spark-avatar-soak.sh          Own rendered launch, soak, and teardown
+scripts/soak-spark-avatar.sh              Strict face/audio/body/GPU reliability gate
 scripts/build-ardy-container.sh           Build isolated ARM64 PyTorch service
 scripts/run-ardy-container.sh             Run loopback-only hardened pose service
 services/ardy/                            Strict Core27 protocol and providers
@@ -178,6 +178,18 @@ runner, see [reliability and private progress](docs/reliability-and-progress.md)
    `UE5_SPARK_REQUIRE_MCP=0` only when the MCP readiness checks are intentionally
    unnecessary.
 
+   After a package has passed short rendered validation, use the owned soak
+   wrapper for a qualification or endurance gate. It launches exactly one
+   reviewed package, proves the executable and rendered arguments, runs the
+   strict harness, sends `TERM` only to that Unreal PID, verifies that Fay
+   survived, and rechecks the package seal:
+
+   ```bash
+   ./scripts/run-spark-avatar-soak.sh \
+     /path/to/FayAvatarRuntime-Arm64.sh \
+     FAY_PID /path/below/logs-private/qualification 240 4
+   ```
+
 Full instructions are in [build and deploy](docs/build-and-deploy.md). The
 experimental all-Spark source-build route is documented in
 [Spark FEX cooker](docs/spark-fex-cooker.md). A temporary builder can be
@@ -204,17 +216,20 @@ audio, runs Epic's local StreamingADA model through `NNERuntimeORTCpu`, converts
 the result into 251 MetaHuman raw controls, and publishes them on a local Live
 Link Basic subject named `FayAudio`. The native package has visibly driven Ada's
 face while Fay speech played, including the complete expected 50 Hz solve frame
-count while the window was minimized. Semantic action events reach Unreal and
-the source contains conservative head-control mappings for a small action set,
-but those head gestures have not been visually verified. Authored body mappings
-and montages for actions such as wave and invite are not implemented.
+count while the window was minimized. Semantic action events reach Unreal;
+wave and invite have rendered through the character-neutral procedural body
+fallback, and source-level think, warn, explain, nod, and shake routes are in
+place. The latter routes still need the same visual tuning and long rendered
+validation as wave and invite. Optional compatible montages retain precedence.
 
 The `FayBodyMotion` plugin routes the same semantic intent through a strict
 allowlist and interchangeable baked/ARDY providers. Its ARDY client validates
 versioned Core27 batches from `127.0.0.1:8777`, buffers eight 20 FPS frames, and
-interpolates poses at render rate. Generated motion deliberately remains behind
-the retarget safety gate until the MetaHuman post-evaluation rig proves it does
-not replace or fight the verified StreamingADA Body/Face path.
+interpolates poses at render rate. The post-evaluation retargeter has run beside
+StreamingADA and recovered from service loss without interrupting facial
+speech. Live prompt-conditioned motion remains optional until approved cached
+text embeddings are available; deterministic gestures and baked idle remain
+the dependable fallback.
 
 The [MCP integration boundary](docs/mcp-integration.md) explains how Fay owns
 tools and credentials while Unreal receives presentation-only events.
