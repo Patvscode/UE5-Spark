@@ -36,3 +36,8 @@ compatible private montage transparently takes precedence.
 
 Licensed character assets, animation montages, checkpoints, prompt embeddings,
 and cooked packages are not part of this repository.
+
+For bounded isolation testing, `-FayDisableArdy=1` disables the loopback ARDY
+client before its first health probe and disables that component's tick. Baked
+and procedural fallbacks remain available. The default is unchanged and keeps
+ARDY enabled.

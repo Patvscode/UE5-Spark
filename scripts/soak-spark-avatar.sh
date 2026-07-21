@@ -138,7 +138,7 @@ fay_host=${fay_address%:5000}
 
 metrics="$output_dir/soak-metrics.tsv"
 summary="$output_dir/soak-summary.txt"
-printf 'elapsed_seconds\tturn\tunreal_rss_kb\tgpu_memory_mib\tgpu_utilization_percent\tmem_available_kb\n' >"$metrics"
+printf 'elapsed_seconds\tturn\tunreal_rss_kb\tgpu_memory_mib\tgpu_utilization_percent\tmem_available_kb\tprivate_dirty_kb\tanonymous_kb\tswap_kb\n' >"$metrics"
 messages=(
     '再见, Ada is completing the reviewed wave reliability check.'
     '欢迎, Ada is completing the reviewed invitation reliability check.'
@@ -153,6 +153,7 @@ high_gpu_samples=0
 sample_resources() {
     local current_turn=$1
     local now elapsed rss gpu gpu_utilization available_memory_kb
+    local private_dirty_kb anonymous_kb swap_kb
     now=$(date +%s)
     elapsed=$((now - start))
     rss=$(ps -o rss= -p "$unreal_pid" | tr -d ' ')
@@ -165,9 +166,25 @@ sample_resources() {
     [[ $gpu_utilization =~ ^([0-9]|[1-9][0-9]|100)$ ]] || gpu_utilization=-1
     available_memory_kb=$(awk '/^MemAvailable:/ {print $2; exit}' /proc/meminfo)
     [[ $available_memory_kb =~ ^[0-9]+$ ]] || available_memory_kb=-1
-    printf '%s\t%s\t%s\t%s\t%s\t%s\n' \
+    if [[ -r /proc/$unreal_pid/smaps_rollup ]]; then
+        read -r private_dirty_kb anonymous_kb swap_kb < <(
+            awk '
+                /^Private_Dirty:/ {private_dirty=$2}
+                /^Anonymous:/ {anonymous=$2}
+                /^Swap:/ {swap=$2}
+                END {print private_dirty+0, anonymous+0, swap+0}
+            ' "/proc/$unreal_pid/smaps_rollup")
+    else
+        private_dirty_kb=-1
+        anonymous_kb=-1
+        swap_kb=-1
+    fi
+    [[ $private_dirty_kb =~ ^-?[0-9]+$ ]] || private_dirty_kb=-1
+    [[ $anonymous_kb =~ ^-?[0-9]+$ ]] || anonymous_kb=-1
+    [[ $swap_kb =~ ^-?[0-9]+$ ]] || swap_kb=-1
+    printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
         "$elapsed" "$current_turn" "$rss" "$gpu" "$gpu_utilization" \
-        "$available_memory_kb" >>"$metrics"
+        "$available_memory_kb" "$private_dirty_kb" "$anonymous_kb" "$swap_kb" >>"$metrics"
 
     if [[ $gpu_utilization =~ ^([0-9]|[1-9][0-9]|100)$ ]] &&
         (( gpu_utilization > max_gpu_utilization_percent )); then
@@ -231,6 +248,11 @@ last_rss=$(awk 'END {print $3}' "$metrics")
 max_rss=$(awk 'NR>1 && $3>m {m=$3} END {print m+0}' "$metrics")
 max_gpu_utilization=$(awk 'NR>1 && $5>m {m=$5} END {print m+0}' "$metrics")
 min_available_memory_kb=$(awk 'NR>1 && (m==0 || $6<m) {m=$6} END {print m+0}' "$metrics")
+private_dirty_first_kb=$(awk 'NR==2 {print $7}' "$metrics")
+private_dirty_last_kb=$(awk 'END {print $7}' "$metrics")
+anonymous_first_kb=$(awk 'NR==2 {print $8}' "$metrics")
+anonymous_last_kb=$(awk 'END {print $8}' "$metrics")
+swap_max_kb=$(awk 'NR>1 && $9>m {m=$9} END {print m+0}' "$metrics")
 rss_slope_kb_per_second=$(awk '
     NR > 1 {n++; sx += $1; sy += $3; sxx += $1 * $1; sxy += $1 * $3}
     END {
@@ -431,6 +453,11 @@ fi
     printf 'rss_slope_kb_per_second=%s\n' "$rss_slope_kb_per_second"
     printf 'mem_available_min_kb=%s\n' "$min_available_memory_kb"
     printf 'mem_available_min_limit_kb=%s\n' "$min_mem_available_kb"
+    printf 'private_dirty_first_kb=%s\n' "$private_dirty_first_kb"
+    printf 'private_dirty_last_kb=%s\n' "$private_dirty_last_kb"
+    printf 'anonymous_first_kb=%s\n' "$anonymous_first_kb"
+    printf 'anonymous_last_kb=%s\n' "$anonymous_last_kb"
+    printf 'swap_max_kb=%s\n' "$swap_max_kb"
     printf 'gpu_utilization_max_percent=%s\n' "$max_gpu_utilization"
     printf 'gpu_utilization_sustained_threshold_percent=%s\n' \
         "$max_gpu_utilization_percent"

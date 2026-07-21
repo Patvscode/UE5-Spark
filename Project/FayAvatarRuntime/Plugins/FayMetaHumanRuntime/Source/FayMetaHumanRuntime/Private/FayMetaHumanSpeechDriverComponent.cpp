@@ -1009,12 +1009,43 @@ void UFayMetaHumanSpeechDriverComponent::BeginPlay()
     {
         bTrimMemoryAfterUtterance = TrimMemoryOverride != 0;
     }
+    int32 IdleHeartbeatOverride = bEnableIdleNeutralHeartbeat ? 1 : 0;
+    if (FParse::Value(
+            FCommandLine::Get(),
+            TEXT("FayLiveLinkIdleHeartbeat="),
+            IdleHeartbeatOverride))
+    {
+        bEnableIdleNeutralHeartbeat = IdleHeartbeatOverride != 0;
+    }
+    float HealthCheckIntervalOverride = LiveLinkHealthCheckIntervalSeconds;
+    if (FParse::Value(
+            FCommandLine::Get(),
+            TEXT("FayLiveLinkHealthInterval="),
+            HealthCheckIntervalOverride))
+    {
+        if (FMath::IsFinite(HealthCheckIntervalOverride))
+        {
+            LiveLinkHealthCheckIntervalSeconds = FMath::Clamp(
+                HealthCheckIntervalOverride,
+                0.0f,
+                60.0f);
+        }
+        else
+        {
+            UE_LOG(LogFayMetaHumanRuntime, Warning,
+                TEXT("Ignored a non-finite Fay Live Link health interval override."));
+        }
+    }
     UE_LOG(LogFayMetaHumanRuntime, Display,
         TEXT("StreamingADA utterance reset mode: %s (post-solve trim=%s)."),
         bRecreateSolverBetweenUtterances
             ? TEXT("recreate-solver")
             : (bResetSolverCacheBetweenUtterances ? TEXT("clear-cache") : TEXT("contiguous-flag")),
         bTrimMemoryAfterUtterance ? TEXT("enabled") : TEXT("disabled"));
+    UE_LOG(LogFayMetaHumanRuntime, Display,
+        TEXT("Live Link idle heartbeat: %s; full health interval: %.2f seconds."),
+        bEnableIdleNeutralHeartbeat ? TEXT("enabled") : TEXT("disabled"),
+        LiveLinkHealthCheckIntervalSeconds);
     InitializeSolverAndSource();
 }
 
@@ -1486,8 +1517,10 @@ bool UFayMetaHumanSpeechDriverComponent::ApplyAvatarConfiguration(AActor* InAvat
     bOriginalUseLiveLink = OriginalUseLiveLink;
     bHasOriginalAvatarConfiguration = true;
     LiveLinkHeartbeatElapsedSeconds = 0.0;
+    LiveLinkHealthCheckElapsedSeconds = 0.0;
     LiveLinkPendingElapsedSeconds = 0.0;
     bLiveLinkPendingGraceLogged = false;
+    bLiveLinkHealthPending = false;
     Avatar = InAvatar;
     UE_LOG(LogFayMetaHumanRuntime, Display,
         TEXT("Configured assembled MetaHuman Body LiveLinkInstance to consume the local Fay "
@@ -1569,8 +1602,10 @@ bool UFayMetaHumanSpeechDriverComponent::RestoreConfiguredAvatar()
         bHasOriginalAvatarConfiguration = false;
     }
     LiveLinkHeartbeatElapsedSeconds = 0.0;
+    LiveLinkHealthCheckElapsedSeconds = 0.0;
     LiveLinkPendingElapsedSeconds = 0.0;
     bLiveLinkPendingGraceLogged = false;
+    bLiveLinkHealthPending = false;
     bActionHeadGestureActive = false;
     ActionHeadGestureElapsedSeconds = 0.0f;
     ActionHeadGestureDurationSeconds = 0.0f;
@@ -1789,7 +1824,7 @@ void UFayMetaHumanSpeechDriverComponent::TickComponent(
         {
             LiveLinkHeartbeatElapsedSeconds = 0.0;
         }
-        else
+        else if (bEnableIdleNeutralHeartbeat)
         {
             LiveLinkHeartbeatElapsedSeconds += SafeDeltaSeconds;
             if (LiveLinkHeartbeatElapsedSeconds >= LiveLinkHeartbeatSeconds)
@@ -1798,10 +1833,20 @@ void UFayMetaHumanSpeechDriverComponent::TickComponent(
                 LiveLinkHeartbeatElapsedSeconds = 0.0;
             }
         }
+        else
+        {
+            LiveLinkHeartbeatElapsedSeconds = 0.0;
+        }
     }
 
-    if (IsValid(Avatar))
+    LiveLinkHealthCheckElapsedSeconds += SafeDeltaSeconds;
+    const bool bLiveLinkHealthCheckDue =
+        bLiveLinkHealthPending ||
+        LiveLinkHealthCheckIntervalSeconds <= 0.0f ||
+        LiveLinkHealthCheckElapsedSeconds >= LiveLinkHealthCheckIntervalSeconds;
+    if (IsValid(Avatar) && bLiveLinkHealthCheckDue)
     {
+        LiveLinkHealthCheckElapsedSeconds = 0.0;
         FString ConsumerReason;
         const bool bConsumerReady = HasVerifiedLiveLinkConsumer(
             Avatar,
@@ -1822,6 +1867,10 @@ void UFayMetaHumanSpeechDriverComponent::TickComponent(
         if (bConsumerReady &&
             SubjectReadiness == EFayLiveLinkSubjectReadiness::Pending)
         {
+            // Once a pending subject is observed, return to per-frame audits so
+            // the existing two-second grace remains wall-clock accurate and
+            // speech/action work stays paused until the subject recovers.
+            bLiveLinkHealthPending = true;
             LiveLinkPendingElapsedSeconds += FMath::Max(DeltaTime, 0.0f);
             if (!bLiveLinkPendingGraceLogged)
             {
@@ -1849,6 +1898,7 @@ void UFayMetaHumanSpeechDriverComponent::TickComponent(
             }
             LiveLinkPendingElapsedSeconds = 0.0;
             bLiveLinkPendingGraceLogged = false;
+            bLiveLinkHealthPending = false;
             bTerminalSubjectFailureLogged = false;
         }
         else
@@ -1870,6 +1920,7 @@ void UFayMetaHumanSpeechDriverComponent::TickComponent(
             }
             RestoreConfiguredAvatar();
             ResetSpeechState();
+            bLiveLinkHealthPending = false;
             if (SubjectReadiness == EFayLiveLinkSubjectReadiness::Collision ||
                 SubjectReadiness == EFayLiveLinkSubjectReadiness::Invalid)
             {

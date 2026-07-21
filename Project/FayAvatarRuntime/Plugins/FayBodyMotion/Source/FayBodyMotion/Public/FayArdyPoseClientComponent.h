@@ -61,6 +61,7 @@ private:
     double HealthRetryElapsedSeconds = 0.0;
     float ActiveIntensity = 0.5f;
     float ActiveDurationSeconds = 1.0f;
+    bool bClientEnabled = true;
     bool bServiceReady = false;
     bool bPlaybackStarted = false;
 };

@@ -4,6 +4,8 @@
 #include "FayBodyMotionComponent.h"
 #include "HttpModule.h"
 #include "Interfaces/IHttpResponse.h"
+#include "Misc/CommandLine.h"
+#include "Misc/Parse.h"
 #include "Serialization/JsonReader.h"
 #include "Serialization/JsonSerializer.h"
 
@@ -61,6 +63,19 @@ UFayArdyPoseClientComponent::UFayArdyPoseClientComponent()
 void UFayArdyPoseClientComponent::BeginPlay()
 {
     Super::BeginPlay();
+    int32 DisableArdyOverride = 0;
+    if (FParse::Value(
+            FCommandLine::Get(),
+            TEXT("FayDisableArdy="),
+            DisableArdyOverride) &&
+        DisableArdyOverride != 0)
+    {
+        bClientEnabled = false;
+        SetComponentTickEnabled(false);
+        UE_LOG(LogFayArdyPoseClient, Display,
+            TEXT("ARDY client and health polling are disabled by reviewed runtime override."));
+        return;
+    }
     if (!IsEndpointSealed())
     {
         UE_LOG(LogFayArdyPoseClient, Error,
@@ -93,6 +108,10 @@ void UFayArdyPoseClientComponent::TickComponent(
     FActorComponentTickFunction* ThisTickFunction)
 {
     Super::TickComponent(DeltaTime, TickType, ThisTickFunction);
+    if (!bClientEnabled)
+    {
+        return;
+    }
     if (!bServiceReady)
     {
         HealthRetryElapsedSeconds += FMath::Max(0.0f, DeltaTime);
@@ -115,7 +134,8 @@ bool UFayArdyPoseClientComponent::StartBehavior(
     const float Intensity,
     const float DurationSeconds)
 {
-    if (!bServiceReady || !UFayBodyMotionComponent::IsBehaviorAllowed(Behavior))
+    if (!bClientEnabled || !bServiceReady ||
+        !UFayBodyMotionComponent::IsBehaviorAllowed(Behavior))
     {
         return false;
     }

@@ -13,12 +13,13 @@ avatar WebSocket, MCP administration, and MCP SSE. Rendered mode additionally
 requires the exact sealed executable, explicit Vulkan, the expected resolution,
 and the absence of Null RHI.
 
-The harness samples Unreal RSS, shared-GPU utilization, and unified
-`MemAvailable` every five seconds. It aborts after three consecutive excessive
-GPU samples, rejects an optional absolute RSS ceiling, and measures tail growth
-from the time-based midpoint rather than from sparse per-turn samples. Spark
-does not expose a useful separate `memory.used` value through `nvidia-smi`, so
-that column may be `-1` while RSS and `MemAvailable` remain enforceable.
+The harness samples Unreal RSS, private-dirty and anonymous mappings, swap,
+shared-GPU utilization, and unified `MemAvailable` every five seconds. It aborts
+after three consecutive excessive GPU samples, rejects an optional absolute RSS
+ceiling, and measures tail growth from the time-based midpoint rather than from
+sparse per-turn samples. Spark does not expose a useful separate `memory.used`
+value through `nvidia-smi`, so that column may be `-1` while RSS,
+`smaps_rollup`, and `MemAvailable` remain available.
 
 Every requested speech turn must produce exactly one facial summary, exactly
 50 solver frames per speech second plus the ten-frame tail, and facial p95 at

@@ -101,6 +101,18 @@ public:
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Fay|MetaHuman", AdvancedDisplay)
     bool bTrimMemoryAfterUtterance = true;
 
+    /** Publish the configured neutral Live Link frame at 10 Hz while idle. */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Fay|MetaHuman", AdvancedDisplay)
+    bool bEnableIdleNeutralHeartbeat = true;
+
+    /**
+     * Seconds between full configured-consumer health audits. Zero preserves
+     * the strict every-frame behavior; -FayLiveLinkHealthInterval overrides it.
+     */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Fay|MetaHuman", AdvancedDisplay,
+        meta = (ClampMin = "0.0", ClampMax = "60.0"))
+    float LiveLinkHealthCheckIntervalSeconds = 0.0f;
+
     /** Convert supported Fay semantic actions into conservative head gestures. */
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Fay|MetaHuman|Gestures")
     bool bEnableSemanticHeadGestures = true;
@@ -173,10 +185,12 @@ private:
 
     int32 OriginalBodyAnimationModeValue = 0;
     double LiveLinkHeartbeatElapsedSeconds = 0.0;
+    double LiveLinkHealthCheckElapsedSeconds = 0.0;
     double LiveLinkPendingElapsedSeconds = 0.0;
     bool bOriginalUseLiveLink = false;
     bool bHasOriginalAvatarConfiguration = false;
     bool bLiveLinkPendingGraceLogged = false;
+    bool bLiveLinkHealthPending = false;
     bool bPendingSubjectWaitLogged = false;
     bool bTerminalSubjectFailureLogged = false;
     bool bFirstSolverFrame = true;
