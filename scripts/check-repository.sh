@@ -654,6 +654,34 @@ for marker in (
     if marker not in soak_harness:
         reject(f"the strict soak harness is missing its reliability contract: {marker}")
 
+media_capture = Path("scripts/capture-spark-avatar-window.sh").read_text()
+for marker in (
+    "process_matches_identity",
+    "runtime_log_prelaunch_identity",
+    "RUNTIME_LOG does not belong to EXPECTED_UNREAL_EXE",
+    "Selected reviewed character profile",
+    "Spawned character",
+    "Connected to the Fay avatar WebSocket.",
+    "Started Fay speech playback",
+    "_NET_WM_PID",
+    "width == 1280 && $height == 720",
+    'xwininfo -id "$candidate"',
+    '-window_id "$window_id"',
+    "-t 8 -an -vf format=yuv420p",
+    "png_probe == 1280x720",
+    "mp4_probe == 1280,720,30/1",
+    'timeout --signal=TERM --kill-after=5 15 ffmpeg',
+    'timeout --signal=TERM --kill-after=5 30 ffmpeg',
+    'ln -- "$temporary_png" "$output_png"',
+    'ln -- "$temporary_mp4" "$output_mp4"',
+    "publish_complete=1",
+    "handle_signal HUP 129",
+):
+    if marker not in media_capture:
+        reject(f"the guarded media capture is missing its safety contract: {marker}")
+if re.search(r'-f\s+(?:pulse|alsa|avfoundation)', media_capture, re.IGNORECASE):
+    reject("private progress capture must not record desktop audio")
+
 speech_header = Path(
     "Project/FayAvatarRuntime/Plugins/FayMetaHumanRuntime/Source/"
     "FayMetaHumanRuntime/Public/FayMetaHumanSpeechDriverComponent.h"

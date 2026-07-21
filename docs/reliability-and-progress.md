@@ -176,3 +176,31 @@ status document, process log, screenshots, and videos outside Git.
 The hub is deliberately a small visibility aid rather than a dependency of the
 avatar stack. Unreal, Fay, StreamingADA, and ARDY continue to run if the hub is
 stopped.
+
+## Private progress media capture
+
+Capture media only in a separate diagnostic run after production qualification
+has torn down. `scripts/capture-spark-avatar-window.sh` arms before launch and
+waits for one exact sealed `FayAvatarRuntime` process, a fresh runtime log, the
+reviewed character marker, and real speech playback. It then requires one
+visible X11 client whose `_NET_WM_PID` equals the recorded runtime PID and whose
+client geometry is exactly 1280x720. It never captures the whole desktop and
+records no audio.
+
+```bash
+./scripts/capture-spark-avatar-window.sh \
+  /path/to/FayAvatarRuntime/Binaries/LinuxArm64/FayAvatarRuntime \
+  /path/to/FayAvatarRuntime/Saved/Logs/FayAvatarRuntime.log \
+  Ada \
+  /private/media-root/v27/ada-v27-speaking-wave.png \
+  /private/media-root/v27/ada-v27-speaking-wave-8s.mp4 \
+  180
+```
+
+Run that watcher in parallel with an explicitly diagnostic one-turn rendered
+test. The capture revalidates executable, Linux start time, X11 window PID,
+visibility, geometry, image dimensions, video frame rate, and duration before
+no-clobber publishing the private PNG/MP4 pair. NVENC and X11 capture add GPU
+work, so media runs must never be promoted to production evidence. Add a file
+to the progress status allowlist only after capture passes; keep partial files,
+media, and capture metadata outside Git.
