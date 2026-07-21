@@ -728,16 +728,39 @@ if [[ $enable_csv == 1 ]]; then
 fi
 export UE5_SPARK_MIN_AVAILABLE_MEMORY_GIB="$min_start_available_memory_gib"
 export UE5_SPARK_MAX_START_GPU_UTILIZATION="$max_start_gpu_utilization"
-"$digital_human_launcher" "$package_launcher" \
+launcher_bash_exe=$(readlink -f "$(command -v bash)")
+[[ -x $launcher_bash_exe ]] || fail 'could not resolve the Bash launcher interpreter'
+"$launcher_bash_exe" "$digital_human_launcher" "$package_launcher" \
     "${runtime_arguments[@]}" "$@" >"$launcher_log" 2>&1 &
 launcher_pid=$!
-launcher_exe=$(readlink "/proc/$launcher_pid/exe" 2>/dev/null || true)
 launcher_starttime=$(read_process_starttime "$launcher_pid" || true)
-if [[ -z $launcher_exe || -z $launcher_starttime ]] ||
-    ! process_matches_identity "$launcher_pid" "$launcher_exe" "$launcher_starttime"; then
+launcher_exe=$launcher_bash_exe
+launcher_identity_stable=0
+if [[ -n $launcher_starttime ]]; then
+    # A script started through `#!/usr/bin/env bash` briefly exposes `env` in
+    # /proc before Bash, and either interpreter can immediately exec Unreal.
+    # Invoke the reviewed interpreter directly and sample until one complete
+    # PID/start-time/executable tuple is stable across that handoff.
+    for _ in $(seq 1 50); do
+        current_launcher_starttime=$(read_process_starttime "$launcher_pid" || true)
+        current_launcher_exe=$(readlink "/proc/$launcher_pid/exe" 2>/dev/null || true)
+        if [[ $current_launcher_starttime == "$launcher_starttime" &&
+            ( $current_launcher_exe == "$launcher_bash_exe" ||
+            $current_launcher_exe == "$expected_unreal_exe" ) ]] &&
+            process_matches_identity \
+                "$launcher_pid" "$current_launcher_exe" "$launcher_starttime"; then
+            launcher_exe=$current_launcher_exe
+            launcher_identity_stable=1
+            break
+        fi
+        sleep 0.1
+    done
+fi
+if (( launcher_identity_stable == 0 )); then
     fail 'could not establish the guarded launcher process identity'
 fi
-if [[ $launcher_exe != */bash && $launcher_exe != "$expected_unreal_exe" ]]; then
+if [[ $launcher_exe != "$launcher_bash_exe" &&
+    $launcher_exe != "$expected_unreal_exe" ]]; then
     fail 'the guarded launcher started as an unexpected executable'
 fi
 
