@@ -5,15 +5,16 @@ Unreal Engine 5.8 digital-human application natively on NVIDIA DGX Spark. It
 contains a minimal Unreal project, a Fay speech/event bridge, and source for a
 local MetaHuman facial-animation adapter.
 
-> **Engineering-preview status:** the character-independent v19 pipeline has
+> **Engineering-preview status:** the character-independent v27 pipeline has
 > rebuilt Ada and Aoi from reviewed profiles and runs as a sealed native Linux
 > ARM64 package on DGX Spark. Ada renders, speaks, animates through the local
 > StreamingADA model, and performs allowlisted procedural body gestures while a
 > guarded Core27 adapter consumes an isolated loopback pose service. The same
-> Spark runs the x86-64 UE 5.8 Editor/cooker through rootless FEX. A 30-minute
-> headless stability gate and a short rendered gate pass; the final 30-minute
-> rendered v19 gate remains pending sufficient free unified memory. Real ARDY
-> prompt conditioning remains gated on approved Meta Llama access.
+> Spark runs the x86-64 UE 5.8 Editor/cooker through rootless FEX. The current
+> rendered v27 package passed both its four-turn qualification and a
+> 1,802-second / 20-turn production soak. The guarded Core27 test provider and
+> retarget route work; real prompt-conditioned ARDY remains gated on Meta Llama
+> encoder access.
 
 This repository does **not** redistribute Unreal Engine, MetaHuman assets,
 Marketplace plugins, cooked packages, or private Epic source patches.
@@ -52,8 +53,9 @@ required for this project.
 | Direct local StreamingADA facial adapter | Verified in the native package: 81 solver curves, 251 raw controls, `FayAudio` Live Link subject |
 | Free optimized Ada MetaHuman renders on Spark | Verified with skin, hair, clothing, and portrait lighting |
 | MetaHuman learned speech motion | Verified visibly and at the complete 50 Hz solve cadence |
-| Reviewed character profiles and repeatable profile-driven cooking | Verified with Ada and Aoi in sealed v13; unknown profiles fail closed |
-| Fay-driven body gestures | Core27 transport/retarget/recovery and v16 procedural `wave`/`invite` routing verified; rendered tuning and optional polished clips pending |
+| Reviewed character profiles and repeatable profile-driven cooking | Verified with Ada and Aoi in sealed v27; unknown profiles fail closed |
+| Fay-driven motion routing | V27's allowlisted control matrix selected the guarded Core27 test provider and deterministic fallbacks as designed; Ada's current private media visually verifies wave; remaining motions need visual tuning; real prompt-conditioned ARDY remains gated |
+| Rendered long-running reliability | Verified: 20 turns over 1,802 seconds, 15.92 ms worst facial p95, 29,072 KiB tail RSS growth, clean teardown |
 | Native ARM64 Unreal Editor/cooker | Not required; x86 Editor uses FEX |
 
 See [the detailed status](docs/status.md) for the exact boundary.
@@ -112,6 +114,7 @@ scripts/run-cooked-package.sh             Guarded packaged-app launcher
 scripts/run-spark-digital-human.sh        Discover Fay/MCP and launch the stack
 scripts/run-spark-avatar-soak.sh          Own rendered launch, soak, and teardown
 scripts/soak-spark-avatar.sh              Strict face/audio/body/GPU reliability gate
+scripts/capture-spark-avatar-window.sh    Guarded private window-only media capture
 scripts/build-ardy-container.sh           Build isolated ARM64 PyTorch service
 scripts/run-ardy-container.sh             Run loopback-only hardened pose service
 services/ardy/                            Strict Core27 protocol and providers
@@ -121,7 +124,7 @@ docs/                                     Architecture and deployment guides
 ```
 
 The included UE 5.8 `Aoi` preset is male in the tested installation. It is kept
-as the second v13 portability fixture because it proved that the runtime,
+as the second v27 portability fixture because it proved that the runtime,
 speech adapter, and body retargeter are character-independent. Ada remains the
 female demonstration character; another reviewed female preset can use the
 same guarded builder and profile path.
@@ -237,12 +240,14 @@ Link Basic subject named `FayAudio`. The native package has visibly driven Ada's
 face while Fay speech played, including the complete expected 50 Hz solve frame
 count while the window was minimized. Semantic action events reach Unreal;
 wave and invite have rendered through the character-neutral procedural body
-fallback. Live MCP control now also verifies think, warn, nod, and shake through
-the deterministic paths and routes conversational `explain` through ARDY when
-that provider is ready. Nod and shake remain bounded face-driver head curves,
-so body motion cannot fight StreamingADA. These newer routes still need the
-same visual tuning and long rendered validation as wave and invite. Optional
-compatible montages retain precedence.
+fallback. Live control now also verifies think, warn, nod, and shake through
+the deterministic paths and routes conversational `explain` through the
+configured Core27 test provider. Nod and shake remain bounded face-driver head
+curves, so body motion cannot fight StreamingADA. The complete control matrix
+and long rendered reliability gate pass. Current private v27 media visually
+verifies wave during speech; think, warn, nod, shake, and the generated retarget
+route still need front/side visual tuning. Optional compatible montages retain
+precedence.
 
 The `FayBodyMotion` plugin routes the same semantic intent through a strict
 allowlist and interchangeable baked/ARDY providers. Its ARDY client validates

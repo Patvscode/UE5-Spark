@@ -63,9 +63,11 @@ Fay semantic actions already cross the bridge. Conservative raw-control head
 mappings for `nod`, `shake`, `think`, and `warn` are live-MCP verified but not
 yet visually tuned. The body-motion plugin supplies a character-neutral
 procedural fallback for `wave`, `invite`, `think`, `warn`, and `explain` when a
-compatible private montage or generated provider is unavailable. With ARDY
-ready, conversational `explain` takes the generated route; timing-critical
-actions remain deterministic. Procedural motion applies only reviewed arm and
+compatible private montage or generated provider is unavailable. With a
+reviewed generated provider ready, conversational `explain` takes that route;
+timing-critical actions remain deterministic. Current v27 evidence used the
+isolated Core27 test provider; real prompt-conditioned Horizon8 still requires
+the gated Meta Llama encoder. Procedural motion applies only reviewed arm and
 wrist bones after ordinary body evaluation, leaving face, neck, and head
 ownership unchanged. Rendered tuning remains required before calling these
 paths a polished performance.

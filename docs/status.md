@@ -116,7 +116,7 @@ content remain private and are not part of this repository.
   542,560 KiB overall and only 616 KiB across the latter half, demonstrating a
   plateau instead of v13's linear growth. The externally managed Fay process
   remained alive through verified teardown.
-- The private Tailscale progress hub is live independently of the avatar stack.
+- The private Tailscale progress hub was verified running independently of the avatar stack.
   It serves only allowlisted private milestone media, supports mobile video
   ranges, and links to the existing agent board without exposing private data
   through this public repository.
@@ -168,8 +168,9 @@ content remain private and are not part of this repository.
   giving body motion ownership of face, neck, or head. Live MCP calls exercised
   `wave`, `invite`, `think`, `warn`, `explain`, `nod`, and `shake`; Unreal used
   deterministic procedural fallbacks for the timing-critical actions, selected
-  the available ARDY provider for `explain`, and Fay rejected non-allowlisted
-  `dance`. A speech-overlap check started `nod` while StreamingADA was active;
+  the configured Core27 test provider for `explain`, and Fay rejected
+  non-allowlisted `dance`. A speech-overlap check started `nod` while
+  StreamingADA was active;
   the face solve completed its exact 530 frames over 10.400 seconds at 6.26 ms
   p95 with no project error marker.
 - The same v21 executable selected Aoi solely through `-FayCharacter=Aoi`,
@@ -179,6 +180,51 @@ content remain private and are not part of this repository.
   immutable package seal passed again afterward. This remains headless control
   and portability evidence; final visual quality still belongs to the rendered
   gate.
+- The remaining rendered allocation staircase was traced to an Unreal Vulkan
+  parallel-render-pass allocation-lifetime issue in the private UE 5.8 source build. An
+  A/B diagnostic first proved that disabling parallel RDG execution stopped the
+  growth. After the reviewed ownership fix, v27 ran the normal parallel path
+  with zero net positive RSS growth over the measured post-warmup window, a
+  -286.38 KiB/s measured slope,
+  and no runtime, Vulkan, or kernel failure. The private Engine patch is not
+  published by this source-only repository.
+- The resulting sealed dual-character v27 package contains 947 cooked packages
+  and passed the complete architecture, Ada/Aoi, StreamingADA, garment, ONNX
+  Runtime, Pak-only layout, Editor-helper exclusion, and immutable-file checks.
+  A headless regression matrix also passed default Ada startup, dormancy, live
+  wake/action/re-dormancy, and exact teardown.
+- Ada's rendered four-turn production qualification completed 1,640 exact
+  facial frames across 32 seconds of speech with 15.78 ms worst p95. Wave,
+  invite, think, and warn actions were routed; every turn produced normal audio
+  completion, allocator release, and delayed object collection. Five dormancy
+  entries and four accepted-message wakes alternated exactly, and tail RSS grew
+  only 10,704 KiB.
+- Ada then passed the current sealed 1,802-second / 20-turn rendered production soak.
+  All 20 facial summaries, normal playbacks, allocator releases, delayed
+  collections, and dormancy wakes were present; worst facial p95 was 15.92 ms
+  and tail RSS growth was 29,072 KiB. There were no watchdog, queue, runtime,
+  Vulkan, kernel, or forced-teardown failures. Fay retained its original
+  process identity and listeners, and the v27 package seal verified again.
+- The complete v27 direct-action boundary accepted `idle`, `listen`,
+  `wave`, `invite`, `think`, `warn`, `nod`, `shake`, and `explain`, while
+  rejecting non-allowlisted `dance` with HTTP 400. Earlier live MCP evidence
+  exercised the same allowlisted backend tool path. The isolated Core27 test
+  provider exercised the generated-provider route for idle, listen, and explain;
+  timing-critical actions retained deterministic fallbacks. This does not
+  qualify the gated real prompt-conditioned Horizon8 provider. An unsafe
+  unknown profile value also failed closed to the diagnostic avatar rather
+  than becoming an arbitrary asset path.
+- The same sealed v27 binary selected Aoi only through
+  `-FayCharacter=Aoi` and passed a four-turn rendered production qualification
+  with 15.94 ms worst facial p95, normal audio cleanup, 3,004 KiB tail RSS
+  growth, clean teardown, Fay survival, and post-run seal verification. No
+  Aoi-specific C++ was required.
+- A separate diagnostic—not the production soak—captured an allowlisted
+  1280x720 Ada window frame and an eight-second H.264 clip while speech and a
+  wave were active. The capture guard tied the one visible X11 window to the
+  exact sealed executable, PID, start time, runtime log, reviewed profile, and
+  real playback markers, recorded no desktop or audio, and revalidated the
+  media before it was allowlisted on the private progress hub.
 
 ## Important boundary
 
@@ -216,12 +262,15 @@ deployable application.
   presentation for a polished long-running character experience.
 - Assemble and validate a second reviewed female preset. Aoi already proves the
   no-character-specific-C++ portability requirement but is male in UE 5.8.
-- When at least 48 GiB of unified memory is available, complete the new
-  four-minute/four-turn rendered v21 qualification and only then the 30-minute
-  face-plus-body endurance gate. The earlier malformed-envelope,
-  stale-sequence, and service-recovery injections pass; normal rendered audio
-  cleanup, sustained Vulkan frame rate, foot sliding, and head-conflict review
-  remain final gates.
+- Repeat the isolated malformed-envelope, stale/out-of-order sequence, and
+  ARDY service kill/restart injections against the sealed v27 package. Earlier
+  builds passed those recovery paths, but they remain separate from v27's
+  completed production soak and must not interrupt the externally managed Fay
+  process.
+- Run a short CSV-enabled performance diagnostic at 720p and 1080p, then retain
+  front/side motion review and an Aoi v27 comparison capture. CSV and capture
+  overhead remain diagnostic-only and cannot replace the already-passing
+  production qualification.
 - Keep the free modular Casual Girl Fab character as a deferred private
   compatibility target. Reliability, MCP control, deterministic motion, and
   real ARDY activation take precedence; no Fab content belongs in this public

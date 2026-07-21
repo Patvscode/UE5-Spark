@@ -85,8 +85,9 @@ solve-frame accounting while the window was minimized.
    if the learned solver is unavailable.
 2. **Learned face:** validate the direct StreamingADA controls on assembled Ada.
 3. **Presence:** tune idle, breathing, gaze, head turns, solver mood, and blinks.
-4. **Body language:** later map semantic behaviors such as `nod`, `invite`,
-   `think`, and `warn` to reviewed animations.
+4. **Body language:** tune the mapped semantic behaviors such as `nod`,
+   `invite`, `think`, and `warn`, then optionally replace procedural fallbacks
+   with reviewed animations.
 
 Amplitude-driven jaw motion proves timing and transport but is not presented as
 final photorealistic speech. Realistic flesh deformation comes from the
@@ -96,8 +97,10 @@ learned facial layer and now does so in the verified native package.
 
 The source contains conservative raw-control head mappings for `nod`, `shake`,
 `think`, and `warn`, but they have not been visually verified. No authored body
-animations or montages are included for `wave` or `invite`. Receiving a Fay
-action event is not by itself evidence that either kind of gesture moved.
+animations or montages are included for `wave` or `invite`. A guarded private
+v27 diagnostic visually verifies the procedural wave while Ada speaks;
+receiving a Fay action event alone is still not evidence that any other gesture
+moved correctly.
 
 ## Performance order
 

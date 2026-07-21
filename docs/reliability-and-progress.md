@@ -33,6 +33,11 @@ generated provider; either that generated-provider marker or its procedural
 fallback marker is accepted so the gate follows the provider Unreal actually
 selected.
 
+That generated-provider marker proves Unreal transport and provider selection;
+it does not identify a checkpoint or qualify real prompt-conditioned Horizon8.
+The isolated deterministic Core27 test service is sufficient to exercise this
+route while the real prompt encoder remains credential-gated.
+
 All new runtime-log lines and kernel-journal lines are preserved privately.
 Fatal/assertion/OOM/Vulkan failures, project error markers, queue overflow, new
 NVIDIA Xids, context-switch timeouts, allocation failures, or a fallen GPU fail
@@ -145,6 +150,25 @@ at or below 3 GiB, facial p95 at or below 20 ms, and no three consecutive GPU
 samples above 95 percent. Preserve CSV timing and private beginning/midpoint/end
 media for the final visual review. A short 1080p gate follows the 720p endurance
 pass; do not substitute a 30-minute 1080p run for the qualification sequence.
+
+### Latest verified v27 result
+
+The sealed Ada v27 package passed this sequence on Spark. Its four-turn
+qualification produced 1,640 exact facial frames over 32 seconds of speech,
+15.78 ms worst facial p95, four normal audio completions, four allocator
+releases, four delayed collections, and exact dormancy wake/re-entry history.
+Tail RSS growth was 10,704 KiB.
+
+The subsequent cold-launched endurance run completed 20 turns over 1,802
+seconds. It recorded 20 exact facial summaries, 20 normal playbacks/releases/
+collections, 21 dormancy entries and 20 accepted-message wakes, 15.92 ms worst
+facial p95, and 29,072 KiB tail RSS growth. No watchdog, queue, runtime, Vulkan,
+kernel, forced-teardown, Fay-survival, or package-seal check failed.
+
+The Ada PNG and eight-second MP4 allowlisted on the private progress hub came
+from a later one-turn diagnostic. They are visual evidence only; the guarded
+capture's extra X11 and encoder work was not present in either production
+result.
 
 Run rendered tests only when enough unified memory is genuinely available. The
 launcher requires 48 GiB of `MemAvailable` even when GPU utilization is idle,
