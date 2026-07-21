@@ -146,8 +146,8 @@ while IFS= read -r line; do
         'BEGIN { exit !(observed > limit) }'; then
         ((++facial_p95_failures))
     fi
-    worst_face_p95_ms=$(awk -v current="$worst_face_p95_ms" -v observed="$face_p95_ms" \
-        'BEGIN { print observed > current ? observed : current }')
+    worst_face_p95_ms=$(awk -v previous="$worst_face_p95_ms" -v observed="$face_p95_ms" \
+        'BEGIN { print (observed > previous ? observed : previous) }')
 done <"$facial_summaries"
 if (( facial_summary_count < turn_count || facial_frame_failures > 0 ||
     facial_p95_failures > 0 )); then
