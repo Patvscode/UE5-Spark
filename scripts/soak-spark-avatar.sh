@@ -66,7 +66,7 @@ runtime_log_start_line=${FAY_SOAK_RUNTIME_LOG_START_LINE:-}
     fail 'FAY_SOAK_EXPECT_SCENE_ONLY must be 0 or 1'
 [[ $expected_avatar_dormancy =~ ^[01]$ ]] || \
     fail 'FAY_SOAK_EXPECT_AVATAR_DORMANCY must be 0 or 1'
-[[ $expected_avatar_dormancy_delay =~ ^[0-9]+$ ]] || \
+[[ $expected_avatar_dormancy_delay =~ ^[1-9][0-9]*$ ]] || \
     fail 'FAY_SOAK_EXPECT_AVATAR_DORMANCY_DELAY_SECONDS must be an integer from 2 through 60'
 if (( expected_avatar_dormancy_delay < 2 || expected_avatar_dormancy_delay > 60 )); then
     fail 'FAY_SOAK_EXPECT_AVATAR_DORMANCY_DELAY_SECONDS must be an integer from 2 through 60'
@@ -76,6 +76,9 @@ if [[ $expected_scene_only == 1 && $expected_avatar_dormancy == 1 ]]; then
 fi
 if [[ -n $runtime_log_start_line && ! $runtime_log_start_line =~ ^[1-9][0-9]*$ ]]; then
     fail 'FAY_SOAK_RUNTIME_LOG_START_LINE must be a positive integer when supplied'
+fi
+if [[ $expected_avatar_dormancy == 1 && -z $runtime_log_start_line ]]; then
+    fail 'dormancy evidence requires FAY_SOAK_RUNTIME_LOG_START_LINE from the guarded launcher'
 fi
 (( duration >= turn_count && turn_count <= 100 )) || \
     fail 'duration must cover every turn and turn count must not exceed 100'

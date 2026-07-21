@@ -83,7 +83,7 @@ if (( scene_only == 1 && turn_count != 0 )); then
 fi
 [[ $avatar_dormancy =~ ^[01]$ ]] || \
     fail 'FAY_SOAK_AVATAR_DORMANCY must be 0 or 1'
-[[ $avatar_dormancy_delay =~ ^[0-9]+$ ]] || \
+[[ $avatar_dormancy_delay =~ ^[1-9][0-9]*$ ]] || \
     fail 'FAY_SOAK_AVATAR_DORMANCY_DELAY_SECONDS must be an integer from 2 through 60'
 if (( avatar_dormancy_delay < 2 || avatar_dormancy_delay > 60 )); then
     fail 'FAY_SOAK_AVATAR_DORMANCY_DELAY_SECONDS must be an integer from 2 through 60'
@@ -247,8 +247,11 @@ for _ in $(seq 1 90); do
                 dormancy_ready=1
                 if [[ $avatar_dormancy == 1 ]]; then
                     dormancy_marker="MetaHuman idle dormancy: enabled (delay=${avatar_dormancy_delay}.00 seconds, neutral_prepare_frames=2)."
+                    latest_dormancy_transition=$(grep -E \
+                        'Entered MetaHuman idle dormancy|Woke the MetaHuman from idle dormancy' \
+                        <<<"$current_launch_log" | tail -n1 || true)
                     if ! grep -Fq "$dormancy_marker" <<<"$current_launch_log" ||
-                        ! grep -Fq 'Entered MetaHuman idle dormancy' <<<"$current_launch_log"; then
+                        [[ $latest_dormancy_transition != *'Entered MetaHuman idle dormancy'* ]]; then
                         dormancy_ready=0
                     fi
                 fi

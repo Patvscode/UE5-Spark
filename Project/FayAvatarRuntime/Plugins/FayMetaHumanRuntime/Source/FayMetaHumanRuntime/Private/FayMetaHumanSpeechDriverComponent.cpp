@@ -1168,10 +1168,11 @@ bool UFayMetaHumanSpeechDriverComponent::PrepareAvatarForDormancy()
 
 bool UFayMetaHumanSpeechDriverComponent::WakeAvatarFromDormancy()
 {
+    const bool bWakeWasAlreadyPending = bDormancyWakePending;
     // Clear the exception before auditing so any failure wakes/restores rather
     // than being mistaken for intentional idle dormancy.
     bDormancyPrepared = false;
-    bDormancyWakePending = false;
+    bDormancyWakePending = bWakeWasAlreadyPending;
     LiveLinkHeartbeatElapsedSeconds = 0.0;
     LiveLinkHealthCheckElapsedSeconds = LiveLinkHealthCheckIntervalSeconds;
     LiveLinkPendingElapsedSeconds = 0.0;
@@ -1182,7 +1183,10 @@ bool UFayMetaHumanSpeechDriverComponent::WakeAvatarFromDormancy()
         !HasVerifiedLiveLinkConsumer(Avatar, LiveLinkSubjectName) ||
         !RuntimeState->PushNeutral())
     {
-        return false;
+        // A second listener may observe the same synchronous message after a
+        // valid wake was already queued. Never erase that bounded transition
+        // merely because the redundant neutral republish failed.
+        return bWakeWasAlreadyPending;
     }
 
     // PushNeutral is synchronous, but Live Link evaluates the new frame on a
