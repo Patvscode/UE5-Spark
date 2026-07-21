@@ -287,6 +287,14 @@ if [[ $require_procedural_actions == 1 ]]; then
             ((++procedural_action_failures))
         fi
     fi
+    if (( turn_count >= 6 )); then
+        nod_count=$(grep -Fci \
+            "Using character-neutral procedural fallback for 'nod'." \
+            "$runtime_new_log" || true)
+        if (( nod_count < 1 )); then
+            ((++procedural_action_failures))
+        fi
+    fi
     if (( procedural_action_failures > 0 )); then
         status=failed
     fi
@@ -310,7 +318,9 @@ fi
     printf 'rss_tail_growth_limit_kb=%s\n' "$max_tail_rss_growth_kb"
     printf 'mem_available_min_kb=%s\n' "$min_available_memory_kb"
     printf 'gpu_utilization_max_percent=%s\n' "$max_gpu_utilization"
-    printf 'gpu_utilization_limit_percent=%s\n' "$max_gpu_utilization_percent"
+    printf 'gpu_utilization_sustained_threshold_percent=%s\n' \
+        "$max_gpu_utilization_percent"
+    printf 'gpu_utilization_consecutive_failure_samples=3\n'
     printf 'facial_summary_count=%s\n' "$facial_summary_count"
     printf 'facial_summary_required=%s\n' "$turn_count"
     printf 'facial_frame_failures=%s\n' "$facial_frame_failures"
