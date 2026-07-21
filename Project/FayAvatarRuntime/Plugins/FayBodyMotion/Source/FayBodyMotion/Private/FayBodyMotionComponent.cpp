@@ -33,6 +33,14 @@ bool IsDeterministicBehavior(const FName Behavior)
         Behavior == TEXT("nod") || Behavior == TEXT("shake");
 }
 
+bool HasProceduralFallback(const FName Behavior)
+{
+    return Behavior == TEXT("wave") || Behavior == TEXT("invite") ||
+        Behavior == TEXT("think") || Behavior == TEXT("warn") ||
+        Behavior == TEXT("nod") || Behavior == TEXT("shake") ||
+        Behavior == TEXT("explain");
+}
+
 constexpr int32 Core27JointCount = 27;
 constexpr float GeneratedBlendInSeconds = 0.25f;
 constexpr float MaximumRootOffsetCentimetres = 20.0f;
@@ -91,8 +99,12 @@ class FBakedMotionProvider final : public IFayBodyMotionProvider
 public:
     FBakedMotionProvider(
         USkeletalMeshComponent* InBodyMesh,
-        TMap<FName, TSoftObjectPtr<UAnimMontage>>* InMontages)
-        : BodyMesh(InBodyMesh), Montages(InMontages)
+        TMap<FName, TSoftObjectPtr<UAnimMontage>>* InMontages,
+        TFunction<void(const FFayBodyMotionRequest&)> InBeginProcedural,
+        TFunction<void()> InStopProcedural)
+        : BodyMesh(InBodyMesh), Montages(InMontages),
+          BeginProcedural(MoveTemp(InBeginProcedural)),
+          StopProcedural(MoveTemp(InStopProcedural))
     {
     }
 
@@ -122,15 +134,21 @@ public:
             ? MontageReference->LoadSynchronous()
             : nullptr;
         UAnimInstance* Animation = BodyMesh->GetAnimInstance();
-        if (!IsValid(Montage) || !IsValid(Animation))
+        if (IsValid(Montage) && IsValid(Animation))
+        {
+            StopProcedural();
+            const float NaturalDuration = Montage->GetPlayLength();
+            const float PlayRate = Request.DurationSeconds > 0.0f && NaturalDuration > 0.0f
+                ? FMath::Clamp(NaturalDuration / Request.DurationSeconds, 0.5f, 2.0f)
+                : 1.0f;
+            return Animation->Montage_Play(Montage, PlayRate) > 0.0f;
+        }
+        if (!HasProceduralFallback(Request.Behavior))
         {
             return false;
         }
-        const float NaturalDuration = Montage->GetPlayLength();
-        const float PlayRate = Request.DurationSeconds > 0.0f && NaturalDuration > 0.0f
-            ? FMath::Clamp(NaturalDuration / Request.DurationSeconds, 0.5f, 2.0f)
-            : 1.0f;
-        return Animation->Montage_Play(Montage, PlayRate) > 0.0f;
+        BeginProcedural(Request);
+        return true;
     }
 
     virtual void Stop(const float BlendOutSeconds) override
@@ -139,6 +157,7 @@ public:
         {
             BodyMesh->GetAnimInstance()->Montage_Stop(FMath::Max(0.0f, BlendOutSeconds));
         }
+        StopProcedural();
     }
 
     virtual void Tick(const float DeltaSeconds) override
@@ -149,6 +168,8 @@ public:
 private:
     TWeakObjectPtr<USkeletalMeshComponent> BodyMesh;
     TMap<FName, TSoftObjectPtr<UAnimMontage>>* Montages = nullptr;
+    TFunction<void(const FFayBodyMotionRequest&)> BeginProcedural;
+    TFunction<void()> StopProcedural;
 };
 
 /** Disabled until the validated loopback client owns a complete pose buffer. */
@@ -237,6 +258,18 @@ void UFayBodyMotionComponent::TickComponent(
     {
         ArdyProvider->Tick(DeltaTime);
     }
+    if (!ProceduralBehavior.IsNone())
+    {
+        ProceduralGestureElapsedSeconds += FMath::Max(0.0f, DeltaTime);
+        if (ProceduralGestureElapsedSeconds >= ProceduralGestureDurationSeconds)
+        {
+            StopProceduralGesture();
+            if (ActiveProvider == EFayBodyMotionProvider::Baked)
+            {
+                SetState(EFayBodyMotionState::Idle, EFayBodyMotionProvider::Baked);
+            }
+        }
+    }
 }
 
 void UFayBodyMotionComponent::AttachBridge(UFayAvatarBridgeComponent* InBridge)
@@ -281,7 +314,17 @@ bool UFayBodyMotionComponent::ConfigureAvatar(
         return false;
     }
 
-    BakedProvider = MakeUnique<FBakedMotionProvider>(BodyMesh, &BakedMontages);
+    BakedProvider = MakeUnique<FBakedMotionProvider>(
+        BodyMesh,
+        &BakedMontages,
+        [this](const FFayBodyMotionRequest& Request)
+        {
+            BeginProceduralGesture(Request);
+        },
+        [this]()
+        {
+            StopProceduralGesture();
+        });
     bGeneratedRetargetReady = ConfigureGeneratedRetarget();
     ArdyProvider = MakeUnique<FArdyMotionProvider>(ArdyClient, &bGeneratedRetargetReady);
     SetState(EFayBodyMotionState::Idle, EFayBodyMotionProvider::Baked);
@@ -335,8 +378,18 @@ bool UFayBodyMotionComponent::ConfigureGeneratedRetarget()
 
 void UFayBodyMotionComponent::HandleBodyTransformsFinalized()
 {
-    if (!bGeneratedRetargetReady || !IsValid(BodyMesh) || !IsValid(ArdyClient) ||
-        ActiveProvider != EFayBodyMotionProvider::Ardy)
+    if (!bGeneratedRetargetReady || !IsValid(BodyMesh))
+    {
+        return;
+    }
+    if (ActiveProvider == EFayBodyMotionProvider::Baked &&
+        !ProceduralBehavior.IsNone())
+    {
+        ApplyProceduralGesture();
+        GeneratedBlendWeight = 0.0f;
+        return;
+    }
+    if (!IsValid(ArdyClient) || ActiveProvider != EFayBodyMotionProvider::Ardy)
     {
         GeneratedBlendWeight = 0.0f;
         return;
@@ -435,6 +488,144 @@ void UFayBodyMotionComponent::HandleBodyTransformsFinalized()
         if (BoneIndex == PelvisIndex)
         {
             LocalTransform.AddToTranslation(RootOffset);
+        }
+        OutputTransforms[BoneIndex] = ParentIndex == INDEX_NONE
+            ? LocalTransform
+            : LocalTransform * OutputTransforms[ParentIndex];
+    }
+}
+
+void UFayBodyMotionComponent::BeginProceduralGesture(
+    const FFayBodyMotionRequest& Request)
+{
+    ProceduralBehavior = Request.Behavior;
+    ProceduralGestureElapsedSeconds = 0.0f;
+    ProceduralGestureDurationSeconds = FMath::Max(0.2f, Request.DurationSeconds);
+    ProceduralGestureIntensity = FMath::Clamp(Request.Intensity, 0.0f, 1.0f);
+    UE_LOG(LogFayBodyMotion, Display,
+        TEXT("Using character-neutral procedural fallback for '%s'."),
+        *ProceduralBehavior.ToString());
+}
+
+void UFayBodyMotionComponent::StopProceduralGesture()
+{
+    ProceduralBehavior = NAME_None;
+    ProceduralGestureElapsedSeconds = 0.0f;
+    ProceduralGestureDurationSeconds = 0.0f;
+    ProceduralGestureIntensity = 0.0f;
+}
+
+void UFayBodyMotionComponent::ApplyProceduralGesture()
+{
+    const TArray<FTransform>& EvaluatedTransforms = BodyMesh->GetComponentSpaceTransforms();
+    if (EvaluatedTransforms.Num() != BodyMesh->GetNumBones() ||
+        Core27TargetBoneIndices.Num() != Core27JointCount)
+    {
+        return;
+    }
+
+    const float Duration = FMath::Max(0.2f, ProceduralGestureDurationSeconds);
+    const float Progress = FMath::Clamp(
+        ProceduralGestureElapsedSeconds / Duration,
+        0.0f,
+        1.0f);
+    const float BlendWindow = FMath::Min(0.2f, Duration * 0.25f);
+    const float BlendIn = FMath::Clamp(
+        ProceduralGestureElapsedSeconds / BlendWindow,
+        0.0f,
+        1.0f);
+    const float BlendOut = FMath::Clamp(
+        (Duration - ProceduralGestureElapsedSeconds) / BlendWindow,
+        0.0f,
+        1.0f);
+    const float Weight = FMath::SmoothStep(
+        0.0f,
+        1.0f,
+        FMath::Min(BlendIn, BlendOut)) *
+        FMath::Lerp(0.45f, 1.0f, ProceduralGestureIntensity);
+
+    TMap<int32, FQuat> BoneDeltas;
+    const auto AddDelta = [&BoneDeltas, Weight](
+        const int32 BoneIndex,
+        const FVector Axis,
+        const float Degrees)
+    {
+        if (BoneIndex != INDEX_NONE)
+        {
+            const FQuat Delta(Axis.GetSafeNormal(), FMath::DegreesToRadians(Degrees * Weight));
+            if (FQuat* Existing = BoneDeltas.Find(BoneIndex))
+            {
+                *Existing = (Delta * *Existing).GetNormalized();
+            }
+            else
+            {
+                BoneDeltas.Add(BoneIndex, Delta);
+            }
+        }
+    };
+
+    // Core27 indices 8-10 and 14-16 are the reviewed right/left arm chains.
+    if (ProceduralBehavior == TEXT("wave"))
+    {
+        AddDelta(Core27TargetBoneIndices[8], FVector::YAxisVector, -62.0f);
+        AddDelta(Core27TargetBoneIndices[8], FVector::ZAxisVector, -24.0f);
+        AddDelta(Core27TargetBoneIndices[9], FVector::YAxisVector, -78.0f);
+        AddDelta(
+            Core27TargetBoneIndices[10],
+            FVector::XAxisVector,
+            FMath::Sin(Progress * 6.0f * PI) * 28.0f);
+    }
+    else if (ProceduralBehavior == TEXT("invite") ||
+        ProceduralBehavior == TEXT("explain"))
+    {
+        const float ConversationalSweep = ProceduralBehavior == TEXT("explain")
+            ? FMath::Sin(Progress * 2.0f * PI) * 10.0f
+            : 0.0f;
+        AddDelta(Core27TargetBoneIndices[8], FVector::YAxisVector, -30.0f);
+        AddDelta(Core27TargetBoneIndices[8], FVector::ZAxisVector, -20.0f - ConversationalSweep);
+        AddDelta(Core27TargetBoneIndices[9], FVector::YAxisVector, -42.0f);
+        AddDelta(Core27TargetBoneIndices[10], FVector::XAxisVector, 35.0f);
+        AddDelta(Core27TargetBoneIndices[14], FVector::YAxisVector, 30.0f);
+        AddDelta(Core27TargetBoneIndices[14], FVector::ZAxisVector, 20.0f - ConversationalSweep);
+        AddDelta(Core27TargetBoneIndices[15], FVector::YAxisVector, 42.0f);
+        AddDelta(Core27TargetBoneIndices[16], FVector::XAxisVector, -35.0f);
+    }
+    else if (ProceduralBehavior == TEXT("think"))
+    {
+        AddDelta(Core27TargetBoneIndices[8], FVector::YAxisVector, -38.0f);
+        AddDelta(Core27TargetBoneIndices[8], FVector::ZAxisVector, -18.0f);
+        AddDelta(Core27TargetBoneIndices[9], FVector::YAxisVector, -92.0f);
+        AddDelta(Core27TargetBoneIndices[10], FVector::XAxisVector, 18.0f);
+    }
+    else if (ProceduralBehavior == TEXT("warn"))
+    {
+        AddDelta(Core27TargetBoneIndices[8], FVector::YAxisVector, -54.0f);
+        AddDelta(Core27TargetBoneIndices[8], FVector::ZAxisVector, -12.0f);
+        AddDelta(Core27TargetBoneIndices[9], FVector::YAxisVector, -64.0f);
+        AddDelta(Core27TargetBoneIndices[10], FVector::XAxisVector, 70.0f);
+    }
+    // nod/shake intentionally leave the body unchanged; the face driver owns
+    // their deterministic head curve so body motion cannot fight it.
+
+    if (BoneDeltas.IsEmpty())
+    {
+        return;
+    }
+    TArray<FTransform> OriginalTransforms = EvaluatedTransforms;
+    TArray<FTransform>& OutputTransforms =
+        const_cast<TArray<FTransform>&>(BodyMesh->GetComponentSpaceTransforms());
+    const FReferenceSkeleton& ReferenceSkeleton =
+        BodyMesh->GetSkeletalMeshAsset()->GetRefSkeleton();
+    for (int32 BoneIndex = 0; BoneIndex < OutputTransforms.Num(); ++BoneIndex)
+    {
+        const int32 ParentIndex = ReferenceSkeleton.GetParentIndex(BoneIndex);
+        FTransform LocalTransform = ParentIndex == INDEX_NONE
+            ? OriginalTransforms[BoneIndex]
+            : OriginalTransforms[BoneIndex].GetRelativeTransform(
+                OriginalTransforms[ParentIndex]);
+        if (const FQuat* Delta = BoneDeltas.Find(BoneIndex))
+        {
+            LocalTransform.SetRotation((*Delta * LocalTransform.GetRotation()).GetNormalized());
         }
         OutputTransforms[BoneIndex] = ParentIndex == INDEX_NONE
             ? LocalTransform
@@ -580,6 +771,7 @@ void UFayBodyMotionComponent::ResetProviders()
         BodyTransformsFinalizedHandle.Reset();
     }
     ResetRetargetCalibration();
+    StopProceduralGesture();
     Core27TargetBoneIndices.Reset();
     bGeneratedRetargetReady = false;
     BodyMesh = nullptr;

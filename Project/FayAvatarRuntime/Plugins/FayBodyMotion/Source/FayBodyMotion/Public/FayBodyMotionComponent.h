@@ -86,6 +86,9 @@ private:
     bool ConfigureGeneratedRetarget();
     void HandleBodyTransformsFinalized();
     void ResetRetargetCalibration();
+    void BeginProceduralGesture(const FFayBodyMotionRequest& Request);
+    void StopProceduralGesture();
+    void ApplyProceduralGesture();
 
     UPROPERTY(Transient)
     TObjectPtr<UFayAvatarBridgeComponent> Bridge;
@@ -112,4 +115,8 @@ private:
     float GeneratedBlendWeight = 0.0f;
     double LastRetargetSampleSeconds = 0.0;
     bool bHasLastGeneratedPose = false;
+    FName ProceduralBehavior = NAME_None;
+    float ProceduralGestureElapsedSeconds = 0.0f;
+    float ProceduralGestureDurationSeconds = 0.0f;
+    float ProceduralGestureIntensity = 0.0f;
 };
