@@ -61,8 +61,12 @@ minimized-window 50 Hz solving, and cold relaunch checks pass.
 
 Fay semantic actions already cross the bridge. Conservative raw-control head
 mappings for `nod`, `shake`, `think`, and `warn` exist but are not yet visually
-verified. No authored body montage is implemented for `wave` or `invite`; body
-gestures remain a separate future layer.
+verified. The body-motion plugin supplies a character-neutral procedural
+fallback for `wave`, `invite`, `think`, `warn`, and `explain` when no compatible
+private montage is configured. It applies only reviewed arm/wrist bones after
+ordinary body evaluation, leaving face, neck, and head ownership unchanged.
+Rendered tuning remains required before calling those source-level fallbacks a
+polished performance.
 
 ## Why MCP does not belong inside the avatar plugin
 
