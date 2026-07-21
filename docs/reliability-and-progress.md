@@ -28,8 +28,10 @@ harness remain healthy; preserve the kernel and Unreal evidence and rerun after
 the conflicting workload has ended. The harness records utilization and aborts
 after three consecutive samples above 85 percent; that guard can be adjusted
 explicitly with `FAY_SOAK_MAX_GPU_UTILIZATION_PERCENT`. The packaged avatar
-caps rendering at 30 FPS to retain compute headroom for speech and motion
-rather than rendering unused frames as quickly as possible.
+launcher also refuses three consecutive startup samples above 85 percent
+(`UE5_SPARK_MAX_START_GPU_UTILIZATION`) before it creates an Unreal process.
+The packaged avatar caps rendering at 30 FPS to retain compute headroom for
+speech and motion rather than rendering unused frames as quickly as possible.
 
 ## Tailscale progress hub
 

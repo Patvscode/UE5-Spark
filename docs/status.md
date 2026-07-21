@@ -92,6 +92,29 @@ content remain private and are not part of this repository.
   fixture, but it does not satisfy the desired second-female appearance; Ada is
   still the female demonstration character until another reviewed preset is
   assembled.
+- The v13 reliability run completed 20 turns and 6,552 facial frames over
+  1,802 seconds without a functional crash; worst facial p95 was 15.86 ms.
+  It was correctly rejected for long-running use because Unreal RSS increased
+  from 2,266,288 KiB to 3,562,212 KiB instead of plateauing.
+- A v14 package made StreamingADA utterance reset selectable. Relying on the
+  solver's documented non-contiguous first-frame marker instead of calling
+  `ClearCache` completed an eight-turn gate with exact facial output. RSS grew
+  128,888 KiB overall but only 50,056 KiB across the latter four turns, with
+  per-turn growth declining from roughly 25 MiB to 10 MiB.
+- The subsequent long v14 run was invalidated by shared-GPU contention, not
+  treated as an avatar pass or failure. A separate `lm-eval` workload drove the
+  GB10 to about 90 percent utilization; the kernel recorded NVIDIA Xid 109
+  (`CTX SWITCH TIMEOUT`) against Unreal before its render watchdog terminated.
+  Fay remained alive. The soak tool now detects sustained shared-GPU saturation.
+- The sealed dual-character v15 package adds repeated neutral Live Link
+  bootstrap frames to remove a measured cold-start scheduler race and caps
+  rendering at 30 FPS to retain compute headroom. Its final uncontended soak is
+  pending shared-GPU availability; v14 remains the measured memory-regression
+  reference and v13 remains the rollback package.
+- The private Tailscale progress hub is live independently of the avatar stack.
+  It serves only allowlisted private milestone media, supports mobile video
+  ranges, and links to the existing agent board without exposing private data
+  through this public repository.
 
 ## Important boundary
 
@@ -126,8 +149,10 @@ deployable application.
   presentation for a polished long-running character experience.
 - Assemble and validate a second reviewed female preset. Aoi already proves the
   no-character-specific-C++ portability requirement but is male in UE 5.8.
-- Complete malformed/out-of-order-frame coverage, a 30-minute mixed-action soak
-  test, and the lightweight private progress hub.
+- Complete the uncontended v15 30-minute mixed-action soak. Malformed envelope
+  and stale-sequence live injections already passed while speech/facial output
+  continued; the remaining gate is sustained runtime under available GPU
+  headroom.
 
 ## Publication boundary
 

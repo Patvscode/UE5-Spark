@@ -23,10 +23,27 @@ if (( ${EUID:-$(id -u)} == 0 )); then
     fail 'run the digital human as the normal workspace owner, not root'
 fi
 
-for command_name in curl python3 ss; do
+for command_name in curl nvidia-smi python3 sleep ss; do
     command -v "$command_name" >/dev/null 2>&1 || \
         fail "required command is missing: $command_name"
 done
+
+max_start_gpu_utilization=${UE5_SPARK_MAX_START_GPU_UTILIZATION:-85}
+[[ $max_start_gpu_utilization =~ ^([0-9]|[1-9][0-9]|100)$ ]] || \
+    fail 'UE5_SPARK_MAX_START_GPU_UTILIZATION must be an integer from 0 through 100'
+high_gpu_samples=0
+for _ in 1 2 3; do
+    gpu_utilization=$(nvidia-smi --query-gpu=utilization.gpu \
+        --format=csv,noheader,nounits 2>/dev/null | head -n1 | tr -d ' ' || true)
+    [[ $gpu_utilization =~ ^([0-9]|[1-9][0-9]|100)$ ]] || \
+        fail 'could not read shared GPU utilization'
+    if (( gpu_utilization > max_start_gpu_utilization )); then
+        ((++high_gpu_samples))
+    fi
+    sleep 1
+done
+(( high_gpu_samples < 3 )) || \
+    fail "shared GPU utilization remained above ${max_start_gpu_utilization}%; defer the avatar launch"
 
 launcher_input=$1
 shift
