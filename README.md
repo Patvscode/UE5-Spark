@@ -190,6 +190,15 @@ runner, see [reliability and private progress](docs/reliability-and-progress.md)
      FAY_PID /path/below/logs-private/qualification 240 4
    ```
 
+   Use a zero turn count for a rendered idle-only diagnostic with the same
+   guarded launch, sampling, teardown, Fay-survival, and package-seal checks:
+
+   ```bash
+   ./scripts/run-spark-avatar-soak.sh \
+     /path/to/FayAvatarRuntime-Arm64.sh \
+     FAY_PID /path/below/logs-private/idle-diagnostic 600 0
+   ```
+
 Full instructions are in [build and deploy](docs/build-and-deploy.md). The
 experimental all-Spark source-build route is documented in
 [Spark FEX cooker](docs/spark-fex-cooker.md). A temporary builder can be

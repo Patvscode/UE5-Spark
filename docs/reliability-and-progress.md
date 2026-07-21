@@ -45,6 +45,19 @@ sends `TERM` only to that process, verifies that Fay still owns its listeners,
 and rechecks the package seal after teardown. It never starts, stops, or
 reconfigures Fay.
 
+Set the turn count to zero for an idle-only rendered diagnostic. The same
+launcher, exact-PID ownership, five-second resource sampling, failure scanning,
+teardown, Fay survival check, and package-seal verification still apply, but no
+HTTP speech turn or semantic action is sent. This separates a renderer or
+always-on animation slope from speech-lifecycle growth without creating a
+second launch path:
+
+```bash
+./scripts/run-spark-avatar-soak.sh \
+  /path/to/FayAvatarRuntime-Arm64.sh \
+  FAY_PID /path/below/logs-private/rendered-idle 600 0
+```
+
 Run a four-minute, four-turn 1280x720 qualification before the final endurance
 gate:
 

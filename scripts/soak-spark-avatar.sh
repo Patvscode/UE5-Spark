@@ -8,6 +8,7 @@ fail() {
 
 if (( $# != 5 )); then
     printf 'Usage: %s UNREAL_PID FAY_PID PRIVATE_OUTPUT_DIR DURATION_SECONDS TURN_COUNT\n' "${0##*/}" >&2
+    printf '       TURN_COUNT=0 samples an idle avatar without sending Fay turns.\n' >&2
     exit 64
 fi
 
@@ -29,8 +30,8 @@ expected_res_y=${FAY_SOAK_EXPECTED_RES_Y:-720}
 
 [[ $unreal_pid =~ ^[1-9][0-9]*$ && $fay_pid =~ ^[1-9][0-9]*$ ]] || \
     fail 'PIDs must be positive integers'
-[[ $duration =~ ^[1-9][0-9]*$ && $turn_count =~ ^[1-9][0-9]*$ ]] || \
-    fail 'duration and turn count must be positive integers'
+[[ $duration =~ ^[1-9][0-9]*$ && $turn_count =~ ^[0-9]+$ ]] || \
+    fail 'duration must be positive and turn count must be a non-negative integer'
 [[ $max_tail_rss_growth_kb =~ ^[0-9]+$ ]] || \
     fail 'FAY_SOAK_MAX_TAIL_RSS_GROWTH_KB must be a non-negative integer'
 [[ $max_rss_kb =~ ^[0-9]+$ ]] || \
@@ -163,28 +164,42 @@ sample_resources() {
     fi
 }
 
-for ((turn = 1; turn <= turn_count; ++turn)); do
-    kill -0 "$unreal_pid" 2>/dev/null || fail "Unreal exited before turn $turn"
-    kill -0 "$fay_pid" 2>/dev/null || fail "Fay exited before turn $turn"
-    for fay_port in 5000 5010 8766 10002; do
-        listener_owned_by_fay "$fay_port"
-    done
-    message=${messages[$(((turn - 1) % ${#messages[@]}))]}
-    payload=$(printf '{"user":"User","text":"%s"}' "$message")
-    response=$(curl -fsS --max-time 60 -H 'Content-Type: application/json' \
-        --data "$payload" "http://${fay_host}:5000/transparent-pass") || \
-        fail "Fay request failed on turn $turn"
-    [[ $response == *'"code":200'* ]] || fail "Fay rejected turn $turn"
-    sample_resources "$turn"
-
-    target=$((start + (duration * turn / turn_count)))
+if (( turn_count == 0 )); then
+    sample_resources 0
+    target=$((start + duration))
     while (( $(date +%s) < target )); do
-        kill -0 "$unreal_pid" 2>/dev/null || fail "Unreal exited after turn $turn"
-        kill -0 "$fay_pid" 2>/dev/null || fail "Fay exited after turn $turn"
+        kill -0 "$unreal_pid" 2>/dev/null || fail 'Unreal exited during the idle diagnostic'
+        kill -0 "$fay_pid" 2>/dev/null || fail 'Fay exited during the idle diagnostic'
+        for fay_port in 5000 5010 8766 10002; do
+            listener_owned_by_fay "$fay_port"
+        done
         sleep 5
-        sample_resources "$turn"
+        sample_resources 0
     done
-done
+else
+    for ((turn = 1; turn <= turn_count; ++turn)); do
+        kill -0 "$unreal_pid" 2>/dev/null || fail "Unreal exited before turn $turn"
+        kill -0 "$fay_pid" 2>/dev/null || fail "Fay exited before turn $turn"
+        for fay_port in 5000 5010 8766 10002; do
+            listener_owned_by_fay "$fay_port"
+        done
+        message=${messages[$(((turn - 1) % ${#messages[@]}))]}
+        payload=$(printf '{"user":"User","text":"%s"}' "$message")
+        response=$(curl -fsS --max-time 60 -H 'Content-Type: application/json' \
+            --data "$payload" "http://${fay_host}:5000/transparent-pass") || \
+            fail "Fay request failed on turn $turn"
+        [[ $response == *'"code":200'* ]] || fail "Fay rejected turn $turn"
+        sample_resources "$turn"
+
+        target=$((start + (duration * turn / turn_count)))
+        while (( $(date +%s) < target )); do
+            kill -0 "$unreal_pid" 2>/dev/null || fail "Unreal exited after turn $turn"
+            kill -0 "$fay_pid" 2>/dev/null || fail "Fay exited after turn $turn"
+            sleep 5
+            sample_resources "$turn"
+        done
+    done
+fi
 
 end=$(date +%s)
 capture_evidence
@@ -200,6 +215,11 @@ tail_rss_growth_kb=$((last_rss - tail_start_rss))
 (( tail_rss_growth_kb < 0 )) && tail_rss_growth_kb=0
 
 status=passed
+if (( turn_count == 0 )); then
+    run_mode=idle
+else
+    run_mode=speech
+fi
 if (( tail_rss_growth_kb > max_tail_rss_growth_kb )); then
     status=failed
 fi
@@ -302,6 +322,7 @@ fi
 
 {
     printf 'status=%s\n' "$status"
+    printf 'mode=%s\n' "$run_mode"
     printf 'duration_seconds=%s\n' "$((end - start))"
     printf 'turns=%s\n' "$turn_count"
     printf 'rendered_required=%s\n' "$require_rendered"
@@ -340,5 +361,9 @@ fi
 if [[ $status != passed ]]; then
     fail "avatar soak failed; inspect $summary, $runtime_new_log, and $kernel_new_log"
 fi
-printf 'Soak test passed: %s turn(s) over %s second(s).\n' "$turn_count" "$((end - start))"
+if (( turn_count == 0 )); then
+    printf 'Idle avatar diagnostic passed over %s second(s).\n' "$((end - start))"
+else
+    printf 'Soak test passed: %s turn(s) over %s second(s).\n' "$turn_count" "$((end - start))"
+fi
 printf 'Private metrics: %s\n' "$metrics"

@@ -4,6 +4,7 @@ set -euo pipefail
 usage() {
     printf 'Usage: %s PACKAGE_LAUNCHER FAY_PID PRIVATE_OUTPUT_DIR DURATION_SECONDS TURN_COUNT [Unreal arguments...]\n' \
         "${0##*/}" >&2
+    printf '       TURN_COUNT=0 runs an idle-only rendered diagnostic.\n' >&2
 }
 
 fail() {
@@ -29,8 +30,8 @@ duration=$4
 turn_count=$5
 shift 5
 [[ $fay_pid =~ ^[1-9][0-9]*$ ]] || fail 'FAY_PID must be a positive integer'
-[[ $duration =~ ^[1-9][0-9]*$ && $turn_count =~ ^[1-9][0-9]*$ ]] || \
-    fail 'duration and turn count must be positive integers'
+[[ $duration =~ ^[1-9][0-9]*$ && $turn_count =~ ^[0-9]+$ ]] || \
+    fail 'duration must be positive and turn count must be a non-negative integer'
 
 for command_name in basename grep kill mkdir ps readlink realpath seq sleep ss stat tail; do
     command -v "$command_name" >/dev/null 2>&1 || fail "missing command: $command_name"
@@ -212,8 +213,13 @@ done
 (( runtime_ready == 1 )) || fail 'Unreal did not reach the Fay/character readiness markers'
 
 export FAY_SOAK_REQUIRE_RENDERED=1
-export FAY_SOAK_REQUIRE_NORMAL_AUDIO=1
-export FAY_SOAK_REQUIRE_PROCEDURAL_ACTIONS=1
+if (( turn_count == 0 )); then
+    export FAY_SOAK_REQUIRE_NORMAL_AUDIO=0
+    export FAY_SOAK_REQUIRE_PROCEDURAL_ACTIONS=0
+else
+    export FAY_SOAK_REQUIRE_NORMAL_AUDIO=1
+    export FAY_SOAK_REQUIRE_PROCEDURAL_ACTIONS=1
+fi
 export FAY_SOAK_EXPECTED_UNREAL_EXE="$expected_unreal_exe"
 export FAY_SOAK_EXPECTED_RES_X="$res_x"
 export FAY_SOAK_EXPECTED_RES_Y="$res_y"
@@ -224,4 +230,8 @@ export FAY_SOAK_MAX_GPU_UTILIZATION_PERCENT=${FAY_SOAK_MAX_GPU_UTILIZATION_PERCE
 "$soak_runner" "$runtime_pid" "$fay_pid" "$output_dir" "$duration" "$turn_count"
 cleanup_runtime
 trap - EXIT
-printf 'Rendered avatar soak and verified teardown passed.\n'
+if (( turn_count == 0 )); then
+    printf 'Rendered avatar idle diagnostic and verified teardown passed.\n'
+else
+    printf 'Rendered avatar soak and verified teardown passed.\n'
+fi
