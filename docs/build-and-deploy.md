@@ -99,7 +99,8 @@ following:
 - the exact staged
   `FayAvatarRuntime/Binaries/LinuxArm64/FayAvatarRuntime` file to be an
   `ELF 64-bit` `ARM aarch64` executable; and
-- the assembled Ada Blueprint and MetaHuman common content in the Pak;
+- every selected reviewed character Blueprint and the MetaHuman common content
+  in the Pak;
 - the StreamingADA v2 model in the Pak;
 - Ada's Interchange garment material dependency in the Pak;
 - at least one packaged ONNX Runtime shared library to be an ARM64 ELF;
@@ -110,7 +111,11 @@ following:
 
 Do not continue if either check fails.
 
-`DefaultGame.ini` keeps the generated Ada assembly/common paths and
+`DefaultGame.ini` contains reviewed character profiles. Select one or more with
+repeatable `--character <id>` arguments when cooking; the packager writes a
+validated profile manifest into the archive. The runtime accepts only those
+reviewed IDs through `-FayCharacter=<id>` and never accepts arbitrary asset
+paths. Each profile keeps its generated assembly/common paths and
 `/StreamingADA` in the cook. The runtime adapter converts Fay PCM to 16 kHz
 mono, runs the model through `NNERuntimeORTCpu`, converts its output to 251 raw
 MetaHuman controls, and publishes `FayAudio` through Live Link. The reference

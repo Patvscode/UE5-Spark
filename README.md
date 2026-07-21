@@ -5,13 +5,15 @@ Unreal Engine 5.8 digital-human application natively on NVIDIA DGX Spark. It
 contains a minimal Unreal project, a Fay speech/event bridge, and source for a
 local MetaHuman facial-animation adapter.
 
-> **Engineering-preview status:** a free female Ada MetaHuman now assembles,
-> cooks, renders, speaks, and animates through the local StreamingADA model in a
-> native Linux ARM64 package on DGX Spark. The same Spark runs the x86-64 UE 5.8
-> Editor/cooker through rootless FEX. Fay audio/WebSocket integration, MCP
-> readiness, learned facial motion, background-window operation, package
-> integrity, and repeated cold launch/teardown have been verified. Authored body
-> animations such as wave and invite are still future work.
+> **Engineering-preview status:** the character-independent v10 pipeline has
+> rebuilt the free female Ada MetaHuman, cooked it from a reviewed profile, and
+> run it as a sealed native Linux ARM64 package on DGX Spark. Ada renders,
+> speaks, and animates through the local StreamingADA model. The same Spark runs
+> the x86-64 UE 5.8 Editor/cooker through rootless FEX. Fay audio/WebSocket
+> integration, MCP readiness, learned facial motion, background-window
+> operation, package integrity, and repeated launch/teardown have been verified.
+> Hybrid body motion and the optional ARDY provider are the next implementation
+> stage.
 
 This repository does **not** redistribute Unreal Engine, MetaHuman assets,
 Marketplace plugins, cooked packages, or private Epic source patches.
@@ -50,6 +52,7 @@ required for this project.
 | Direct local StreamingADA facial adapter | Verified in the native package: 81 solver curves, 251 raw controls, `FayAudio` Live Link subject |
 | Free optimized Ada MetaHuman renders on Spark | Verified with skin, hair, clothing, and portrait lighting |
 | MetaHuman learned speech motion | Verified visibly and at the complete 50 Hz solve cadence |
+| Reviewed character profiles and repeatable profile-driven cooking | Verified with Ada v10; unknown profiles fail closed |
 | Fay-driven body gestures | Not implemented |
 | Native ARM64 Unreal Editor/cooker | Not required; x86 Editor uses FEX |
 
@@ -100,7 +103,8 @@ scripts/build-spark-x86-cooker.sh          Bounded x86 cooker source build
 scripts/configure-native-scw-adapter.sh    Optional native shader-worker bridge
 scripts/cook-linux-arm64-fex.sh            Fresh fingerprinted FEX content cook
 scripts/package-linux-arm64-hybrid.sh      Native ARM64 build/stage/package
-scripts/verify-linux-arm64-cook.sh         Verify loose Ada/model cook inputs
+scripts/character-profiles.py              Validate/select sealed character profiles
+scripts/verify-linux-arm64-cook.sh         Verify selected character/model cook inputs
 scripts/verify-cooked-package.sh           Deep-check and hash-seal the package
 scripts/verify-spark.sh                   Read-only Spark/Vulkan preflight
 scripts/run-cooked-package.sh             Guarded packaged-app launcher
@@ -118,10 +122,12 @@ docs/                                     Architecture and deployment guides
 3. If Epic authentication is not already valid, complete it interactively in
    the graphical Editor. Run the Editor-only helper to assemble Ada locally.
 4. Confirm the generated `/Game/FayMetaHumans` files remain ignored. On Spark,
-   run `cook-linux-arm64-fex.sh` to create only a fresh fingerprinted loose cook,
+   run `cook-linux-arm64-fex.sh --character Ada` to create only a fresh
+   fingerprinted loose cook,
    then run `package-linux-arm64-hybrid.sh` with a new empty archive path. The
    FEX step never creates the final package; native ARM64 tools do that.
-5. Verify the archive. Packaging deep-inspects Ada, MetaHuman common content,
+5. Verify the archive. Packaging records the reviewed profile IDs and
+   deep-inspects Ada, MetaHuman common content,
    the StreamingADA model, Ada's Interchange garment material dependency, ARM64
    ONNX Runtime, and Editor-helper exclusion before writing a
    relative-path/hash seal. The normal verifier rechecks that seal:
@@ -129,6 +135,10 @@ docs/                                     Architecture and deployment guides
    ```bash
    ./scripts/verify-cooked-package.sh /path/to/archive
    ```
+
+   The runtime selects only a reviewed packaged profile with
+   `-FayCharacter=Ada`. Unknown IDs and arbitrary asset paths fail closed to the
+   diagnostic avatar.
 
 6. Run the read-only Spark preflight and native packaged launcher:
 

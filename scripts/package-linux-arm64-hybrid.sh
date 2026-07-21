@@ -2,7 +2,7 @@
 set -euo pipefail
 
 usage() {
-    printf 'Usage: %s /path/to/cooker-workspace /path/to/UnrealEngine /path/to/project.uproject /path/to/archive\n' \
+    printf 'Usage: %s /path/to/cooker-workspace /path/to/UnrealEngine /path/to/project.uproject /path/to/archive [--character ID]...\n' \
         "${0##*/}" >&2
     printf 'Validates a fingerprinted fresh cook, then builds/stages/seals it with native Spark host tools.\n' >&2
 }
@@ -12,7 +12,7 @@ fail() {
     exit 1
 }
 
-if [[ $# -ne 4 ]]; then
+if (( $# < 4 )); then
     usage
     exit 64
 fi
@@ -32,11 +32,28 @@ workspace=$(cd "$1" && pwd -P)
 engine_root=$(cd "$2" && pwd -P)
 project_input=$3
 archive_input=$4
+shift 4
+characters=()
+while (( $# > 0 )); do
+    case $1 in
+        --character)
+            (( $# >= 2 )) || fail '--character requires a reviewed profile ID'
+            characters+=("$2")
+            shift 2
+            ;;
+        *)
+            usage
+            fail "unknown package argument: $1"
+            ;;
+    esac
+done
 [[ -f $project_input ]] || fail "project does not exist: $project_input"
 project_dir=$(cd "$(dirname "$project_input")" && pwd -P)
 project="$project_dir/$(basename "$project_input")"
 
 script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)
+profile_tool="$script_dir/character-profiles.py"
+profile_config="$project_dir/Config/DefaultGame.ini"
 build_uat="$engine_root/Engine/Build/BatchFiles/BuildUAT.sh"
 build_version="$engine_root/Engine/Build/Build.version"
 dotnet="$engine_root/.spark-tools/dotnet/dotnet"
@@ -148,7 +165,8 @@ for required in "$build_uat" "$dotnet" "$ubt" "$native_clang" \
 done
 [[ -x $build_uat && -x $dotnet && -x $native_clang && \
    -x $native_clangxx && -x $host_unrealpak && -x $native_unrealpak && \
-   -x $loose_cook_verifier && -f $cook_state_helper ]] || \
+    -x $loose_cook_verifier && -x $profile_tool && -f $profile_config && \
+    -f $cook_state_helper ]] || \
     fail 'one or more required build, packaging, or verification tools are not executable'
 file -L "$dotnet" | grep -q 'ARM aarch64' || fail "dotnet is not native AArch64: $dotnet"
 file -L "$native_clangxx" | grep -q 'ARM aarch64' || \
@@ -213,7 +231,20 @@ if [[ -d $staged_root ]] && find "$staged_root" -mindepth 1 -print -quit | grep 
     fail "the LinuxArm64 staging directory became nonempty; refusing stale output: $staged_root"
 fi
 
-"$loose_cook_verifier" "$cooked_root"
+profile_prefix=(python3 "$profile_tool" --config "$profile_config")
+for character in "${characters[@]}"; do
+    profile_prefix+=(--character "$character")
+done
+"${profile_prefix[@]}" validate >/dev/null
+loose_verify_arguments=(
+    "$loose_cook_verifier" "$cooked_root"
+    --project "$project"
+    --profile-tool "$profile_tool"
+)
+for character in "${characters[@]}"; do
+    loose_verify_arguments+=(--character "$character")
+done
+"${loose_verify_arguments[@]}"
 "${priority_prefix[@]}" python3 "$cook_state_helper" check \
     --workspace "$workspace" \
     --engine "$engine_root" \
@@ -291,7 +322,7 @@ grep -Eqi '"Architecture"[[:space:]]*:[[:space:]]*"arm64"' "$native_receipt" || 
 
 printf 'Stage 3/3: reuse the successful cook and create the archive natively (limit %s)\n' \
     "$stage_timeout"
-"$loose_cook_verifier" "$cooked_root"
+"${loose_verify_arguments[@]}"
 "${priority_prefix[@]}" python3 "$cook_state_helper" check \
     --workspace "$workspace" \
     --engine "$engine_root" \
@@ -327,6 +358,21 @@ elif (( stage_status != 0 )); then
     fail "the native stage/package operation failed with status $stage_status"
 fi
 
-"${priority_prefix[@]}" "$script_dir/verify-cooked-package.sh" "$archive_root" \
-    --unrealpak "$native_unrealpak" --seal
+mapfile -t packaged_launchers < <(
+    find "$archive_root" -type f -name 'FayAvatarRuntime-Arm64.sh' -print
+)
+if (( ${#packaged_launchers[@]} != 1 )); then
+    fail "expected exactly one packaged launcher before manifest creation; found ${#packaged_launchers[@]}"
+fi
+package_root=$(cd "$(dirname "${packaged_launchers[0]}")" && pwd -P)
+manifest="$package_root/.ue5-spark-characters.json"
+manifest_arguments=("${profile_prefix[@]}" manifest --output "$manifest")
+"${manifest_arguments[@]}"
+
+package_verify_arguments=(
+    "$script_dir/verify-cooked-package.sh" "$archive_root"
+    --unrealpak "$native_unrealpak"
+    --seal
+)
+"${priority_prefix[@]}" "${package_verify_arguments[@]}"
 printf 'Verified LinuxArm64 archive: %s\n' "$archive_root"

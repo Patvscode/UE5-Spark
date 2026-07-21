@@ -32,6 +32,7 @@ public:
 
 private:
     void DrawSmokeScene() const;
+    bool LoadCharacterProfile();
     void TrySpawnMetaHuman();
     void ResolveFaceAndJawMorph();
     void DriveJawFallback() const;
@@ -64,8 +65,15 @@ private:
     TObjectPtr<USkeletalMeshComponent> FaceMesh;
 
     FName JawMorphTarget = NAME_None;
+    FName FaceComponentName = TEXT("Face");
+    FName BodyComponentName = TEXT("Body");
+    FString ActiveCharacterId = TEXT("Ada");
+    FString CharacterAdapter = TEXT("UE58MetaHuman");
+    FVector CharacterSpawnLocation = FVector::ZeroVector;
+    FRotator CharacterSpawnRotation = FRotator(0.0f, 180.0f, 0.0f);
 
     bool bViewClaimed = false;
+    bool bCharacterProfileValid = false;
     bool bLiveLinkConfigurationRequested = false;
     bool bLiveLinkConfigured = false;
 };

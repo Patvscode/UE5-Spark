@@ -46,7 +46,7 @@ if (( write_seal == 1 )) && [[ -z $unrealpak ]]; then
     fail '--seal requires --unrealpak so licensed content is inspected first'
 fi
 
-for command_name in chmod file find grep mktemp mv rm sha256sum sort tr wc; do
+for command_name in chmod cut file find grep mktemp mv python3 rm sed sha256sum sort tr wc; do
     command -v "$command_name" >/dev/null 2>&1 || \
         fail "required command is missing: $command_name"
 done
@@ -63,6 +63,72 @@ game_root="$package_root/FayAvatarRuntime"
 engine_saved_root="$package_root/Engine/Saved"
 game_binary="$game_root/Binaries/LinuxArm64/FayAvatarRuntime"
 seal_file="$package_root/.ue5-spark-package.sha256"
+character_manifest="$package_root/.ue5-spark-characters.json"
+
+character_manifest_rows() {
+    if [[ ! -e $character_manifest ]]; then
+        printf 'Ada\tFayAvatarRuntime/Content/FayMetaHumans/Built/AdaFay/BP_AdaFay.uasset\n'
+        return
+    fi
+    [[ -f $character_manifest && ! -L $character_manifest ]] || \
+        fail 'the packaged character manifest must be a regular file'
+    [[ $(wc -c <"$character_manifest") -le 65536 ]] || \
+        fail 'the packaged character manifest is unexpectedly large'
+    python3 - "$character_manifest" <<'PY'
+import json
+import re
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+try:
+    payload = json.loads(path.read_text(encoding="utf-8"))
+except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+    raise SystemExit(f"invalid character manifest: {exc}")
+if set(payload) != {"schema", "profileConfigSha256", "characters"}:
+    raise SystemExit("invalid character manifest keys")
+if payload["schema"] != 1:
+    raise SystemExit("unsupported character manifest schema")
+if not re.fullmatch(r"[0-9a-f]{64}", payload["profileConfigSha256"]):
+    raise SystemExit("invalid character profile digest")
+characters = payload["characters"]
+if not isinstance(characters, list) or not 1 <= len(characters) <= 16:
+    raise SystemExit("invalid character manifest count")
+ids = set()
+assets = set()
+for character in characters:
+    if not isinstance(character, dict) or set(character) != {
+        "id", "adapter", "actorClass", "packageAsset"
+    }:
+        raise SystemExit("invalid character manifest entry")
+    character_id = character["id"]
+    package_asset = character["packageAsset"]
+    if not isinstance(character_id, str) or not re.fullmatch(
+        r"[A-Za-z][A-Za-z0-9_-]{0,31}", character_id
+    ):
+        raise SystemExit("invalid character ID")
+    if character_id in ids:
+        raise SystemExit("duplicate character ID")
+    if character["adapter"] != "UE58MetaHuman":
+        raise SystemExit("unsupported packaged character adapter")
+    if not isinstance(character["actorClass"], str) or not character[
+        "actorClass"
+    ].startswith("/Game/FayMetaHumans/Built/"):
+        raise SystemExit("unsafe packaged actor class")
+    if not isinstance(package_asset, str) or not re.fullmatch(
+        r"FayAvatarRuntime/Content/FayMetaHumans/Built/"
+        r"[A-Za-z][A-Za-z0-9_-]{0,63}/"
+        r"BP_[A-Za-z][A-Za-z0-9_-]{0,63}\.uasset",
+        package_asset,
+    ):
+        raise SystemExit("unsafe packaged character asset")
+    if package_asset in assets:
+        raise SystemExit("duplicate packaged character asset")
+    ids.add(character_id)
+    assets.add(package_asset)
+    print(f"{character_id}\t{package_asset}")
+PY
+}
 
 verify_package_node_types() {
     if find "$package_root" -type l -print -quit | grep -q .; then
@@ -150,14 +216,22 @@ verify_deep_content() {
         fi
     done
 
-    grep -Fq 'FayAvatarRuntime/Content/FayMetaHumans/Built/AdaFay/BP_AdaFay.uasset' \
-        "$temporary_listing" || fail 'the sealed package does not contain the assembled Ada Blueprint'
+    local manifest_output
+    manifest_output=$(character_manifest_rows) || \
+        fail 'the packaged character manifest failed validation'
+    local character_id package_asset
+    while IFS=$'\t' read -r character_id package_asset; do
+        [[ -n $character_id && -n $package_asset ]] || \
+            fail 'the packaged character manifest produced an empty record'
+        grep -Fq "$package_asset" "$temporary_listing" || \
+            fail "the sealed package does not contain reviewed character $character_id"
+    done <<<"$manifest_output"
     grep -Fq 'FayAvatarRuntime/Content/FayMetaHumans/Common_UE58/' \
         "$temporary_listing" || fail 'the sealed package does not contain the MetaHuman common assets'
     grep -Fq 'StreamingADA/Content/xsada_face_base_fp32_v2_0_0.uasset' \
         "$temporary_listing" || fail 'the sealed package does not contain the StreamingADA v2 model'
     grep -Fq 'Interchange/Assets/Content/Functions/MF_PhongToMetalRoughness.uasset' \
-        "$temporary_listing" || fail 'the sealed package does not contain Ada garment material dependencies'
+        "$temporary_listing" || fail 'the sealed package does not contain the reviewed garment material dependency'
     if grep -Fiq 'FayMetaHumanEditorTools' "$temporary_listing"; then
         fail 'the Editor-only FayMetaHumanEditorTools plugin leaked into packaged content'
     fi
@@ -253,7 +327,9 @@ printf 'Package verification passed.\n'
 printf '  ARM64 Game executable: verified\n'
 printf '  ARM64 ONNX Runtime: verified\n'
 printf '  Content layout: Pak-only (IoStore disabled)\n'
-printf '  Ada and StreamingADA content: deep-verified and hash-sealed\n'
-printf '  Ada garment material dependency: deep-verified\n'
+manifest_summary=$(character_manifest_rows | cut -f1 | tr '\n' ',' | sed 's/,$//')
+printf '  Character profile(s) and StreamingADA content: deep-verified and hash-sealed (%s)\n' \
+    "$manifest_summary"
+printf '  Garment material dependency: deep-verified\n'
 printf '  Editor-only helper: absent\n'
 printf '  Package files: unchanged since deep verification\n'

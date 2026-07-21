@@ -1,7 +1,7 @@
 # Verified status
 
 This page separates measured results from planned work. The latest evidence was
-recorded on DGX Spark on 2026-07-20. The cooked package and all Epic-licensed
+recorded on DGX Spark on 2026-07-21. The cooked package and all Epic-licensed
 content remain private and are not part of this repository.
 
 ## Working end to end on DGX Spark
@@ -12,6 +12,11 @@ content remain private and are not part of this repository.
   replace the NVIDIA driver.
 - Epic's included female Ada preset was assembled as an Optimized / High
   MetaHuman and cooked for LinuxArm64 on the Spark.
+- The v10 cook is driven by a reviewed `Ada` character profile rather than
+  hard-coded runtime and cook paths. The profile seals the actor class,
+  face/body component names, adapter, spawn/camera framing, cook directories,
+  and required assets. Unknown or unsafe profile IDs fail closed to the
+  diagnostic avatar.
 - Native ARM64 UnrealBuildTool, AutomationTool, the Game target, and UnrealPak
   produced a Pak-only sealed archive with an AArch64 executable and AArch64 ONNX
   Runtime.
@@ -33,6 +38,11 @@ content remain private and are not part of this repository.
 - A live Fay response downloaded and played its WAV while visibly driving Ada's
   learned facial speech motion. A captured speaking frame showed the animated
   mouth open with visible teeth, distinct from the neutral frame.
+- The Ada v10 regression performed a 7.920-second live speech turn with 406
+  solved frames, 10.00 ms average, 18.02 ms p95, and 19.27 ms maximum solve
+  time. A second recorded 5.680-second turn produced 294 frames with 18.24 ms
+  p95. The sealed package passed deep verification again after teardown, and
+  the externally managed Fay process remained alive.
 - A minimized-window 2.240-second speech test solved exactly 122 frames: 112
   speech frames at 50 Hz plus the configured 10-frame tail. Per-solve timing was
   9.28 ms average, 11.17 ms p95, and 19.10 ms maximum.
@@ -60,14 +70,21 @@ deployable application.
 
 ## Remaining work
 
+- Add the character-neutral `FayBodyMotion` provider boundary, deterministic
+  baked fallback gestures, and the normalized pose contract.
+- Prove ARDY core inference in an isolated ARM64 NVIDIA PyTorch container, then
+  connect it only through the loopback pose service after the credential-free
+  mock path passes.
 - Visually validate and tune the source-level semantic head-control mappings for
   `nod`, `shake`, `think`, and `warn`.
 - Add reviewed, MetaHuman-compatible body animations and explicit mappings for
   actions such as `wave` and `invite`. No body montages are included today.
 - Tune gaze, breathing, idle motion, emotional range, lighting, LODs, and scene
   presentation for a polished long-running character experience.
-- Turn the validated launch command into an optional user-level operational
-  wrapper only after deciding how the avatar should be started and supervised.
+- Prove the second included female Aoi profile without character-specific C++
+  changes after its licensed assets are assembled locally.
+- Add hardened startup/recovery, failure injection, a 30-minute soak test, and
+  the lightweight private progress hub after the core motion path works.
 
 ## Publication boundary
 

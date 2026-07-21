@@ -351,6 +351,7 @@ for record in git_output("ls-files", "--stage", "-z").split(b"\0"):
 
 python_sources = (
     Path("tools/fay-avatar-smoke-test.py"),
+    Path("scripts/character-profiles.py"),
     Path("scripts/cook-state.py"),
     Path("scripts/inspect-metahuman-runtime-contract.py"),
     Path("scripts/metahuman-preflight.py"),
@@ -535,13 +536,26 @@ always_cook_paths = re.findall(
     game_config,
     flags=re.MULTILINE,
 )
-expected_always_cook_paths = (
-    "/Game/FayMetaHumans/Built/AdaFay",
-    "/Game/FayMetaHumans/Common_UE58",
-    "/StreamingADA",
+if always_cook_paths:
+    reject("DefaultGame.ini must not hard-code character cook paths")
+profile_check = subprocess.run(
+    (
+        sys.executable,
+        "scripts/character-profiles.py",
+        "--config",
+        str(game_config_path),
+        "validate",
+    ),
+    check=False,
+    text=True,
+    stdout=subprocess.PIPE,
+    stderr=subprocess.PIPE,
 )
-if tuple(always_cook_paths) != expected_always_cook_paths:
-    reject("DefaultGame.ini must keep the exact reviewed MetaHuman/StreamingADA cook paths")
+if profile_check.returncode != 0:
+    reject(
+        "DefaultGame.ini character profiles failed validation: "
+        + profile_check.stderr.strip()
+    )
 if re.search(
     r"(?im)^(?:\+)?(?:DirectoriesToAlwaysStageAsNonUFS|"
     r"DirectoriesToAlwaysStageAsUFS|AdditionalAssetDirectoriesToCook|"

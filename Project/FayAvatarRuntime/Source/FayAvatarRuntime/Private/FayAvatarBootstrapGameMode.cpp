@@ -10,15 +10,44 @@
 #include "FayAvatarBridgeComponent.h"
 #include "FayMetaHumanSpeechDriverComponent.h"
 #include "GameFramework/PlayerController.h"
+#include "HAL/PlatformProcess.h"
 #include "HAL/IConsoleManager.h"
+#include "Misc/CommandLine.h"
+#include "Misc/ConfigCacheIni.h"
+#include "Misc/Parse.h"
 #include "UObject/SoftObjectPath.h"
 
 DEFINE_LOG_CATEGORY_STATIC(LogFayAvatarRuntime, Log, All);
 
 namespace
 {
-constexpr TCHAR DefaultMetaHumanClassPath[] =
-    TEXT("/Game/FayMetaHumans/Built/AdaFay/BP_AdaFay.BP_AdaFay_C");
+constexpr TCHAR AvatarSettingsSection[] = TEXT("FayAvatar");
+constexpr TCHAR DefaultCharacterId[] = TEXT("Ada");
+constexpr TCHAR RequiredAdapter[] = TEXT("UE58MetaHuman");
+
+bool IsReviewedCharacterId(const FString& Value)
+{
+    if (Value.IsEmpty() || Value.Len() > 32 || !FChar::IsAlpha(Value[0]))
+    {
+        return false;
+    }
+    for (const TCHAR Character : Value)
+    {
+        if (!FChar::IsAlnum(Character) && Character != TEXT('_') &&
+            Character != TEXT('-'))
+        {
+            return false;
+        }
+    }
+    return true;
+}
+
+bool IsReviewedActorClassPath(const FString& Value)
+{
+    return Value.StartsWith(TEXT("/Game/FayMetaHumans/Built/")) &&
+        Value.EndsWith(TEXT("_C")) && !Value.Contains(TEXT("..")) &&
+        !Value.Contains(TEXT("\\"));
+}
 }
 
 AFayAvatarBootstrapGameMode::AFayAvatarBootstrapGameMode()
@@ -71,7 +100,6 @@ AFayAvatarBootstrapGameMode::AFayAvatarBootstrapGameMode()
     RimLight->SetLightColor(FLinearColor(1.0f, 0.52f, 0.34f));
     RimLight->AttenuationRadius = 500.0f;
 
-    MetaHumanClass = TSoftClassPtr<AActor>(FSoftObjectPath(DefaultMetaHumanClassPath));
 }
 
 void AFayAvatarBootstrapGameMode::BeginPlay()
@@ -93,6 +121,7 @@ void AFayAvatarBootstrapGameMode::BeginPlay()
     {
         SpeechDriver->AttachBridge(Bridge);
     }
+    bCharacterProfileValid = LoadCharacterProfile();
     TrySpawnMetaHuman();
 }
 
@@ -121,14 +150,16 @@ void AFayAvatarBootstrapGameMode::Tick(const float DeltaSeconds)
             bLiveLinkConfigured = true;
             bLiveLinkConfigurationRequested = false;
             UE_LOG(LogFayAvatarRuntime, Display,
-                TEXT("Ada MetaHuman's exact Fay Live Link source is enabled and evaluable."));
+                TEXT("Character '%s' has an enabled and evaluable Fay Live Link source."),
+                *ActiveCharacterId);
         }
         else if (!SpeechDriver->IsAvatarConfigurationPending())
         {
             bLiveLinkConfigurationRequested = false;
             UE_LOG(LogFayAvatarRuntime, Warning,
-                TEXT("Ada MetaHuman Live Link configuration ended without a verified consumer; "
-                     "retaining the jaw fallback when available."));
+                TEXT("Character '%s' ended Live Link configuration without a verified consumer; "
+                     "retaining the jaw fallback when available."),
+                *ActiveCharacterId);
         }
     }
 
@@ -142,14 +173,119 @@ void AFayAvatarBootstrapGameMode::Tick(const float DeltaSeconds)
     }
 }
 
+bool AFayAvatarBootstrapGameMode::LoadCharacterProfile()
+{
+    if (GConfig == nullptr)
+    {
+        UE_LOG(LogFayAvatarRuntime, Error,
+            TEXT("The Unreal configuration cache is unavailable; refusing character loading."));
+        return false;
+    }
+
+    FString RequestedId;
+    if (!FParse::Value(FCommandLine::Get(), TEXT("FayCharacter="), RequestedId))
+    {
+        if (!GConfig->GetString(
+                AvatarSettingsSection,
+                TEXT("DefaultCharacter"),
+                RequestedId,
+                GGameIni))
+        {
+            RequestedId = DefaultCharacterId;
+        }
+    }
+    RequestedId.TrimStartAndEndInline();
+    if (!IsReviewedCharacterId(RequestedId))
+    {
+        UE_LOG(LogFayAvatarRuntime, Error,
+            TEXT("Requested character ID is not a reviewed identifier; using the diagnostic avatar."));
+        return false;
+    }
+
+    const FString Section = FString::Printf(TEXT("FayCharacter.%s"), *RequestedId);
+    FString ActorClassPath;
+    FString Adapter;
+    FString FaceComponent;
+    FString BodyComponent;
+    FString SpawnLocation;
+    FString SpawnRotation;
+    FString CameraLocation;
+    FString CameraRotation;
+    float CameraFieldOfView = 0.0f;
+    const bool bComplete =
+        GConfig->GetString(*Section, TEXT("ActorClass"), ActorClassPath, GGameIni) &&
+        GConfig->GetString(*Section, TEXT("Adapter"), Adapter, GGameIni) &&
+        GConfig->GetString(*Section, TEXT("FaceComponent"), FaceComponent, GGameIni) &&
+        GConfig->GetString(*Section, TEXT("BodyComponent"), BodyComponent, GGameIni) &&
+        GConfig->GetString(*Section, TEXT("SpawnLocation"), SpawnLocation, GGameIni) &&
+        GConfig->GetString(*Section, TEXT("SpawnRotation"), SpawnRotation, GGameIni) &&
+        GConfig->GetString(*Section, TEXT("CameraRelativeLocation"), CameraLocation, GGameIni) &&
+        GConfig->GetString(*Section, TEXT("CameraRelativeRotation"), CameraRotation, GGameIni) &&
+        GConfig->GetFloat(*Section, TEXT("CameraFieldOfView"), CameraFieldOfView, GGameIni);
+    if (!bComplete)
+    {
+        UE_LOG(LogFayAvatarRuntime, Error,
+            TEXT("Character profile '%s' is missing required fields; using the diagnostic avatar."),
+            *RequestedId);
+        return false;
+    }
+    if (Adapter != RequiredAdapter || FaceComponent != TEXT("Face") ||
+        BodyComponent != TEXT("Body") || !IsReviewedActorClassPath(ActorClassPath))
+    {
+        UE_LOG(LogFayAvatarRuntime, Error,
+            TEXT("Character profile '%s' is outside the reviewed UE 5.8 MetaHuman contract."),
+            *RequestedId);
+        return false;
+    }
+
+    FVector ParsedSpawnLocation;
+    FRotator ParsedSpawnRotation;
+    FVector ParsedCameraLocation;
+    FRotator ParsedCameraRotation;
+    if (!ParsedSpawnLocation.InitFromString(SpawnLocation) ||
+        !ParsedSpawnRotation.InitFromString(SpawnRotation) ||
+        !ParsedCameraLocation.InitFromString(CameraLocation) ||
+        !ParsedCameraRotation.InitFromString(CameraRotation) ||
+        CameraFieldOfView < 20.0f || CameraFieldOfView > 90.0f)
+    {
+        UE_LOG(LogFayAvatarRuntime, Error,
+            TEXT("Character profile '%s' contains invalid transforms or camera settings."),
+            *RequestedId);
+        return false;
+    }
+
+    ActiveCharacterId = RequestedId;
+    CharacterAdapter = Adapter;
+    FaceComponentName = FName(*FaceComponent);
+    BodyComponentName = FName(*BodyComponent);
+    CharacterSpawnLocation = ParsedSpawnLocation;
+    CharacterSpawnRotation = ParsedSpawnRotation;
+    MetaHumanClass = TSoftClassPtr<AActor>(FSoftObjectPath(ActorClassPath));
+    Camera->SetRelativeLocation(ParsedCameraLocation);
+    Camera->SetRelativeRotation(ParsedCameraRotation);
+    Camera->FieldOfView = CameraFieldOfView;
+    UE_LOG(LogFayAvatarRuntime, Display,
+        TEXT("Selected reviewed character profile '%s' (adapter=%s)."),
+        *ActiveCharacterId,
+        *CharacterAdapter);
+    return true;
+}
+
 void AFayAvatarBootstrapGameMode::TrySpawnMetaHuman()
 {
     UWorld* World = GetWorld();
+    if (!bCharacterProfileValid)
+    {
+        UE_LOG(LogFayAvatarRuntime, Display,
+            TEXT("No valid character profile is active; retaining the diagnostic avatar."));
+        return;
+    }
     UClass* LoadedClass = MetaHumanClass.LoadSynchronous();
     if (World == nullptr || LoadedClass == nullptr || !LoadedClass->IsChildOf(AActor::StaticClass()))
     {
         UE_LOG(LogFayAvatarRuntime, Display,
-            TEXT("The assembled Ada MetaHuman is unavailable; retaining the diagnostic avatar."));
+            TEXT("The assembled character '%s' is unavailable; retaining the diagnostic avatar."),
+            *ActiveCharacterId);
         return;
     }
 
@@ -158,13 +294,14 @@ void AFayAvatarBootstrapGameMode::TrySpawnMetaHuman()
         ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
     MetaHumanActor = World->SpawnActor<AActor>(
         LoadedClass,
-        FVector::ZeroVector,
-        FRotator(0.0f, 180.0f, 0.0f),
+        CharacterSpawnLocation,
+        CharacterSpawnRotation,
         SpawnParameters);
     if (!IsValid(MetaHumanActor))
     {
         UE_LOG(LogFayAvatarRuntime, Warning,
-            TEXT("The assembled Ada class loaded but could not be spawned."));
+            TEXT("The assembled character '%s' loaded but could not be spawned."),
+            *ActiveCharacterId);
         return;
     }
 
@@ -179,7 +316,8 @@ void AFayAvatarBootstrapGameMode::TrySpawnMetaHuman()
             !bLiveLinkConfigured && SpeechDriver->IsAvatarConfigurationPending();
     }
     UE_LOG(LogFayAvatarRuntime, Display,
-        TEXT("Spawned Ada MetaHuman (speech_live_link=%s)."),
+        TEXT("Spawned character '%s' (speech_live_link=%s)."),
+        *ActiveCharacterId,
         bLiveLinkConfigured
             ? TEXT("configured")
             : (bLiveLinkConfigurationRequested ? TEXT("pending exact-source verification")
@@ -198,7 +336,7 @@ void AFayAvatarBootstrapGameMode::ResolveFaceAndJawMorph()
     {
         FString StableName = Mesh != nullptr ? Mesh->GetName() : FString();
         StableName.RemoveFromEnd(TEXT("_GEN_VARIABLE"));
-        if (StableName == TEXT("Face"))
+        if (StableName == FaceComponentName.ToString())
         {
             FaceMesh = Mesh;
             break;
@@ -207,7 +345,9 @@ void AFayAvatarBootstrapGameMode::ResolveFaceAndJawMorph()
     if (FaceMesh == nullptr || FaceMesh->GetSkeletalMeshAsset() == nullptr)
     {
         UE_LOG(LogFayAvatarRuntime, Warning,
-            TEXT("The assembled Ada actor did not expose its expected Face skeletal mesh."));
+            TEXT("Character '%s' did not expose its expected '%s' skeletal mesh."),
+            *ActiveCharacterId,
+            *FaceComponentName.ToString());
         return;
     }
 
