@@ -60,13 +60,15 @@ minimized-window 50 Hz solving, and cold relaunch checks pass.
 | Native ARM build/package tools | LinuxArm64 Game compilation, staging, Pak-only packaging, deep content verification, and immutable-file sealing |
 
 Fay semantic actions already cross the bridge. Conservative raw-control head
-mappings for `nod`, `shake`, `think`, and `warn` exist but are not yet visually
-verified. The body-motion plugin supplies a character-neutral procedural
-fallback for `wave`, `invite`, `think`, `warn`, and `explain` when no compatible
-private montage is configured. It applies only reviewed arm/wrist bones after
-ordinary body evaluation, leaving face, neck, and head ownership unchanged.
-Rendered tuning remains required before calling those source-level fallbacks a
-polished performance.
+mappings for `nod`, `shake`, `think`, and `warn` are live-MCP verified but not
+yet visually tuned. The body-motion plugin supplies a character-neutral
+procedural fallback for `wave`, `invite`, `think`, `warn`, and `explain` when a
+compatible private montage or generated provider is unavailable. With ARDY
+ready, conversational `explain` takes the generated route; timing-critical
+actions remain deterministic. Procedural motion applies only reviewed arm and
+wrist bones after ordinary body evaluation, leaving face, neck, and head
+ownership unchanged. Rendered tuning remains required before calling these
+paths a polished performance.
 
 ## Why MCP does not belong inside the avatar plugin
 

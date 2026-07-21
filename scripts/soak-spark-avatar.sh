@@ -265,17 +265,28 @@ fi
 
 procedural_action_failures=0
 if [[ $require_procedural_actions == 1 ]]; then
-    procedural_behaviors=(wave invite think warn explain)
-    procedural_required_count=$turn_count
-    (( procedural_required_count > ${#procedural_behaviors[@]} )) && \
-        procedural_required_count=${#procedural_behaviors[@]}
-    for behavior in "${procedural_behaviors[@]:0:procedural_required_count}"; do
+    deterministic_behaviors=(wave invite think warn)
+    deterministic_required_count=$turn_count
+    (( deterministic_required_count > ${#deterministic_behaviors[@]} )) && \
+        deterministic_required_count=${#deterministic_behaviors[@]}
+    for behavior in "${deterministic_behaviors[@]:0:deterministic_required_count}"; do
         marker="Using character-neutral procedural fallback for '$behavior'."
-        behavior_count=$(grep -Fc "$marker" "$runtime_new_log" || true)
+        behavior_count=$(grep -Fci "$marker" "$runtime_new_log" || true)
         if (( behavior_count < 1 )); then
             ((++procedural_action_failures))
         fi
     done
+    if (( turn_count >= 5 )); then
+        explain_fallback_count=$(grep -Fci \
+            "Using character-neutral procedural fallback for 'explain'." \
+            "$runtime_new_log" || true)
+        explain_ardy_count=$(grep -Fci \
+            "Using ARDY generated motion provider for 'explain'." \
+            "$runtime_new_log" || true)
+        if (( explain_fallback_count + explain_ardy_count < 1 )); then
+            ((++procedural_action_failures))
+        fi
+    fi
     if (( procedural_action_failures > 0 )); then
         status=failed
     fi

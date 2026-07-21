@@ -164,6 +164,21 @@ content remain private and are not part of this repository.
   facial-summary equality, five-second RSS/GPU/unified-memory sampling, new
   runtime and kernel failure scanning, mixed deterministic actions, owned TERM
   teardown, Fay survival, and package-seal verification.
+- The sealed dual-character v21 package adds action-only head control without
+  giving body motion ownership of face, neck, or head. Live MCP calls exercised
+  `wave`, `invite`, `think`, `warn`, `explain`, `nod`, and `shake`; Unreal used
+  deterministic procedural fallbacks for the timing-critical actions, selected
+  the available ARDY provider for `explain`, and Fay rejected non-allowlisted
+  `dance`. A speech-overlap check started `nod` while StreamingADA was active;
+  the face solve completed its exact 530 frames over 10.400 seconds at 6.26 ms
+  p95 with no project error marker.
+- The same v21 executable selected Aoi solely through `-FayCharacter=Aoi`,
+  initialized the shared bridge/StreamingADA/retarget paths, and passed the
+  complete MCP action matrix without character-specific C++ changes. Exact
+  Unreal teardown left Fay owning ports 5000, 5010, 8766, and 10002, and the
+  immutable package seal passed again afterward. This remains headless control
+  and portability evidence; final visual quality still belongs to the rendered
+  gate.
 
 ## Important boundary
 
@@ -202,7 +217,7 @@ deployable application.
 - Assemble and validate a second reviewed female preset. Aoi already proves the
   no-character-specific-C++ portability requirement but is male in UE 5.8.
 - When at least 48 GiB of unified memory is available, complete the new
-  four-minute/four-turn rendered v19 qualification and only then the 30-minute
+  four-minute/four-turn rendered v21 qualification and only then the 30-minute
   face-plus-body endurance gate. The earlier malformed-envelope,
   stale-sequence, and service-recovery injections pass; normal rendered audio
   cleanup, sustained Vulkan frame rate, foot sliding, and head-conflict review

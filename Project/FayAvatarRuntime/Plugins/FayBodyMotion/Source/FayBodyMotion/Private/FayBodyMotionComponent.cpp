@@ -705,6 +705,12 @@ bool UFayBodyMotionComponent::Dispatch(const FFayBodyMotionRequest& Request)
     }
     if (Preferred->Perform(Request))
     {
+        if (Preferred == ArdyProvider.Get())
+        {
+            UE_LOG(LogFayBodyMotion, Display,
+                TEXT("Using ARDY generated motion provider for '%s'."),
+                *Request.Behavior.ToString());
+        }
         SetState(
             Request.Behavior == TEXT("idle")
                 ? EFayBodyMotionState::Idle

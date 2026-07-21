@@ -26,8 +26,11 @@ or below 20 ms. A rendered gate also requires one normal Unreal audio
 completion, allocator release, and delayed speech-object collection per turn.
 Audio watchdog fallbacks and bridge warnings fail the gate instead of being
 mistaken for successful playback. Mixed prompts exercise wave, invite, think,
-warn, explain, and the bounded head path; the available procedural body actions
-must appear in the new runtime log.
+warn, explain, and the bounded head path. Deterministic procedural body actions
+must appear in the new runtime log. `explain` may instead report the ARDY
+generated provider; either that generated-provider marker or its procedural
+fallback marker is accepted so the gate follows the provider Unreal actually
+selected.
 
 All new runtime-log lines and kernel-journal lines are preserved privately.
 Fatal/assertion/OOM/Vulkan failures, project error markers, queue overflow, new

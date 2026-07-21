@@ -218,9 +218,12 @@ Link Basic subject named `FayAudio`. The native package has visibly driven Ada's
 face while Fay speech played, including the complete expected 50 Hz solve frame
 count while the window was minimized. Semantic action events reach Unreal;
 wave and invite have rendered through the character-neutral procedural body
-fallback, and source-level think, warn, explain, nod, and shake routes are in
-place. The latter routes still need the same visual tuning and long rendered
-validation as wave and invite. Optional compatible montages retain precedence.
+fallback. Live MCP control now also verifies think, warn, nod, and shake through
+the deterministic paths and routes conversational `explain` through ARDY when
+that provider is ready. Nod and shake remain bounded face-driver head curves,
+so body motion cannot fight StreamingADA. These newer routes still need the
+same visual tuning and long rendered validation as wave and invite. Optional
+compatible montages retain precedence.
 
 The `FayBodyMotion` plugin routes the same semantic intent through a strict
 allowlist and interchangeable baked/ARDY providers. Its ARDY client validates
