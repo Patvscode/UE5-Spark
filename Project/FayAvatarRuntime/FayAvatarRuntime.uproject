@@ -21,7 +21,22 @@
       "Enabled": true
     },
     {
+      "Name": "AnimationData",
+      "Enabled": true,
+      "TargetAllowList": [
+        "Editor"
+      ]
+    },
+    {
+      "Name": "ControlRigSpline",
+      "Enabled": true
+    },
+    {
       "Name": "MetaHumanCharacter",
+      "Enabled": true
+    },
+    {
+      "Name": "InterchangeAssets",
       "Enabled": true
     },
     {

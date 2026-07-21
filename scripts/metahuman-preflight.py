@@ -5,6 +5,13 @@ import unreal
 
 CONTENT_ROOT = "/Game/FayMetaHumans"
 PRESET_ASSET = "/MetaHumanCharacter/Optional/Presets/Ada.Ada"
+AR_KIT_MAPPING_ASSET = (
+    "/MetaHumanCharacter/Face/ARKit/"
+    "AS_MetaHuman_ARKit_Mapping.AS_MetaHuman_ARKit_Mapping"
+)
+COMMON_CONTROL_RIG_ASSET = (
+    "/MetaHumanCharacter/Common/MetaHuman_ControlRig.MetaHuman_ControlRig"
+)
 
 PYTHON_MARKER = "MH_PREFLIGHT_PYTHON"
 HELPER_MARKER = "MH_PREFLIGHT_HELPER"
@@ -12,6 +19,10 @@ SUBSYSTEM_MARKER = "MH_PREFLIGHT_SUBSYSTEM"
 ADA_PRESET_MARKER = "MH_PREFLIGHT_ADA_PRESET"
 ADA_TYPE_MARKER = "MH_PREFLIGHT_ADA_TYPE"
 ENUMS_MARKER = "MH_PREFLIGHT_ENUMS"
+ANIMATION_DATA_MARKER = "MH_PREFLIGHT_ANIMATION_DATA"
+CONTROL_RIG_SPLINE_MARKER = "MH_PREFLIGHT_CONTROL_RIG_SPLINE"
+AR_KIT_MAPPING_MARKER = "MH_PREFLIGHT_AR_KIT_MAPPING"
+COMMON_CONTROL_RIG_MARKER = "MH_PREFLIGHT_COMMON_CONTROL_RIG"
 DESTINATION_MARKER = "MH_PREFLIGHT_DESTINATION_EMPTY"
 DIRTY_MARKER = "MH_PREFLIGHT_DIRTY_PACKAGES_UNCHANGED"
 COMPLETE_MARKER = "MH_PREFLIGHT_COMPLETE"
@@ -93,6 +104,22 @@ report(
     and quality_type is not None
     and getattr(quality_type, "HIGH", None) is not None,
 )
+
+report(
+    ANIMATION_DATA_MARKER,
+    getattr(unreal, "AnimationSequencerDataModel", None) is not None
+    or getattr(unreal, "AnimSequencerController", None) is not None,
+)
+report(
+    CONTROL_RIG_SPLINE_MARKER,
+    getattr(unreal, "ControlRigSpline", None) is not None,
+)
+
+ar_kit_mapping = safe_call(lambda: unreal.load_asset(AR_KIT_MAPPING_ASSET))
+report(AR_KIT_MAPPING_MARKER, ar_kit_mapping is not None)
+
+common_control_rig = safe_call(lambda: unreal.load_asset(COMMON_CONTROL_RIG_ASSET))
+report(COMMON_CONTROL_RIG_MARKER, common_control_rig is not None)
 
 destination_assets = safe_call(
     lambda: unreal.EditorAssetLibrary.list_assets(

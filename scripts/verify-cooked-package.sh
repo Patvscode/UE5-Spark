@@ -60,6 +60,7 @@ fi
 launcher=${launchers[0]}
 package_root=$(cd "$(dirname "$launcher")" && pwd -P)
 game_root="$package_root/FayAvatarRuntime"
+engine_saved_root="$package_root/Engine/Saved"
 game_binary="$game_root/Binaries/LinuxArm64/FayAvatarRuntime"
 seal_file="$package_root/.ue5-spark-package.sha256"
 
@@ -155,6 +156,8 @@ verify_deep_content() {
         "$temporary_listing" || fail 'the sealed package does not contain the MetaHuman common assets'
     grep -Fq 'StreamingADA/Content/xsada_face_base_fp32_v2_0_0.uasset' \
         "$temporary_listing" || fail 'the sealed package does not contain the StreamingADA v2 model'
+    grep -Fq 'Interchange/Assets/Content/Functions/MF_PhongToMetalRoughness.uasset' \
+        "$temporary_listing" || fail 'the sealed package does not contain Ada garment material dependencies'
     if grep -Fiq 'FayMetaHumanEditorTools' "$temporary_listing"; then
         fail 'the Editor-only FayMetaHumanEditorTools plugin leaked into packaged content'
     fi
@@ -200,6 +203,7 @@ verify_seal() {
     current_count=$(find "$package_root" -type f \
         ! -path "$seal_file" \
         ! -path "$game_root/Saved/*" \
+        ! -path "$engine_saved_root/*" \
         -print | wc -l | tr -d ' ')
     [[ $current_count =~ ^[0-9]+$ && $current_count -eq $entry_count ]] || \
         fail 'the package file set changed after deep verification'
@@ -222,6 +226,7 @@ write_package_seal() {
             find "$package_root" -type f \
                 ! -path "$seal_file" \
                 ! -path "$game_root/Saved/*" \
+                ! -path "$engine_saved_root/*" \
                 ! -name '.ue5-spark-package.sha256.tmp.*' \
                 -print0 | sort -z
         )
@@ -249,5 +254,6 @@ printf '  ARM64 Game executable: verified\n'
 printf '  ARM64 ONNX Runtime: verified\n'
 printf '  Content layout: Pak-only (IoStore disabled)\n'
 printf '  Ada and StreamingADA content: deep-verified and hash-sealed\n'
+printf '  Ada garment material dependency: deep-verified\n'
 printf '  Editor-only helper: absent\n'
 printf '  Package files: unchanged since deep verification\n'

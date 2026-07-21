@@ -20,6 +20,7 @@ public class FayMetaHumanRuntime : ModuleRules
             {
                 "AudioPlatformConfiguration",
                 "LiveLink",
+                "LiveLinkAnimationCore",
                 "LiveLinkInterface",
                 "MetaHumanCoreTech",
                 "NNE",

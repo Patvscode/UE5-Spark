@@ -37,9 +37,12 @@ project="$project_dir/$(basename "$project_input")"
 
 script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)
 runner="$script_dir/run-fex-rootless.sh"
-run_uat="$engine_root/Engine/Build/BatchFiles/RunUAT.sh"
 build_version="$engine_root/Engine/Build/Build.version"
-editor="$engine_root/Engine/Binaries/Linux/UnrealEditor"
+editor="$engine_root/Engine/Binaries/Linux/UnrealEditor-Cmd"
+if [[ ! -x $editor ]]; then
+    editor="$engine_root/Engine/Binaries/Linux/UnrealEditor"
+fi
+shader_worker="$engine_root/Engine/Binaries/Linux/ShaderCompileWorker"
 toolchain="$workspace/toolchains/v26_clang-20.1.8-rockylinux8"
 arm64_clang="$toolchain/aarch64-unknown-linux-gnueabi/bin/clang++"
 cook_root="$project_dir/Saved/Cooked/LinuxArm64"
@@ -59,11 +62,14 @@ case "$project/" in
 esac
 
 [[ -x $runner ]] || fail "the rootless FEX runner is missing: $runner"
-[[ -x $run_uat ]] || fail "RunUAT.sh is missing or not executable: $run_uat"
 [[ -x $editor ]] || fail "the x86-64 Editor is missing or not executable: $editor"
+[[ -x $shader_worker ]] || \
+    fail "the x86-64 ShaderCompileWorker is missing or not executable: $shader_worker"
 [[ -x $arm64_clang ]] || \
     fail 'the pinned v26 toolchain is missing; run setup-unreal-toolchain-rootless.sh first'
 file "$editor" | grep -q 'x86-64' || fail 'the cooking Editor is not an x86-64 ELF'
+file "$shader_worker" | grep -q 'x86-64' || \
+    fail 'the cooking ShaderCompileWorker is not an x86-64 ELF'
 file "$arm64_clang" | grep -q 'x86-64' || fail 'the v26 compiler is not an x86-64 ELF'
 if [[ ! -f $build_version ]] || \
    ! grep -Eq '"MajorVersion"[[:space:]]*:[[:space:]]*5' "$build_version" || \
@@ -71,11 +77,11 @@ if [[ ! -f $build_version ]] || \
     fail 'the isolated Engine is not Unreal Engine 5.8'
 fi
 
-arm64_module_count=$(find "$engine_root/Engine/Binaries/Linux" -maxdepth 1 -type f \
-    -iname '*LinuxArm64*TargetPlatform*.so' | wc -l | tr -d ' ')
-if (( arm64_module_count == 0 )); then
+arm64_target_platform_module="$engine_root/Engine/Binaries/Linux/LinuxArm64/libUnrealEditor-LinuxArm64TargetPlatform.so"
+[[ -f $arm64_target_platform_module ]] || \
     fail 'this Editor has no compiled LinuxArm64 target-platform module'
-fi
+file "$arm64_target_platform_module" | grep -q 'x86-64' || \
+    fail 'the LinuxArm64 target-platform module is not an x86-64 Editor module'
 
 ada_source="$project_dir/Content/FayMetaHumans/Built/AdaFay/BP_AdaFay.uasset"
 streaming_model="$engine_root/Engine/Plugins/Animation/AudioDrivenAnimation/StreamingADA/Content/xsada_face_base_fp32_v2_0_0.uasset"
@@ -121,33 +127,38 @@ fi
 
 export LINUX_MULTIARCH_ROOT="$toolchain"
 export FEX_SILENTLOG=1
-uat_command=(
-    "$runner" "$workspace" -- /bin/bash "$run_uat" BuildCookRun
-    -project="$project"
-    -target=FayAvatarRuntime
-    -platform=LinuxArm64
-    -clientconfig=Development
-    -skipbuild
-    -cook
-    -nocompileeditor
+cook_command=(
+    "$runner" "$workspace" -- "$editor" "$project"
+    -run=Cook
+    -targetplatform=LinuxArm64
+    -CookCultures=en
     -unattended
     -nop4
-    -utf8output
-    '-AdditionalCookerOptions=-SkipZenStore -DDC=(Local) -nullrhi -nosound -corelimit=4'
+    -nullrhi
+    -nosplash
+    -nosound
+    -SkipZenStore
+    '-DDC=(Local)'
+    -NoCompile
+    -NoCompileEditor
+    -stdout
+    -FullStdOutLogOutput
+    -corelimit=4
 )
 
 printf 'Creating a fresh LinuxArm64 cook through the x86-64 Editor/FEX path.\n'
+printf 'The cook commandlet runs directly, without compiling .NET or AutomationTool under FEX.\n'
 printf 'This step will not build, stage, package, or archive a Game executable.\n'
 if [[ $cook_timeout == none ]]; then
     set +e
-    "${priority_prefix[@]}" "${uat_command[@]}" 2>&1 | tee "$log"
+    "${priority_prefix[@]}" "${cook_command[@]}" 2>&1 | tee "$log"
     cook_status=${PIPESTATUS[0]}
     set -e
 else
     printf 'Safety limit: %s\n' "$cook_timeout"
     set +e
     timeout --signal=TERM --kill-after=60s "$cook_timeout" \
-        "${priority_prefix[@]}" "${uat_command[@]}" 2>&1 | tee "$log"
+        "${priority_prefix[@]}" "${cook_command[@]}" 2>&1 | tee "$log"
     cook_status=${PIPESTATUS[0]}
     set -e
 fi

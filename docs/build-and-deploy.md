@@ -38,9 +38,10 @@ Open `Project/FayAvatarRuntime/FayAvatarRuntime.uproject` with the matching
 Editor. Create a small project-owned map, make it the Game Default Map, and
 confirm the `FayAvatarBridge` plugin is enabled.
 
-For the first package, keep the scene intentionally small. The diagnostic cook,
-native Vulkan/audio runtime, and live Fay WebSocket/WAV loop have already been
-verified; MetaHuman assembly is the next independent gate.
+For the first package, keep the scene intentionally small. The current reference
+package has verified native Vulkan/audio, live Fay WebSocket/WAV playback, the
+Ada assembly, and the learned facial path; adding a larger scene should remain a
+separate performance change.
 
 ## 3. Preflight MetaHuman support
 
@@ -100,18 +101,22 @@ following:
   `ELF 64-bit` `ARM aarch64` executable; and
 - the assembled Ada Blueprint and MetaHuman common content in the Pak;
 - the StreamingADA v2 model in the Pak;
+- Ada's Interchange garment material dependency in the Pak;
 - at least one packaged ONNX Runtime shared library to be an ARM64 ELF;
 - no `FayMetaHumanEditorTools` Editor module or content; and
-- every packaged regular file to still match the deep-verification seal.
+- every immutable packaged regular file to still match the deep-verification
+  seal. Runtime-created files below the packaged Game and Engine `Saved` trees
+  are outside the seal.
 
 Do not continue if either check fails.
 
 `DefaultGame.ini` keeps the generated Ada assembly/common paths and
-`/StreamingADA` in the cook. The runtime adapter is designed to convert Fay PCM
-to 16 kHz mono, run the model through `NNERuntimeORTCpu`, convert its output to
-251 raw MetaHuman controls, and publish `FayAudio` through Live Link. The adapter
-has compiled for the x86-64 Editor and native LinuxArm64 Game targets, but has
-not yet passed the MetaHuman-aware cook/package, model runtime, or visual gates.
+`/StreamingADA` in the cook. The runtime adapter converts Fay PCM to 16 kHz
+mono, runs the model through `NNERuntimeORTCpu`, converts its output to 251 raw
+MetaHuman controls, and publishes `FayAudio` through Live Link. The reference
+package has passed the MetaHuman-aware cook, model initialization, exact Live
+Link consumer, visible speech motion, and complete 50 Hz frame-count gates on
+the Spark.
 
 For the all-on-Spark path, do not use the conventional wrapper above. Follow
 the two explicit steps in the [Spark FEX cooker guide](spark-fex-cooker.md):
@@ -172,7 +177,7 @@ UE5_SPARK_REQUIRE_MCP=0 ./scripts/run-spark-digital-human.sh \
   ~/Applications/UE5-Spark/FayAvatarRuntime-Arm64.sh
 ```
 
-First prove:
+On a new package or machine, reconfirm:
 
 1. A window or fullscreen frame appears through NVIDIA Vulkan.
 2. The project-owned map is loaded.

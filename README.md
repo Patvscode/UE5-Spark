@@ -5,14 +5,13 @@ Unreal Engine 5.8 digital-human application natively on NVIDIA DGX Spark. It
 contains a minimal Unreal project, a Fay speech/event bridge, and source for a
 local MetaHuman facial-animation adapter.
 
-> **Engineering-preview status:** the Spark-local Editor/cooker, an earlier
-> diagnostic Linux ARM64 package, native NVIDIA Vulkan runtime, audio, and live
-> Fay message/audio loop have been verified on DGX Spark. The direct facial
-> adapter now compiles for both the x86-64 UE 5.8 Editor target and native
-> LinuxArm64 Game target, and the read-only Ada/MetaHuman preflight passes. Ada
-> assembly, the fresh MetaHuman-aware cook/package, packaged facial runtime, and
-> visual verification remain open gates. Body-animation playback is not
-> implemented.
+> **Engineering-preview status:** a free female Ada MetaHuman now assembles,
+> cooks, renders, speaks, and animates through the local StreamingADA model in a
+> native Linux ARM64 package on DGX Spark. The same Spark runs the x86-64 UE 5.8
+> Editor/cooker through rootless FEX. Fay audio/WebSocket integration, MCP
+> readiness, learned facial motion, background-window operation, package
+> integrity, and repeated cold launch/teardown have been verified. Authored body
+> animations such as wave and invite are still future work.
 
 This repository does **not** redistribute Unreal Engine, MetaHuman assets,
 Marketplace plugins, cooked packages, or private Epic source patches.
@@ -47,9 +46,10 @@ required for this project.
 | Linux ARM64 cook/package completes entirely on Spark | Verified |
 | Cooked project scene, display, and audio run on Spark | Verified |
 | Live Fay WebSocket, WAV download, and playback | Verified |
-| Direct local StreamingADA facial adapter | x86 Editor and ARM64 Game compilation verified; cook/runtime/visual pending |
-| Free optimized MetaHuman renders on Spark | Not yet tested |
-| MetaHuman learned lip sync and expression | Not yet tested |
+| Fay HTTP/avatar and MCP administration/SSE readiness | Verified through guarded private-listener discovery |
+| Direct local StreamingADA facial adapter | Verified in the native package: 81 solver curves, 251 raw controls, `FayAudio` Live Link subject |
+| Free optimized Ada MetaHuman renders on Spark | Verified with skin, hair, clothing, and portrait lighting |
+| MetaHuman learned speech motion | Verified visibly and at the complete 50 Hz solve cadence |
 | Fay-driven body gestures | Not implemented |
 | Native ARM64 Unreal Editor/cooker | Not required; x86 Editor uses FEX |
 
@@ -122,8 +122,9 @@ docs/                                     Architecture and deployment guides
    then run `package-linux-arm64-hybrid.sh` with a new empty archive path. The
    FEX step never creates the final package; native ARM64 tools do that.
 5. Verify the archive. Packaging deep-inspects Ada, MetaHuman common content,
-   the StreamingADA model, ARM64 ONNX Runtime, and Editor-helper exclusion before
-   writing a relative-path/hash seal. The normal verifier rechecks that seal:
+   the StreamingADA model, Ada's Interchange garment material dependency, ARM64
+   ONNX Runtime, and Editor-helper exclusion before writing a
+   relative-path/hash seal. The normal verifier rechecks that seal:
 
    ```bash
    ./scripts/verify-cooked-package.sh /path/to/archive
@@ -172,13 +173,15 @@ exposes Blueprint events for connection health, message text, sentiment,
 semantic actions, speech start/finish, optional visemes, and RMS mouth
 amplitude. See [the Fay protocol](docs/fay-protocol.md).
 
-The new runtime adapter takes the bridge's decoded PCM, converts it to 16 kHz
-mono audio, runs Epic's local StreamingADA model through `NNERuntimeORTCpu`,
-converts the result into 251 MetaHuman raw controls, and publishes them on a
-local Live Link Basic subject named `FayAudio`. Its x86 Editor and ARM64 Game
-targets compile, but it is not yet a verified talking-MetaHuman result. Semantic
-body-action events reach Unreal; source-level head orientation exists for a
-small action set, while body-animation mappings and montages are not implemented.
+The runtime adapter takes the bridge's decoded PCM, converts it to 16 kHz mono
+audio, runs Epic's local StreamingADA model through `NNERuntimeORTCpu`, converts
+the result into 251 MetaHuman raw controls, and publishes them on a local Live
+Link Basic subject named `FayAudio`. The native package has visibly driven Ada's
+face while Fay speech played, including the complete expected 50 Hz solve frame
+count while the window was minimized. Semantic action events reach Unreal and
+the source contains conservative head-control mappings for a small action set,
+but those head gestures have not been visually verified. Authored body mappings
+and montages for actions such as wave and invite are not implemented.
 
 The [MCP integration boundary](docs/mcp-integration.md) explains how Fay owns
 tools and credentials while Unreal receives presentation-only events.

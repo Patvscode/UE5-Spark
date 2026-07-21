@@ -71,6 +71,11 @@ their addresses into configuration; exports the `FAY_*` endpoints needed by
 Unreal; and delegates to `run-cooked-package.sh`. It does not start, stop, or
 reconfigure Fay/MCP and does not change service or system configuration.
 
+This wrapper has been validated against the existing live Fay HTTP/audio,
+avatar WebSocket, MCP administration, and MCP SSE listeners on the Spark. The
+private listener addresses stayed in process environment only and are not
+recorded in this repository or its public validation output.
+
 MCP readiness is required by default. For an intentionally MCP-free run, skip
 only the MCP probes:
 

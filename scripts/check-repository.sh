@@ -352,6 +352,7 @@ for record in git_output("ls-files", "--stage", "-z").split(b"\0"):
 python_sources = (
     Path("tools/fay-avatar-smoke-test.py"),
     Path("scripts/cook-state.py"),
+    Path("scripts/inspect-metahuman-runtime-contract.py"),
     Path("scripts/metahuman-preflight.py"),
     Path(
         "Project/FayAvatarRuntime/Plugins/FayMetaHumanEditorTools/"
@@ -385,24 +386,40 @@ if project.get("DisableEnginePluginsByDefault") is not True:
 
 plugins = {entry["Name"]: entry for entry in project.get("Plugins", [])}
 expected_project_plugins = {
+    "AnimationData",
+    "ControlRigSpline",
     "FayAvatarBridge",
     "FayMetaHumanEditorTools",
     "FayMetaHumanRuntime",
+    "InterchangeAssets",
     "MetaHumanCharacter",
 }
 if len(project.get("Plugins", [])) != len(plugins) or set(plugins) != expected_project_plugins:
     reject(
         "FayAvatarRuntime.uproject plugin list must contain only the reviewed bridge, "
-        "runtime, Editor helper, and MetaHumanCharacter entries"
+        "runtime, Editor helper, AnimationData, ControlRigSpline, InterchangeAssets, "
+        "and MetaHumanCharacter entries"
     )
 
-for plugin_name in ("FayAvatarBridge", "FayMetaHumanRuntime", "MetaHumanCharacter"):
+for plugin_name in (
+    "ControlRigSpline",
+    "FayAvatarBridge",
+    "FayMetaHumanRuntime",
+    "InterchangeAssets",
+    "MetaHumanCharacter",
+):
     plugin = plugins.get(plugin_name)
     if not plugin or not plugin.get("Enabled"):
         reject(f"{plugin_name} must be enabled for packaged Game targets")
         continue
     if "TargetAllowList" in plugin or "TargetDenyList" in plugin:
         reject(f"{plugin_name} must not be restricted away from Game targets")
+
+animation_data = plugins.get("AnimationData")
+if not animation_data or not animation_data.get("Enabled"):
+    reject("AnimationData must be enabled for Editor targets")
+elif animation_data.get("TargetAllowList") != ["Editor"]:
+    reject("AnimationData must be restricted to Editor targets")
 
 project_helper = plugins.get("FayMetaHumanEditorTools")
 if not project_helper or not project_helper.get("Enabled"):

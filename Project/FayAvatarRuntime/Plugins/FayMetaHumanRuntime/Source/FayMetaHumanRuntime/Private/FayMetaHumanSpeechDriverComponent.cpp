@@ -8,6 +8,7 @@
 #include "GuiToRawControlsUtils.h"
 #include "ILiveLinkClient.h"
 #include "ILiveLinkSource.h"
+#include "LiveLinkInstance.h"
 #include "LiveLinkTypes.h"
 #include "Modules/ModuleManager.h"
 #include "NNEModelData.h"
@@ -29,6 +30,8 @@ constexpr int32 TailSolveSteps = 10;
 constexpr int32 ExtraLiveLinkProperties = 9;
 constexpr int32 ExpectedSolverCurveCount = 81;
 constexpr int32 ExpectedRawControlCount = 251;
+constexpr float LiveLinkHeartbeatSeconds = 0.10f;
+constexpr float LiveLinkPendingGraceSeconds = 2.0f;
 constexpr float MinimumHeadGestureDegrees = 4.0f;
 constexpr float HardMaximumHeadGestureDegrees = 12.0f;
 
@@ -585,7 +588,9 @@ FString StableComponentName(const UActorComponent* Component)
     return Name;
 }
 
-USkeletalMeshComponent* FindFaceMeshComponent(AActor* InAvatar)
+USkeletalMeshComponent* FindSkeletalMeshComponent(
+    AActor* InAvatar,
+    const FStringView StableName)
 {
     if (!IsValid(InAvatar))
     {
@@ -595,7 +600,7 @@ USkeletalMeshComponent* FindFaceMeshComponent(AActor* InAvatar)
     TInlineComponentArray<USkeletalMeshComponent*> SkeletalMeshes(InAvatar);
     for (USkeletalMeshComponent* Mesh : SkeletalMeshes)
     {
-        if (StableComponentName(Mesh) == TEXT("Face"))
+        if (StableComponentName(Mesh) == StableName)
         {
             return Mesh;
         }
@@ -603,25 +608,233 @@ USkeletalMeshComponent* FindFaceMeshComponent(AActor* InAvatar)
     return nullptr;
 }
 
-bool HasVerifiedLiveLinkConsumer(AActor* InAvatar, const FName SubjectName)
+USkeletalMeshComponent* FindFaceMeshComponent(AActor* InAvatar)
 {
+    return FindSkeletalMeshComponent(InAvatar, TEXTVIEW("Face"));
+}
+
+USkeletalMeshComponent* FindBodyMeshComponent(AActor* InAvatar)
+{
+    return FindSkeletalMeshComponent(InAvatar, TEXTVIEW("Body"));
+}
+
+bool HasMetaHumanLiveLinkSetupSignature(const UFunction* SetupFunction)
+{
+    if (SetupFunction == nullptr || SetupFunction->NumParms != 4 ||
+        SetupFunction->ParmsSize == 0)
+    {
+        return false;
+    }
+
+    bool bHasSkeletalMesh = false;
+    bool bHasSubjectName = false;
+    bool bHasRetargetAsset = false;
+    bool bHasUseLiveLink = false;
+    int32 InputParameterCount = 0;
+    for (TFieldIterator<FProperty> Iterator(SetupFunction); Iterator; ++Iterator)
+    {
+        FProperty* Property = *Iterator;
+        if (!Property->HasAnyPropertyFlags(CPF_Parm))
+        {
+            continue;
+        }
+        if (Property->HasAnyPropertyFlags(CPF_ReturnParm | CPF_OutParm))
+        {
+            return false;
+        }
+        ++InputParameterCount;
+
+        const FName PropertyName = Property->GetFName();
+        if (PropertyName == TEXT("SkeletalMesh"))
+        {
+            const FObjectPropertyBase* ObjectProperty =
+                CastField<FObjectPropertyBase>(Property);
+            bHasSkeletalMesh = ObjectProperty != nullptr &&
+                ObjectProperty->PropertyClass->IsChildOf(
+                    USkeletalMeshComponent::StaticClass());
+        }
+        else if (PropertyName == TEXT("SubjectName"))
+        {
+            const FStructProperty* StructProperty = CastField<FStructProperty>(Property);
+            bHasSubjectName = StructProperty != nullptr &&
+                StructProperty->Struct == FLiveLinkSubjectName::StaticStruct();
+        }
+        else if (PropertyName == TEXT("RetargetAsset"))
+        {
+            bHasRetargetAsset = CastField<FObjectPropertyBase>(Property) != nullptr;
+        }
+        else if (PropertyName == TEXT("UseLiveLink"))
+        {
+            bHasUseLiveLink = CastField<FBoolProperty>(Property) != nullptr;
+        }
+        else
+        {
+            return false;
+        }
+    }
+
+    return InputParameterCount == 4 && bHasSkeletalMesh && bHasSubjectName &&
+        bHasRetargetAsset && bHasUseLiveLink;
+}
+
+bool InvokeMetaHumanLiveLinkSetup(
+    AActor* InAvatar,
+    UFunction* SetupFunction,
+    USkeletalMeshComponent* SkeletalMesh,
+    const FName SubjectName,
+    const bool bUseLiveLink)
+{
+    if (!IsValid(InAvatar) || !IsValid(SkeletalMesh) ||
+        !HasMetaHumanLiveLinkSetupSignature(SetupFunction))
+    {
+        return false;
+    }
+
+    TArray<uint8, TInlineAllocator<128>> Parameters;
+    Parameters.SetNumZeroed(SetupFunction->ParmsSize);
+    for (TFieldIterator<FProperty> Iterator(SetupFunction); Iterator; ++Iterator)
+    {
+        FProperty* Property = *Iterator;
+        if (!Property->HasAnyPropertyFlags(CPF_Parm))
+        {
+            continue;
+        }
+
+        const FName PropertyName = Property->GetFName();
+        if (PropertyName == TEXT("SkeletalMesh"))
+        {
+            CastFieldChecked<FObjectPropertyBase>(Property)
+                ->SetObjectPropertyValue_InContainer(Parameters.GetData(), SkeletalMesh);
+        }
+        else if (PropertyName == TEXT("SubjectName"))
+        {
+            FLiveLinkSubjectName* Value = CastFieldChecked<FStructProperty>(Property)
+                ->ContainerPtrToValuePtr<FLiveLinkSubjectName>(Parameters.GetData());
+            Value->Name = SubjectName;
+        }
+        else if (PropertyName == TEXT("UseLiveLink"))
+        {
+            CastFieldChecked<FBoolProperty>(Property)
+                ->SetPropertyValue_InContainer(Parameters.GetData(), bUseLiveLink);
+        }
+        // RetargetAsset deliberately remains null. The Fay source already
+        // publishes the MetaHuman raw-control schema consumed by this assembly.
+    }
+
+    InAvatar->ProcessEvent(SetupFunction, Parameters.GetData());
+    return true;
+}
+
+bool ApplyMetaHumanLiveLinkSetup(
+    AActor* InAvatar,
+    UFunction* SetupFunction,
+    const FName SubjectName,
+    const bool bUseLiveLink)
+{
+    USkeletalMeshComponent* BodyMesh = FindBodyMeshComponent(InAvatar);
+    USkeletalMeshComponent* FaceMesh = FindFaceMeshComponent(InAvatar);
+    if (!InvokeMetaHumanLiveLinkSetup(
+            InAvatar,
+            SetupFunction,
+            BodyMesh,
+            SubjectName,
+            bUseLiveLink))
+    {
+        return false;
+    }
+
+    // LiveLinkSetup can replace animation instances. Resolve the Face again
+    // before mirroring the Blueprint's second OnAnimInitialized call.
+    FaceMesh = FindFaceMeshComponent(InAvatar);
+    return InvokeMetaHumanLiveLinkSetup(
+        InAvatar,
+        SetupFunction,
+        FaceMesh,
+        SubjectName,
+        bUseLiveLink);
+}
+
+bool RestoreBodyAnimationState(
+    AActor* InAvatar,
+    UClass* OriginalAnimClass,
+    const EAnimationMode::Type OriginalAnimationMode)
+{
+    USkeletalMeshComponent* BodyMesh = FindBodyMeshComponent(InAvatar);
+    if (BodyMesh == nullptr)
+    {
+        return false;
+    }
+
+    BodyMesh->SetAnimInstanceClass(OriginalAnimClass);
+    BodyMesh->SetAnimationMode(OriginalAnimationMode);
+    return BodyMesh->GetAnimClass() == OriginalAnimClass &&
+        BodyMesh->GetAnimationMode() == OriginalAnimationMode;
+}
+
+bool HasVerifiedLiveLinkConsumer(
+    AActor* InAvatar,
+    const FName SubjectName,
+    FString* OutReason = nullptr)
+{
+    if (OutReason != nullptr)
+    {
+        OutReason->Reset();
+    }
+    const auto Fail = [OutReason](FString Reason)
+    {
+        if (OutReason != nullptr)
+        {
+            *OutReason = MoveTemp(Reason);
+        }
+        return false;
+    };
+
+    if (SubjectName.IsNone())
+    {
+        return Fail(TEXT("the requested consumer subject is empty"));
+    }
+
     bool bUseLiveLink = false;
     FName ActorSubject = NAME_None;
-    FName FaceSubject = NAME_None;
-    USkeletalMeshComponent* FaceMesh = FindFaceMeshComponent(InAvatar);
-    return !SubjectName.IsNone() && FaceMesh != nullptr &&
-        GetBooleanProperty(InAvatar, TEXT("UseLiveLink"), bUseLiveLink) &&
-        bUseLiveLink &&
-        GetLiveLinkSubjectProperty(
+    USkeletalMeshComponent* BodyMesh = FindBodyMeshComponent(InAvatar);
+    if (BodyMesh == nullptr)
+    {
+        return Fail(TEXT("Ada's Body component is missing"));
+    }
+
+    ULiveLinkInstance* BodyAnimation = BodyMesh != nullptr
+        ? Cast<ULiveLinkInstance>(BodyMesh->GetAnimInstance())
+        : nullptr;
+    if (BodyAnimation == nullptr)
+    {
+        const UAnimInstance* ActualAnimation = BodyMesh->GetAnimInstance();
+        return Fail(FString::Printf(
+            TEXT("Ada's Body animation instance is %s instead of ULiveLinkInstance"),
+            ActualAnimation != nullptr
+                ? *ActualAnimation->GetClass()->GetPathName()
+                : TEXT("null")));
+    }
+    if (!GetBooleanProperty(InAvatar, TEXT("UseLiveLink"), bUseLiveLink) ||
+        !bUseLiveLink)
+    {
+        return Fail(TEXT("Ada's UseLiveLink actor property is unavailable or false"));
+    }
+    if (!GetLiveLinkSubjectProperty(
             InAvatar,
             TEXT("LiveLinkSubject"),
-            ActorSubject) &&
-        ActorSubject == SubjectName &&
-        GetLiveLinkSubjectProperty(
-            FaceMesh->GetAnimInstance(),
-            TEXT("LLink_Face_Subj"),
-            FaceSubject) &&
-        FaceSubject == SubjectName;
+            ActorSubject) ||
+        ActorSubject != SubjectName)
+    {
+        return Fail(FString::Printf(
+            TEXT("Ada's actor subject is '%s' instead of '%s'"),
+            *ActorSubject.ToString(),
+            *SubjectName.ToString()));
+    }
+    if (!BodyAnimation->GetEnableLiveLinkEvaluation())
+    {
+        return Fail(TEXT("Ada's native Body Live Link evaluation is disabled"));
+    }
+    return true;
 }
 
 void DecodeAndResamplePcm16(
@@ -965,7 +1178,10 @@ bool UFayMetaHumanSpeechDriverComponent::ConfigureAvatar(AActor* InAvatar)
         {
             RuntimeState->PushNeutral();
         }
-        RestoreConfiguredAvatar();
+        if (!RestoreConfiguredAvatar())
+        {
+            return false;
+        }
     }
     if (IsValid(Avatar) && Avatar != InAvatar)
     {
@@ -1056,10 +1272,18 @@ bool UFayMetaHumanSpeechDriverComponent::ApplyAvatarConfiguration(AActor* InAvat
     }
 
     UFunction* SetupFunction = InAvatar->FindFunction(TEXT("LiveLinkSetup"));
+    USkeletalMeshComponent* BodyMesh = FindBodyMeshComponent(InAvatar);
     USkeletalMeshComponent* FaceMesh = FindFaceMeshComponent(InAvatar);
+    UClass* PreviousBodyAnimClass = BodyMesh != nullptr
+        ? BodyMesh->GetAnimClass()
+        : nullptr;
+    const EAnimationMode::Type PreviousBodyAnimationMode = BodyMesh != nullptr
+        ? BodyMesh->GetAnimationMode()
+        : EAnimationMode::AnimationBlueprint;
     bool OriginalUseLiveLink = false;
     FName OriginalActorSubject = NAME_None;
-    if (SetupFunction == nullptr || SetupFunction->NumParms != 0 || FaceMesh == nullptr ||
+    if (!HasMetaHumanLiveLinkSetupSignature(SetupFunction) || BodyMesh == nullptr ||
+        FaceMesh == nullptr ||
         !GetBooleanProperty(InAvatar, TEXT("UseLiveLink"), OriginalUseLiveLink) ||
         !GetLiveLinkSubjectProperty(
             InAvatar,
@@ -1072,11 +1296,12 @@ bool UFayMetaHumanSpeechDriverComponent::ApplyAvatarConfiguration(AActor* InAvat
         return false;
     }
 
-    FName OriginalFaceSubject = NAME_None;
-    const bool bHadOriginalFaceSubject = GetLiveLinkSubjectProperty(
-        FaceMesh->GetAnimInstance(),
-        TEXT("LLink_Face_Subj"),
-        OriginalFaceSubject);
+    if (OriginalUseLiveLink || Cast<ULiveLinkInstance>(BodyMesh->GetAnimInstance()) != nullptr)
+    {
+        UE_LOG(LogFayMetaHumanRuntime, Warning,
+            TEXT("Fay will not replace an avatar that already has a Live Link consumer."));
+        return false;
+    }
 
     const auto RollBackCandidate = [&]()
     {
@@ -1086,52 +1311,17 @@ bool UFayMetaHumanSpeechDriverComponent::ApplyAvatarConfiguration(AActor* InAvat
             OriginalActorSubject);
         const bool bUseLiveLinkRestored =
             SetBooleanProperty(InAvatar, TEXT("UseLiveLink"), OriginalUseLiveLink);
-        bool bRollbackSucceeded = bActorSubjectRestored && bUseLiveLinkRestored;
-        InAvatar->ProcessEvent(SetupFunction, nullptr);
-
-        USkeletalMeshComponent* RestoredFaceMesh = FindFaceMeshComponent(InAvatar);
-        UAnimInstance* RestoredFaceAnimation = RestoredFaceMesh != nullptr
-            ? RestoredFaceMesh->GetAnimInstance()
-            : nullptr;
-        if (RestoredFaceMesh != nullptr && RestoredFaceAnimation == nullptr)
-        {
-            RestoredFaceMesh->InitAnim(true);
-            RestoredFaceAnimation = RestoredFaceMesh->GetAnimInstance();
-        }
-
-        FName RestoredFaceSubject = NAME_None;
-        const bool bRestoredFaceExposesSubject = GetLiveLinkSubjectProperty(
-            RestoredFaceAnimation,
-            TEXT("LLink_Face_Subj"),
-            RestoredFaceSubject);
-        if (bHadOriginalFaceSubject)
-        {
-            bRollbackSucceeded = bRestoredFaceExposesSubject &&
-                SetLiveLinkSubjectProperty(
-                    RestoredFaceAnimation,
-                    TEXT("LLink_Face_Subj"),
-                    OriginalFaceSubject) &&
-                GetLiveLinkSubjectProperty(
-                    RestoredFaceAnimation,
-                    TEXT("LLink_Face_Subj"),
-                    RestoredFaceSubject) &&
-                RestoredFaceSubject == OriginalFaceSubject && bRollbackSucceeded;
-        }
-        else if (bRestoredFaceExposesSubject)
-        {
-            // LiveLinkSetup may create an AnimInstance/property that did not
-            // exist before the attempted configuration. Never leave FayAudio
-            // behind in that newly-created state.
-            bRollbackSucceeded = SetLiveLinkSubjectProperty(
-                    RestoredFaceAnimation,
-                    TEXT("LLink_Face_Subj"),
-                    OriginalActorSubject) &&
-                GetLiveLinkSubjectProperty(
-                    RestoredFaceAnimation,
-                    TEXT("LLink_Face_Subj"),
-                    RestoredFaceSubject) &&
-                RestoredFaceSubject == OriginalActorSubject && bRollbackSucceeded;
-        }
+        const bool bLiveLinkSetupRestored = ApplyMetaHumanLiveLinkSetup(
+            InAvatar,
+            SetupFunction,
+            OriginalActorSubject,
+            OriginalUseLiveLink);
+        const bool bBodyAnimationRestored = RestoreBodyAnimationState(
+            InAvatar,
+            PreviousBodyAnimClass,
+            PreviousBodyAnimationMode);
+        bool bRollbackSucceeded = bActorSubjectRestored && bUseLiveLinkRestored &&
+            bLiveLinkSetupRestored && bBodyAnimationRestored;
 
         bool RestoredUseLiveLink = !OriginalUseLiveLink;
         FName RestoredActorSubject = NAME_None;
@@ -1164,46 +1354,75 @@ bool UFayMetaHumanSpeechDriverComponent::ApplyAvatarConfiguration(AActor* InAvat
         return false;
     }
 
-    InAvatar->ProcessEvent(SetupFunction, nullptr);
-    FaceMesh = FindFaceMeshComponent(InAvatar);
-    if (FaceMesh == nullptr)
+    // In the Editor, changing UseLiveLink reruns Ada's construction logic and
+    // installs this class before LiveLinkSetup. Runtime property reflection
+    // deliberately does not rerun construction scripts, so mirror that one
+    // public-engine operation explicitly in a packaged build.
+    BodyMesh->SetAnimInstanceClass(ULiveLinkInstance::StaticClass());
+    if (Cast<ULiveLinkInstance>(BodyMesh->GetAnimInstance()) == nullptr)
     {
         RollBackCandidate();
         UE_LOG(LogFayMetaHumanRuntime, Warning,
-            TEXT("The assembled avatar replaced or removed its Face component during LiveLinkSetup."));
+            TEXT("Ada's Body rejected UE 5.8's native LiveLinkInstance class."));
         return false;
     }
-    if (FaceMesh->GetAnimInstance() == nullptr)
+
+    if (!ApplyMetaHumanLiveLinkSetup(
+            InAvatar,
+            SetupFunction,
+            LiveLinkSubjectName,
+            true))
     {
-        FaceMesh->InitAnim(true);
+        RollBackCandidate();
+        UE_LOG(LogFayMetaHumanRuntime, Warning,
+            TEXT("The assembled avatar rejected the UE 5.8 LiveLinkSetup contract."));
+        return false;
     }
 
-    UAnimInstance* FaceAnimation = FaceMesh->GetAnimInstance();
-    const bool bFaceSubjectSet = SetLiveLinkSubjectProperty(
-        FaceAnimation,
-        TEXT("LLink_Face_Subj"),
-        LiveLinkSubjectName);
+    // UE 5.8 does not expose a public getter for ULiveLinkInstance's subject.
+    // Assign it once more through the native public API, then verify the actor
+    // contract and the consumer's public evaluation state below. The exact
+    // source key/schema/frame are independently verified by IsAvatarConfigured.
+    BodyMesh = FindBodyMeshComponent(InAvatar);
+    ULiveLinkInstance* BodyAnimation = BodyMesh != nullptr
+        ? Cast<ULiveLinkInstance>(BodyMesh->GetAnimInstance())
+        : nullptr;
+    if (BodyAnimation == nullptr)
+    {
+        RollBackCandidate();
+        UE_LOG(LogFayMetaHumanRuntime, Warning,
+            TEXT("The assembled avatar did not install UE 5.8's native Body LiveLinkInstance."));
+        return false;
+    }
+    FLiveLinkSubjectName NativeSubject;
+    NativeSubject.Name = LiveLinkSubjectName;
+    BodyAnimation->SetSubject(NativeSubject);
+    BodyAnimation->EnableLiveLinkEvaluation(true);
+
     const bool bConfigurationReadBack =
         HasVerifiedLiveLinkConsumer(InAvatar, LiveLinkSubjectName);
 
-    if (!bFaceSubjectSet || !bConfigurationReadBack || !IsSolverReady() ||
+    if (!bConfigurationReadBack || !IsSolverReady() ||
         !RuntimeState->PushNeutral())
     {
         RollBackCandidate();
         UE_LOG(LogFayMetaHumanRuntime, Warning,
-            TEXT("The assembled avatar did not expose a verified Face AnimInstance consumer "
+            TEXT("The assembled avatar did not expose a verified Body LiveLinkInstance consumer "
                  "for the Fay Live Link subject; facial animation remains unconfigured."));
         return false;
     }
 
     OriginalActorLiveLinkSubject = OriginalActorSubject;
-    OriginalFaceLiveLinkSubject = OriginalFaceSubject;
+    OriginalBodyAnimClass = PreviousBodyAnimClass;
+    OriginalBodyAnimationModeValue = static_cast<int32>(PreviousBodyAnimationMode);
     bOriginalUseLiveLink = OriginalUseLiveLink;
-    bHadOriginalFaceLiveLinkSubject = bHadOriginalFaceSubject;
     bHasOriginalAvatarConfiguration = true;
+    LiveLinkHeartbeatElapsedSeconds = 0.0;
+    LiveLinkPendingElapsedSeconds = 0.0;
+    bLiveLinkPendingGraceLogged = false;
     Avatar = InAvatar;
     UE_LOG(LogFayMetaHumanRuntime, Display,
-        TEXT("Configured assembled MetaHuman Face AnimInstance to consume the local Fay "
+        TEXT("Configured assembled MetaHuman Body LiveLinkInstance to consume the local Fay "
              "Live Link speech subject."));
     return true;
 }
@@ -1221,63 +1440,49 @@ bool UFayMetaHumanSpeechDriverComponent::RestoreConfiguredAvatar()
     if (IsValid(ConfiguredAvatar))
     {
         UFunction* SetupFunction = ConfiguredAvatar->FindFunction(TEXT("LiveLinkSetup"));
-        bRestored = SetupFunction != nullptr && SetupFunction->NumParms == 0 &&
-            SetLiveLinkSubjectProperty(
+        const bool bSetupSignatureValid =
+            HasMetaHumanLiveLinkSetupSignature(SetupFunction);
+        const bool bActorSubjectRestored = SetLiveLinkSubjectProperty(
+            ConfiguredAvatar,
+            TEXT("LiveLinkSubject"),
+            OriginalActorLiveLinkSubject);
+        const bool bUseLiveLinkRestored = SetBooleanProperty(
+            ConfiguredAvatar,
+            TEXT("UseLiveLink"),
+            bOriginalUseLiveLink);
+        const bool bLiveLinkSetupRestored = bSetupSignatureValid &&
+            ApplyMetaHumanLiveLinkSetup(
                 ConfiguredAvatar,
-                TEXT("LiveLinkSubject"),
-                OriginalActorLiveLinkSubject) &&
-            SetBooleanProperty(
+                SetupFunction,
+                OriginalActorLiveLinkSubject,
+                bOriginalUseLiveLink);
+        const bool bBodyAnimationRestored = RestoreBodyAnimationState(
+            ConfiguredAvatar,
+            OriginalBodyAnimClass,
+            static_cast<EAnimationMode::Type>(OriginalBodyAnimationModeValue));
+
+        USkeletalMeshComponent* RestoredBodyMesh =
+            FindBodyMeshComponent(ConfiguredAvatar);
+        const bool bBodyReadBack = RestoredBodyMesh != nullptr &&
+            RestoredBodyMesh->GetAnimClass() == OriginalBodyAnimClass &&
+            RestoredBodyMesh->GetAnimationMode() ==
+                static_cast<EAnimationMode::Type>(OriginalBodyAnimationModeValue);
+        bool RestoredUseLiveLink = !bOriginalUseLiveLink;
+        FName RestoredActorSubject = NAME_None;
+        const bool bUseLiveLinkReadBack = GetBooleanProperty(
                 ConfiguredAvatar,
                 TEXT("UseLiveLink"),
-                bOriginalUseLiveLink);
-        if (bRestored)
-        {
-            ConfiguredAvatar->ProcessEvent(SetupFunction, nullptr);
-            USkeletalMeshComponent* RestoredFaceMesh = FindFaceMeshComponent(ConfiguredAvatar);
-            UAnimInstance* RestoredFaceAnimation = RestoredFaceMesh != nullptr
-                ? RestoredFaceMesh->GetAnimInstance()
-                : nullptr;
-            if (RestoredFaceMesh != nullptr && RestoredFaceAnimation == nullptr)
-            {
-                RestoredFaceMesh->InitAnim(true);
-                RestoredFaceAnimation = RestoredFaceMesh->GetAnimInstance();
-            }
-
-            FName FaceSubject = NAME_None;
-            const bool bFaceExposesSubject = GetLiveLinkSubjectProperty(
-                RestoredFaceAnimation,
-                TEXT("LLink_Face_Subj"),
-                FaceSubject);
-            const FName RequiredFaceSubject = bHadOriginalFaceLiveLinkSubject
-                ? OriginalFaceLiveLinkSubject
-                : OriginalActorLiveLinkSubject;
-            if (bHadOriginalFaceLiveLinkSubject || bFaceExposesSubject)
-            {
-                bRestored = bFaceExposesSubject &&
-                    SetLiveLinkSubjectProperty(
-                        RestoredFaceAnimation,
-                        TEXT("LLink_Face_Subj"),
-                        RequiredFaceSubject) &&
-                    GetLiveLinkSubjectProperty(
-                        RestoredFaceAnimation,
-                        TEXT("LLink_Face_Subj"),
-                        FaceSubject) &&
-                    FaceSubject == RequiredFaceSubject && bRestored;
-            }
-
-            bool RestoredUseLiveLink = !bOriginalUseLiveLink;
-            FName RestoredActorSubject = NAME_None;
-            bRestored = GetBooleanProperty(
-                    ConfiguredAvatar,
-                    TEXT("UseLiveLink"),
-                    RestoredUseLiveLink) &&
-                RestoredUseLiveLink == bOriginalUseLiveLink &&
-                GetLiveLinkSubjectProperty(
-                    ConfiguredAvatar,
-                    TEXT("LiveLinkSubject"),
-                    RestoredActorSubject) &&
-                RestoredActorSubject == OriginalActorLiveLinkSubject && bRestored;
-        }
+                RestoredUseLiveLink) &&
+            RestoredUseLiveLink == bOriginalUseLiveLink;
+        const bool bActorSubjectReadBack = GetLiveLinkSubjectProperty(
+                ConfiguredAvatar,
+                TEXT("LiveLinkSubject"),
+                RestoredActorSubject) &&
+            RestoredActorSubject == OriginalActorLiveLinkSubject;
+        bRestored = bSetupSignatureValid && bActorSubjectRestored &&
+            bUseLiveLinkRestored && bLiveLinkSetupRestored &&
+            bBodyAnimationRestored && bBodyReadBack &&
+            bUseLiveLinkReadBack && bActorSubjectReadBack;
     }
 
     if (!bRestored)
@@ -1286,12 +1491,18 @@ bool UFayMetaHumanSpeechDriverComponent::RestoreConfiguredAvatar()
             TEXT("Fay could not completely restore the MetaHuman's original Live Link configuration."));
     }
 
-    Avatar = nullptr;
-    OriginalActorLiveLinkSubject = NAME_None;
-    OriginalFaceLiveLinkSubject = NAME_None;
-    bOriginalUseLiveLink = false;
-    bHadOriginalFaceLiveLinkSubject = false;
-    bHasOriginalAvatarConfiguration = false;
+    if (bRestored)
+    {
+        Avatar = nullptr;
+        OriginalActorLiveLinkSubject = NAME_None;
+        OriginalBodyAnimClass = nullptr;
+        OriginalBodyAnimationModeValue = 0;
+        bOriginalUseLiveLink = false;
+        bHasOriginalAvatarConfiguration = false;
+    }
+    LiveLinkHeartbeatElapsedSeconds = 0.0;
+    LiveLinkPendingElapsedSeconds = 0.0;
+    bLiveLinkPendingGraceLogged = false;
     return bRestored;
 }
 
@@ -1305,7 +1516,7 @@ void UFayMetaHumanSpeechDriverComponent::HandleDecodedPcm(
     if (!IsAvatarConfigured())
     {
         UE_LOG(LogFayMetaHumanRuntime, Warning,
-            TEXT("Skipping speech animation because no verified MetaHuman Face consumer is configured."));
+            TEXT("Skipping speech animation because no verified MetaHuman Live Link consumer is configured."));
         return;
     }
     if (SampleRate < 8000 || SampleRate > 192000 ||
@@ -1406,36 +1617,102 @@ void UFayMetaHumanSpeechDriverComponent::TickComponent(
     {
         TryConfigurePendingAvatar();
     }
-    if (IsValid(Avatar) && !IsAvatarConfigured())
+
+    if (IsValid(Avatar) && IsSolverReady())
     {
-        FString ReadinessReason;
-        const EFayLiveLinkSubjectReadiness SubjectReadiness =
-            IsSolverReady()
-            ? RuntimeState->Source->GetExactSubjectReadiness(ReadinessReason)
-            : EFayLiveLinkSubjectReadiness::Invalid;
-        if (!bTerminalSubjectFailureLogged)
+        const bool bSpeechDriving = bSpeechPrepared && bSpeechStarted;
+        if (bSpeechDriving)
         {
-            UE_LOG(LogFayMetaHumanRuntime, Error,
-                TEXT("The exact Fay Live Link subject or MetaHuman consumer became invalid; "
-                     "restoring the avatar's original configuration."));
-            bTerminalSubjectFailureLogged = true;
+            LiveLinkHeartbeatElapsedSeconds = 0.0;
         }
-        if (RuntimeState.IsValid())
+        else
         {
-            RuntimeState->PushNeutral();
+            LiveLinkHeartbeatElapsedSeconds += FMath::Max(DeltaTime, 0.0f);
+            if (LiveLinkHeartbeatElapsedSeconds >= LiveLinkHeartbeatSeconds)
+            {
+                RuntimeState->PushNeutral();
+                LiveLinkHeartbeatElapsedSeconds = 0.0;
+            }
         }
-        RestoreConfiguredAvatar();
-        ResetSpeechState();
-        if (SubjectReadiness == EFayLiveLinkSubjectReadiness::Collision ||
-            SubjectReadiness == EFayLiveLinkSubjectReadiness::Invalid)
-        {
-            ShutdownSource();
-        }
-        return;
     }
+
     if (IsValid(Avatar))
     {
-        bTerminalSubjectFailureLogged = false;
+        FString ConsumerReason;
+        const bool bConsumerReady = HasVerifiedLiveLinkConsumer(
+            Avatar,
+            LiveLinkSubjectName,
+            &ConsumerReason);
+        FString ReadinessReason;
+        const bool bSolverReady = IsSolverReady();
+        const EFayLiveLinkSubjectReadiness SubjectReadiness =
+            bSolverReady
+            ? RuntimeState->Source->GetExactSubjectReadiness(ReadinessReason)
+            : EFayLiveLinkSubjectReadiness::Invalid;
+        if (!bSolverReady)
+        {
+            ReadinessReason = TEXT("the local solver or Live Link source is unavailable");
+        }
+        const bool bRuntimeHealthy = bConsumerReady &&
+            SubjectReadiness == EFayLiveLinkSubjectReadiness::Ready;
+        if (bConsumerReady &&
+            SubjectReadiness == EFayLiveLinkSubjectReadiness::Pending)
+        {
+            LiveLinkPendingElapsedSeconds += FMath::Max(DeltaTime, 0.0f);
+            if (!bLiveLinkPendingGraceLogged)
+            {
+                UE_LOG(LogFayMetaHumanRuntime, Display,
+                    TEXT("Keeping Ada configured while the exact Fay Live Link subject is "
+                         "temporarily pending (%s)."),
+                    *ReadinessReason);
+                bLiveLinkPendingGraceLogged = true;
+            }
+            if (LiveLinkPendingElapsedSeconds < LiveLinkPendingGraceSeconds)
+            {
+                return;
+            }
+            ReadinessReason = FString::Printf(
+                TEXT("the subject remained pending beyond %.1f seconds: %s"),
+                LiveLinkPendingGraceSeconds,
+                *ReadinessReason);
+        }
+        if (bRuntimeHealthy)
+        {
+            if (bLiveLinkPendingGraceLogged)
+            {
+                UE_LOG(LogFayMetaHumanRuntime, Display,
+                    TEXT("The exact Fay Live Link subject is evaluable again."));
+            }
+            LiveLinkPendingElapsedSeconds = 0.0;
+            bLiveLinkPendingGraceLogged = false;
+            bTerminalSubjectFailureLogged = false;
+        }
+        else
+        {
+            if (!bTerminalSubjectFailureLogged)
+            {
+                UE_LOG(LogFayMetaHumanRuntime, Error,
+                    TEXT("The Fay MetaHuman runtime contract failed; restoring Ada "
+                         "(consumer=%s; source=%s)."),
+                    bConsumerReady ? TEXT("ready") : *ConsumerReason,
+                    SubjectReadiness == EFayLiveLinkSubjectReadiness::Ready
+                        ? TEXT("ready")
+                        : *ReadinessReason);
+                bTerminalSubjectFailureLogged = true;
+            }
+            if (RuntimeState.IsValid())
+            {
+                RuntimeState->PushNeutral();
+            }
+            RestoreConfiguredAvatar();
+            ResetSpeechState();
+            if (SubjectReadiness == EFayLiveLinkSubjectReadiness::Collision ||
+                SubjectReadiness == EFayLiveLinkSubjectReadiness::Invalid)
+            {
+                ShutdownSource();
+            }
+            return;
+        }
     }
 
     if (!bSpeechPrepared || !bSpeechStarted || !IsSolverReady())

@@ -42,10 +42,10 @@ Fay WAV
   -> assembled MetaHuman face
 ```
 
-This is the intended direct, local runtime path; it does not use a microphone
-or a cloud solve during playback. The adapter now compiles for the x86-64 Editor
-and native LinuxArm64 Game targets. LinuxArm64 cooking/packaging, Spark model
-runtime, and visual checks remain pending.
+This direct, local runtime path does not use a microphone or a cloud solve
+during playback. It is verified in the native LinuxArm64 package: Ada assembly,
+model load, exact Live Link consumption, visible learned speech motion,
+minimized-window 50 Hz solving, and cold relaunch checks pass.
 
 ## Responsibility split
 
@@ -54,13 +54,15 @@ runtime, and visual checks remain pending.
 | Fay | Conversation state, memory, tool use, LLM routing, ASR/TTS coordination, sentiment and action metadata |
 | MCP layer | Connections between Fay and external tools/systems |
 | FayAvatarBridge | Socket registration/reconnect, bounded JSON/audio queues, WAV download/decoding, normalized Blueprint events |
-| FayMetaHumanRuntime | 16 kHz mono conversion, local StreamingADA solve, 251 raw-control conversion, and `FayAudio` Live Link publishing; x86 Editor and ARM64 Game compilation verified, runtime/visual pending |
+| FayMetaHumanRuntime | Verified 16 kHz mono conversion, local StreamingADA solve, 251 raw-control conversion, `FayAudio` publishing, and Ada Live Link consumption in the native package |
 | Unreal runtime | Avatar, camera, lighting, rendering, audio output, facial curves, and LOD/performance |
 | x86-64 Editor/cooker through FEX | Asset editing plus LinuxArm64 shader/platform data for maps, textures, materials, meshes, rigs and MetaHumans |
-| Native ARM build/package tools | LinuxArm64 Game compilation, staging, UnrealPak/IoStore, and archive verification |
+| Native ARM build/package tools | LinuxArm64 Game compilation, staging, Pak-only packaging, deep content verification, and immutable-file sealing |
 
-Fay semantic body actions already cross the bridge, but no body montage/control
-mapping is implemented. Body gestures remain a separate future layer.
+Fay semantic actions already cross the bridge. Conservative raw-control head
+mappings for `nod`, `shake`, `think`, and `warn` exist but are not yet visually
+verified. No authored body montage is implemented for `wave` or `invite`; body
+gestures remain a separate future layer.
 
 ## Why MCP does not belong inside the avatar plugin
 

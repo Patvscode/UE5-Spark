@@ -54,6 +54,17 @@ if ! find "$cook_root" -type f \
     fail 'the cooked MetaHuman common asset directory is missing or empty'
 fi
 
+mapfile -t garment_material_functions < <(
+    find "$cook_root" -type f \
+        -path '*/Engine/Plugins/Interchange/Assets/Content/Functions/MF_PhongToMetalRoughness.uasset' \
+        -print
+)
+if (( ${#garment_material_functions[@]} != 1 )); then
+    fail "expected exactly one cooked Ada garment material function; found ${#garment_material_functions[@]}"
+fi
+[[ -s ${garment_material_functions[0]} ]] || \
+    fail 'the cooked Ada garment material function is empty'
+
 if find "$cook_root" -iname '*FayMetaHumanEditorTools*' -print -quit | grep -q .; then
     fail 'the Editor-only FayMetaHumanEditorTools plugin leaked into the cook'
 fi
@@ -62,4 +73,5 @@ printf 'Loose LinuxArm64 cook verification passed.\n'
 printf '  Ada Blueprint: present\n'
 printf '  StreamingADA v2 model: present\n'
 printf '  MetaHuman common assets: present\n'
+printf '  Ada garment material dependency: present\n'
 printf '  Editor-only helper: absent\n'

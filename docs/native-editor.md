@@ -40,13 +40,17 @@ separate engine-porting project, not an avatar adapter.
   DGX OS or installing a system `binfmt_misc` handler.
 - The x86 commandlet completed a LinuxArm64 cook on the Spark. Native ARM64
   UnrealBuildTool, AutomationTool, and UnrealPak then built and packaged the
-  Game target.
+  Game target. The complete Ada MetaHuman and StreamingADA dependency tree is
+  included in the verified sealed package.
 - Vulkan forwarding and a pinned NVIDIA ICD created a real X11 swapchain. The
   graphical Editor rendered the Open World viewport for a bounded three-minute
   stability test.
 - The tested FEX path requires conservative settings: two reported cores and
   single-threaded Unreal rendering. The normal render/RHI thread split is not
   stable in this configuration.
+- The resulting package is native ARM64 and has rendered Ada, played Fay speech,
+  and driven the exact `FayAudio` Live Link facial path on the Spark. This proves
+  the deployment workflow, not a native ARM64 Editor.
 
 Private engine-port experiments should remain in an Epic-authorized workspace.
 This public repository intentionally contains no Engine patches or source

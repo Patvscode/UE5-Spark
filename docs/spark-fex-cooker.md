@@ -348,9 +348,9 @@ and the StreamingADA v2 model. It also requires an ARM64 ONNX Runtime library,
 rejects the Editor-only helper, and writes a hash seal beside the launcher. The
 seal contains only relative filenames and hashes, not asset contents or private
 machine paths. Subsequent runtime verification recomputes it before launching.
-Runtime-created files below the packaged project's `Saved` directory are
-deliberately outside the immutable seal so logs and user settings do not break a
-second launch.
+Runtime-created files below the packaged Game and Engine `Saved` directories are
+deliberately outside the immutable seal so logs, manifests, and user settings do
+not break a second launch.
 
 If either step is interrupted, inspect the generated directories and choose
 fresh destinations. These scripts do not delete partial cook, stage, or archive
@@ -385,13 +385,15 @@ is more important than speed.
 
 FEX is a CPU instruction translator, not virtualization. The Editor commandlet
 and every x86-64 ShaderCompileWorker still pay translation overhead. The Spark's
-128 GB unified memory and fast local NVMe are sufficient, but a MetaHuman cook
-may take hours and has not been declared reliable until the bounded probe passes.
+128 GB unified memory and fast local NVMe were sufficient for the complete Ada
+MetaHuman cook. The validated result does not make FEX an Epic-supported path;
+future Engine/plugin revisions can still expose different translation or
+third-party-library failures, and large cooks remain slow.
 
-Headless `-nullrhi` cooking is the first target. Running the full graphical
-Editor additionally requires FEX's Vulkan/window-system forwarding and is a
-separate experiment; it is not required to produce the packaged digital-human
-runtime.
+Headless commandlet cooking and the graphical Editor have both passed bounded
+tests. The graphical path additionally requires FEX Vulkan/window-system
+forwarding and conservative Unreal thread settings. It remains experimental and
+is not required to run the finished native digital-human package.
 
 ## Primary references
 

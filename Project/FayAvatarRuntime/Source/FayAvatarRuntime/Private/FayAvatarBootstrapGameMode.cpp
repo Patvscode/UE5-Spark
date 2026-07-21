@@ -10,6 +10,7 @@
 #include "FayAvatarBridgeComponent.h"
 #include "FayMetaHumanSpeechDriverComponent.h"
 #include "GameFramework/PlayerController.h"
+#include "HAL/IConsoleManager.h"
 #include "UObject/SoftObjectPath.h"
 
 DEFINE_LOG_CATEGORY_STATIC(LogFayAvatarRuntime, Log, All);
@@ -25,6 +26,11 @@ AFayAvatarBootstrapGameMode::AFayAvatarBootstrapGameMode()
     PrimaryActorTick.bCanEverTick = true;
     PrimaryActorTick.bStartWithTickEnabled = true;
 
+    // AGameModeBase inherits AInfo, whose constructor hides the actor. This
+    // bootstrap intentionally owns runtime camera and light components, so it
+    // must opt back into scene visibility before those components register.
+    SetHidden(false);
+
     // Avoid ADefaultPawn: its constructor loads an Engine static-mesh asset.
     bStartPlayersAsSpectators = true;
     DefaultPawnClass = nullptr;
@@ -36,8 +42,8 @@ AFayAvatarBootstrapGameMode::AFayAvatarBootstrapGameMode()
 
     Camera = CreateDefaultSubobject<UCameraComponent>(TEXT("Camera"));
     Camera->SetupAttachment(SceneRoot);
-    Camera->SetRelativeLocation(FVector(-300.0, 0.0, 165.0));
-    Camera->SetRelativeRotation(FRotator::ZeroRotator);
+    Camera->SetRelativeLocation(FVector(0.0, -220.0, 165.0));
+    Camera->SetRelativeRotation(FRotator(0.0, 90.0, 0.0));
     Camera->FieldOfView = 42.0f;
     Camera->SetActive(true);
 
@@ -46,22 +52,22 @@ AFayAvatarBootstrapGameMode::AFayAvatarBootstrapGameMode()
 
     KeyLight = CreateDefaultSubobject<UPointLightComponent>(TEXT("KeyLight"));
     KeyLight->SetupAttachment(SceneRoot);
-    KeyLight->SetRelativeLocation(FVector(-150.0, -130.0, 230.0));
-    KeyLight->SetIntensity(2200.0f);
+    KeyLight->SetRelativeLocation(FVector(-110.0, -120.0, 225.0));
+    KeyLight->SetIntensity(2600.0f);
     KeyLight->SetLightColor(FLinearColor(1.0f, 0.78f, 0.62f));
     KeyLight->AttenuationRadius = 650.0f;
 
     FillLight = CreateDefaultSubobject<UPointLightComponent>(TEXT("FillLight"));
     FillLight->SetupAttachment(SceneRoot);
-    FillLight->SetRelativeLocation(FVector(-100.0, 160.0, 190.0));
-    FillLight->SetIntensity(900.0f);
+    FillLight->SetRelativeLocation(FVector(120.0, -100.0, 185.0));
+    FillLight->SetIntensity(1000.0f);
     FillLight->SetLightColor(FLinearColor(0.55f, 0.72f, 1.0f));
     FillLight->AttenuationRadius = 600.0f;
 
     RimLight = CreateDefaultSubobject<UPointLightComponent>(TEXT("RimLight"));
     RimLight->SetupAttachment(SceneRoot);
-    RimLight->SetRelativeLocation(FVector(90.0, 0.0, 235.0));
-    RimLight->SetIntensity(1500.0f);
+    RimLight->SetRelativeLocation(FVector(0.0, 130.0, 225.0));
+    RimLight->SetIntensity(1800.0f);
     RimLight->SetLightColor(FLinearColor(1.0f, 0.52f, 0.34f));
     RimLight->AttenuationRadius = 500.0f;
 
@@ -71,6 +77,18 @@ AFayAvatarBootstrapGameMode::AFayAvatarBootstrapGameMode()
 void AFayAvatarBootstrapGameMode::BeginPlay()
 {
     Super::BeginPlay();
+    if (IConsoleVariable* IdleWhenNotForeground =
+            IConsoleManager::Get().FindConsoleVariable(TEXT("t.IdleWhenNotForeground")))
+    {
+        IdleWhenNotForeground->Set(0, ECVF_SetByCode);
+        UE_LOG(LogFayAvatarRuntime, Display,
+            TEXT("Disabled Unreal's background-window idle throttle for real-time speech."));
+    }
+    else
+    {
+        UE_LOG(LogFayAvatarRuntime, Warning,
+            TEXT("Unreal's background-window idle control is unavailable; keep the avatar window focused during speech."));
+    }
     if (SpeechDriver != nullptr)
     {
         SpeechDriver->AttachBridge(Bridge);
@@ -87,7 +105,12 @@ void AFayAvatarBootstrapGameMode::Tick(const float DeltaSeconds)
         if (APlayerController* PlayerController = GetWorld()->GetFirstPlayerController())
         {
             PlayerController->SetViewTarget(this);
-            bViewClaimed = true;
+            if (PlayerController->GetViewTarget() == this)
+            {
+                bViewClaimed = true;
+                UE_LOG(LogFayAvatarRuntime, Display,
+                    TEXT("Activated the visible Spark studio camera and lighting rig."));
+            }
         }
     }
 

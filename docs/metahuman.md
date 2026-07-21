@@ -74,9 +74,10 @@ decoded Fay PCM
 
 The adapter also supplies the solver's mood input from Fay sentiment/action
 metadata. It has compiled with the complete enabled dependency tree for both the
-x86-64 Editor and native LinuxArm64 Game targets. A fresh MetaHuman-aware cook
-and package, Spark model initialization, and visible Ada animation remain open
-gates.
+x86-64 Editor and native LinuxArm64 Game targets. The complete path has passed a
+fresh MetaHuman-aware cook/package, native Spark model initialization, exact Live
+Link consumer checks, visible Ada speech animation, and complete 50 Hz
+solve-frame accounting while the window was minimized.
 
 ## Animation quality stages
 
@@ -91,10 +92,12 @@ Amplitude-driven jaw motion proves timing and transport but is not presented as
 final photorealistic speech. Realistic flesh deformation comes from the
 MetaHuman face rig, materials, correct facial curves, lighting, and a stronger
 audio-to-animation layer. The StreamingADA adapter is intended to provide that
-learned facial layer, but it is not yet a verified result.
+learned facial layer and now does so in the verified native package.
 
-No gesture animations, montages, or semantic-to-body mappings are currently
-included. Receiving a Fay action event is not evidence that the body moved.
+The source contains conservative raw-control head mappings for `nod`, `shake`,
+`think`, and `warn`, but they have not been visually verified. No authored body
+animations or montages are included for `wave` or `invite`. Receiving a Fay
+action event is not by itself evidence that either kind of gesture moved.
 
 ## Performance order
 

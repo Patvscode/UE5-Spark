@@ -135,10 +135,16 @@ private:
     uint8 MoodValue = 0;
     uint8 HeadGestureValue = 0;
     FName OriginalActorLiveLinkSubject = NAME_None;
-    FName OriginalFaceLiveLinkSubject = NAME_None;
+
+    UPROPERTY(Transient)
+    TObjectPtr<UClass> OriginalBodyAnimClass;
+
+    int32 OriginalBodyAnimationModeValue = 0;
+    double LiveLinkHeartbeatElapsedSeconds = 0.0;
+    double LiveLinkPendingElapsedSeconds = 0.0;
     bool bOriginalUseLiveLink = false;
-    bool bHadOriginalFaceLiveLinkSubject = false;
     bool bHasOriginalAvatarConfiguration = false;
+    bool bLiveLinkPendingGraceLogged = false;
     bool bPendingSubjectWaitLogged = false;
     bool bTerminalSubjectFailureLogged = false;
     bool bFirstSolverFrame = true;
