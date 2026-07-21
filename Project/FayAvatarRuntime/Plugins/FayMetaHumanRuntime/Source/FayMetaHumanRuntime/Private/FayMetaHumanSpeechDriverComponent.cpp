@@ -63,6 +63,7 @@ enum class EFaySemanticHeadGesture : uint8
 enum class EFayLiveLinkSubjectReadiness : uint8
 {
     Pending,
+    SnapshotDormant,
     Ready,
     Collision,
     Invalid
@@ -193,7 +194,7 @@ public:
         if (!Client->IsSubjectEnabled(SubjectKey, true) || !Client->IsSubjectValid(SubjectKey))
         {
             OutReason = TEXT("the exact subject has not entered the current Live Link snapshot");
-            return EFayLiveLinkSubjectReadiness::Pending;
+            return EFayLiveLinkSubjectReadiness::SnapshotDormant;
         }
 
         FLiveLinkSubjectFrameData EvaluatedFrame;
@@ -1113,8 +1114,13 @@ bool UFayMetaHumanSpeechDriverComponent::IsAvatarConfigured() const
         return false;
     }
     FString ReadinessReason;
-    return RuntimeState->Source->GetExactSubjectReadiness(ReadinessReason) ==
-        EFayLiveLinkSubjectReadiness::Ready;
+    const EFayLiveLinkSubjectReadiness Readiness =
+        RuntimeState->Source->GetExactSubjectReadiness(ReadinessReason);
+    const bool bFaceDriving = bActionHeadGestureActive ||
+        (bSpeechPrepared && bSpeechStarted);
+    return Readiness == EFayLiveLinkSubjectReadiness::Ready ||
+        (!bEnableIdleNeutralHeartbeat && !bFaceDriving &&
+            Readiness == EFayLiveLinkSubjectReadiness::SnapshotDormant);
 }
 
 bool UFayMetaHumanSpeechDriverComponent::IsAvatarConfigurationPending() const
@@ -1322,7 +1328,8 @@ bool UFayMetaHumanSpeechDriverComponent::TryConfigurePendingAvatar()
     FString ReadinessReason;
     const EFayLiveLinkSubjectReadiness Readiness =
         RuntimeState->Source->GetExactSubjectReadiness(ReadinessReason);
-    if (Readiness == EFayLiveLinkSubjectReadiness::Pending)
+    if (Readiness == EFayLiveLinkSubjectReadiness::Pending ||
+        Readiness == EFayLiveLinkSubjectReadiness::SnapshotDormant)
     {
         if (!bPendingSubjectWaitLogged)
         {
@@ -1707,6 +1714,13 @@ void UFayMetaHumanSpeechDriverComponent::HandleAvatarMessage(
     ActionHeadGestureElapsedSeconds = 0.0f;
     bActionHeadGestureActive = true;
     LiveLinkHeartbeatElapsedSeconds = 0.0;
+    if (!bEnableIdleNeutralHeartbeat && RuntimeState.IsValid())
+    {
+        // A deliberately quiet source leaves Live Link's current snapshot
+        // while idle. Wake it before the next strict action-time health audit.
+        RuntimeState->PushNeutral();
+        LiveLinkHealthCheckElapsedSeconds = LiveLinkHealthCheckIntervalSeconds;
+    }
     UE_LOG(LogFayMetaHumanRuntime, Display,
         TEXT("Started action-only Fay head gesture '%s' (duration_seconds=%.2f, intensity=%.2f)."),
         *Message.Action.Behavior,
@@ -1767,6 +1781,13 @@ void UFayMetaHumanSpeechDriverComponent::HandleSpeechStarted(
     AnimationElapsedSeconds = 0.0;
     bSpeechStarted = true;
     bSpeechFinished = false;
+    if (!bEnableIdleNeutralHeartbeat && RuntimeState.IsValid())
+    {
+        // Prime a dormant source before the first speech solve so a scheduled
+        // health audit cannot prevent the frame that would make it current.
+        RuntimeState->PushNeutral();
+        LiveLinkHealthCheckElapsedSeconds = LiveLinkHealthCheckIntervalSeconds;
+    }
 }
 
 void UFayMetaHumanSpeechDriverComponent::HandleSpeechFinished(const FFayAvatarMessage& Message)
@@ -1862,16 +1883,33 @@ void UFayMetaHumanSpeechDriverComponent::TickComponent(
         {
             ReadinessReason = TEXT("the local solver or Live Link source is unavailable");
         }
+        const bool bSpeechDriving = bSpeechPrepared && bSpeechStarted;
+        const bool bExpectedIdleDormancy =
+            !bEnableIdleNeutralHeartbeat &&
+            !bSpeechDriving &&
+            !bActionHeadGestureActive &&
+            SubjectReadiness == EFayLiveLinkSubjectReadiness::SnapshotDormant;
         const bool bRuntimeHealthy = bConsumerReady &&
-            SubjectReadiness == EFayLiveLinkSubjectReadiness::Ready;
+            (SubjectReadiness == EFayLiveLinkSubjectReadiness::Ready ||
+                bExpectedIdleDormancy);
         if (bConsumerReady &&
-            SubjectReadiness == EFayLiveLinkSubjectReadiness::Pending)
+            (SubjectReadiness == EFayLiveLinkSubjectReadiness::Pending ||
+                (SubjectReadiness == EFayLiveLinkSubjectReadiness::SnapshotDormant &&
+                    !bExpectedIdleDormancy)))
         {
             // Once a pending subject is observed, return to per-frame audits so
             // the existing two-second grace remains wall-clock accurate and
             // speech/action work stays paused until the subject recovers.
             bLiveLinkHealthPending = true;
             LiveLinkPendingElapsedSeconds += FMath::Max(DeltaTime, 0.0f);
+            if (!bEnableIdleNeutralHeartbeat &&
+                (bSpeechDriving || bActionHeadGestureActive) &&
+                RuntimeState.IsValid())
+            {
+                // Health runs before speech/head-frame publication. Republish
+                // a bounded neutral wake frame so recovery cannot deadlock.
+                RuntimeState->PushNeutral();
+            }
             if (!bLiveLinkPendingGraceLogged)
             {
                 UE_LOG(LogFayMetaHumanRuntime, Display,
