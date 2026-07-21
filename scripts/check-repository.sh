@@ -591,6 +591,15 @@ for marker in (
     'setsid "$soak_runner"',
     "harness_timeout_seconds=",
     "promote_expected_launcher_transition",
+    "observe_allowed_launcher_transition",
+    "process_matches_starttime",
+    "process_is_live_with_starttime",
+    "launcher_env_exe=$(readlink -f /usr/bin/env)",
+    "launcher_reached_unreal=0",
+    "launcher_identity_capture_in_progress=1",
+    "deferred_signal_status",
+    "discovered_runtime_pid=${discovered_runtime_pids[0]}",
+    '"$launcher_bash_exe" "$digital_human_launcher"',
     'kill -TERM "$runtime_pid"',
     'kill -KILL "$runtime_pid"',
     'wait "$launcher_pid"',
@@ -605,6 +614,23 @@ for marker in (
 cleanup_start = soak_wrapper.find("cleanup_runtime()")
 cleanup_end = soak_wrapper.find("finalize_evidence_summary()", cleanup_start)
 cleanup_body = soak_wrapper[cleanup_start:cleanup_end]
+if 'process_matches_identity "$launcher_pid" "$launcher_exe"' in cleanup_body:
+    reject("bootstrap cleanup must follow immutable PID/start time, not a transient executable")
+if re.search(
+    r'current_launcher_exe\s*!=\s*"\$launcher_exe"', soak_wrapper
+):
+    reject("launcher discovery must allow reviewed env/bash transitions before Unreal")
+if re.search(
+    r'(?m)^\s*runtime_pid=\$\{discovered_runtime_pids\[0\]\}', soak_wrapper
+):
+    reject("runtime discovery must not adopt a scanned PID before ownership validation")
+discovery_exe_commit = soak_wrapper.find("runtime_exe=$discovered_runtime_exe")
+discovery_start_commit = soak_wrapper.find("runtime_starttime=$discovered_runtime_starttime")
+discovery_pid_commit = soak_wrapper.find("runtime_pid=$discovered_runtime_pid")
+if min(discovery_exe_commit, discovery_start_commit, discovery_pid_commit) < 0 or not (
+    discovery_exe_commit < discovery_start_commit < discovery_pid_commit
+):
+    reject("runtime discovery must commit executable and start time before its PID")
 term_position = cleanup_body.find('kill -TERM "$runtime_pid"')
 kill_position = cleanup_body.find('kill -KILL "$runtime_pid"')
 capture_position = cleanup_body.find("capture_post_teardown_evidence")

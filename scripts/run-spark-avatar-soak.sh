@@ -350,6 +350,13 @@ kernel_cursor=$(journalctl -k -n 0 --show-cursor --no-pager 2>/dev/null |
 launcher_pid=''
 launcher_exe=''
 launcher_starttime=''
+launcher_env_exe=''
+launcher_bash_exe=''
+launcher_reached_unreal=0
+launcher_reaped=0
+launcher_identity_capture_in_progress=0
+deferred_signal_name=''
+deferred_signal_status=0
 runtime_pid=''
 runtime_exe=''
 runtime_starttime=''
@@ -367,24 +374,66 @@ post_teardown_runtime_failure_count=not-scanned
 post_teardown_kernel_failure_count=not-scanned
 cleanup_completed=0
 
-promote_expected_launcher_transition() {
+process_matches_starttime() {
+    local pid=$1 expected_starttime=$2 actual_starttime
+    actual_starttime=$(read_process_starttime "$pid" || true)
+    [[ -n $actual_starttime && $actual_starttime == "$expected_starttime" ]]
+}
+
+process_is_live_with_starttime() {
+    local pid=$1 expected_starttime=$2 stat_line stat_fields
+    process_matches_starttime "$pid" "$expected_starttime" || return 1
+    IFS= read -r stat_line <"/proc/$pid/stat" || return 1
+    stat_fields=${stat_line##*) }
+    [[ $stat_fields != "$stat_line" ]] || return 1
+    set -- $stat_fields
+    [[ -n ${1:-} && ${1:-} != Z ]]
+}
+
+observe_allowed_launcher_transition() {
     local current_exe current_starttime
-    [[ -z $runtime_pid && -n $launcher_pid && -n $launcher_exe &&
-        -n $launcher_starttime ]] || return 0
-    current_exe=$(readlink "/proc/$launcher_pid/exe" 2>/dev/null || true)
+    [[ -n $launcher_pid && -n $launcher_starttime &&
+        -n $launcher_env_exe && -n $launcher_bash_exe ]] || return 1
     current_starttime=$(read_process_starttime "$launcher_pid" || true)
-    [[ -n $current_exe && $current_starttime == "$launcher_starttime" ]] || return 0
+    [[ -n $current_starttime && $current_starttime == "$launcher_starttime" ]] || return 1
+    current_exe=$(readlink "/proc/$launcher_pid/exe" 2>/dev/null || true)
+    [[ -n $current_exe ]] || return 1
     if [[ $current_exe == "$expected_unreal_exe" ]]; then
+        launcher_exe=$current_exe
+        launcher_reached_unreal=1
+        return 0
+    fi
+    if (( launcher_reached_unreal == 0 )) &&
+        [[ $current_exe == "$launcher_env_exe" ||
+        $current_exe == "$launcher_bash_exe" ]]; then
+        launcher_exe=$current_exe
+        return 0
+    fi
+    return 2
+}
+
+promote_expected_launcher_transition() {
+    local observation_status
+    [[ -z $runtime_pid && -n $launcher_pid &&
+        -n $launcher_starttime ]] || return 0
+    if observe_allowed_launcher_transition; then
+        observation_status=0
+    else
+        observation_status=$?
+    fi
+    if (( observation_status == 1 )); then
+        return 0
+    fi
+    if (( observation_status == 2 )); then
+        printf 'error: guarded launcher changed to an unexpected executable\n' >&2
+        return 1
+    fi
+    if (( launcher_reached_unreal == 1 )); then
+        runtime_exe=$expected_unreal_exe
+        runtime_starttime=$launcher_starttime
         runtime_pid=$launcher_pid
-        runtime_exe=$current_exe
-        runtime_starttime=$current_starttime
-        return 0
     fi
-    if [[ $current_exe == "$launcher_exe" ]]; then
-        return 0
-    fi
-    printf 'error: guarded launcher changed to an unexpected executable; refusing to signal it\n' >&2
-    return 1
+    return 0
 }
 
 reap_inner_harness() {
@@ -551,33 +600,51 @@ cleanup_runtime() {
                 "$wait_status" >&2
             cleanup_status=1
         fi
-    elif [[ -n $launcher_pid && $launcher_pid != "$runtime_pid" ]] &&
-        [[ -n $launcher_exe && -n $launcher_starttime ]] &&
-        process_matches_identity "$launcher_pid" "$launcher_exe" "$launcher_starttime"; then
-        kill -TERM "$launcher_pid" 2>/dev/null || true
+    elif [[ -n $launcher_pid && -n $launcher_starttime &&
+        $launcher_pid != "$runtime_pid" && $launcher_reaped == 0 ]]; then
+        local launcher_observation_status=0
+        if observe_allowed_launcher_transition; then
+            launcher_observation_status=0
+        else
+            launcher_observation_status=$?
+            if (( launcher_observation_status == 2 )); then
+                printf 'error: the owned launcher entered an unexpected executable state\n' >&2
+                cleanup_status=1
+            fi
+        fi
+        # Recheck the recorded direct-child PID/start-time identity rather than
+        # pinning cleanup to a transient env/bash executable that may
+        # legitimately change between observation and delivery of TERM.
+        if process_is_live_with_starttime "$launcher_pid" "$launcher_starttime"; then
+            kill -TERM "$launcher_pid" 2>/dev/null || true
+        fi
         for _ in $(seq 1 5); do
-            if ! process_matches_identity \
-                "$launcher_pid" "$launcher_exe" "$launcher_starttime"; then
+            if ! process_is_live_with_starttime \
+                "$launcher_pid" "$launcher_starttime"; then
                 break
             fi
             sleep 1
         done
-        if process_matches_identity \
-            "$launcher_pid" "$launcher_exe" "$launcher_starttime"; then
+        if process_is_live_with_starttime \
+            "$launcher_pid" "$launcher_starttime"; then
             kill -KILL "$launcher_pid" 2>/dev/null || true
             cleanup_status=1
         fi
         for _ in $(seq 1 5); do
-            process_matches_identity \
-                "$launcher_pid" "$launcher_exe" "$launcher_starttime" || break
+            process_is_live_with_starttime \
+                "$launcher_pid" "$launcher_starttime" || break
             sleep 1
         done
-        if ! process_matches_identity \
-            "$launcher_pid" "$launcher_exe" "$launcher_starttime"; then
+        if process_is_live_with_starttime \
+            "$launcher_pid" "$launcher_starttime"; then
+            printf 'error: the owned launcher survived identity-checked KILL\n' >&2
+            cleanup_status=1
+        else
             set +e
             wait "$launcher_pid"
             wait_status=$?
             set -e
+            launcher_reaped=1
         fi
     fi
     mapfile -t remaining_runtime_pids < <(find_runtime_pids)
@@ -695,6 +762,15 @@ handle_exit() {
 }
 handle_signal() {
     local signal_name=$1 exit_status=$2
+    if (( launcher_identity_capture_in_progress == 1 )); then
+        if (( deferred_signal_status == 0 )); then
+            deferred_signal_name=$signal_name
+            deferred_signal_status=$exit_status
+            printf 'Deferring %s until the owned launcher identity is committed.\n' \
+                "$signal_name" >&2
+        fi
+        return 0
+    fi
     trap - HUP INT TERM
     printf 'error: interrupted by %s; cancelling owned children and tearing down Unreal\n' \
         "$signal_name" >&2
@@ -728,40 +804,43 @@ if [[ $enable_csv == 1 ]]; then
 fi
 export UE5_SPARK_MIN_AVAILABLE_MEMORY_GIB="$min_start_available_memory_gib"
 export UE5_SPARK_MAX_START_GPU_UTILIZATION="$max_start_gpu_utilization"
+launcher_env_exe=$(readlink -f /usr/bin/env)
 launcher_bash_exe=$(readlink -f "$(command -v bash)")
-[[ -x $launcher_bash_exe ]] || fail 'could not resolve the Bash launcher interpreter'
+[[ -x $launcher_env_exe && -x $launcher_bash_exe ]] || \
+    fail 'could not resolve the reviewed launcher interpreters'
+launcher_identity_capture_in_progress=1
 "$launcher_bash_exe" "$digital_human_launcher" "$package_launcher" \
     "${runtime_arguments[@]}" "$@" >"$launcher_log" 2>&1 &
 launcher_pid=$!
-launcher_starttime=$(read_process_starttime "$launcher_pid" || true)
 launcher_exe=$launcher_bash_exe
 launcher_identity_stable=0
+for _ in $(seq 1 50); do
+    launcher_starttime=$(read_process_starttime "$launcher_pid" || true)
+    [[ -n $launcher_starttime ]] && break
+    sleep 0.1 || true
+done
 if [[ -n $launcher_starttime ]]; then
-    # A script started through `#!/usr/bin/env bash` briefly exposes `env` in
-    # /proc before Bash, and either interpreter can immediately exec Unreal.
-    # Invoke the reviewed interpreter directly and sample until one complete
-    # PID/start-time/executable tuple is stable across that handoff.
+    # The reviewed script chain can exec bash -> env -> bash -> Unreal while
+    # retaining one PID/start time. Executable is policy state, not ownership.
     for _ in $(seq 1 50); do
-        current_launcher_starttime=$(read_process_starttime "$launcher_pid" || true)
-        current_launcher_exe=$(readlink "/proc/$launcher_pid/exe" 2>/dev/null || true)
-        if [[ $current_launcher_starttime == "$launcher_starttime" &&
-            ( $current_launcher_exe == "$launcher_bash_exe" ||
-            $current_launcher_exe == "$expected_unreal_exe" ) ]] &&
-            process_matches_identity \
-                "$launcher_pid" "$current_launcher_exe" "$launcher_starttime"; then
-            launcher_exe=$current_launcher_exe
+        if observe_allowed_launcher_transition; then
             launcher_identity_stable=1
             break
+        else
+            launcher_observation_status=$?
         fi
-        sleep 0.1
+        if (( launcher_observation_status == 2 )); then
+            break
+        fi
+        sleep 0.1 || true
     done
+fi
+launcher_identity_capture_in_progress=0
+if (( deferred_signal_status != 0 )); then
+    handle_signal "$deferred_signal_name" "$deferred_signal_status"
 fi
 if (( launcher_identity_stable == 0 )); then
     fail 'could not establish the guarded launcher process identity'
-fi
-if [[ $launcher_exe != "$launcher_bash_exe" &&
-    $launcher_exe != "$expected_unreal_exe" ]]; then
-    fail 'the guarded launcher started as an unexpected executable'
 fi
 
 for _ in $(seq 1 90); do
@@ -770,28 +849,42 @@ for _ in $(seq 1 90); do
         fail 'more than one matching Unreal process appeared during launch'
     fi
     if (( ${#discovered_runtime_pids[@]} == 1 )); then
-        runtime_pid=${discovered_runtime_pids[0]}
-        runtime_exe=$(readlink "/proc/$runtime_pid/exe" 2>/dev/null || true)
-        runtime_starttime=$(read_process_starttime "$runtime_pid" || true)
-        if [[ $runtime_exe != "$expected_unreal_exe" || -z $runtime_starttime ]] ||
-            ! process_matches_identity "$runtime_pid" "$runtime_exe" "$runtime_starttime"; then
-            runtime_pid=''
-            runtime_exe=''
-            runtime_starttime=''
+        discovered_runtime_pid=${discovered_runtime_pids[0]}
+        discovered_runtime_exe=$(readlink "/proc/$discovered_runtime_pid/exe" 2>/dev/null || true)
+        discovered_runtime_starttime=$(read_process_starttime "$discovered_runtime_pid" || true)
+        if [[ $discovered_runtime_exe != "$expected_unreal_exe" ||
+            -z $discovered_runtime_starttime ]] ||
+            ! process_matches_identity \
+                "$discovered_runtime_pid" "$discovered_runtime_exe" \
+                "$discovered_runtime_starttime"; then
             sleep 1
             continue
         fi
-        if [[ $launcher_pid != "$runtime_pid" ||
-            $launcher_starttime != "$runtime_starttime" ]]; then
+        if [[ $launcher_pid != "$discovered_runtime_pid" ||
+            $launcher_starttime != "$discovered_runtime_starttime" ]]; then
             fail 'the guarded launcher did not exec Unreal with the same PID and start time'
         fi
+        runtime_exe=$discovered_runtime_exe
+        runtime_starttime=$discovered_runtime_starttime
+        runtime_pid=$discovered_runtime_pid
+        launcher_exe=$runtime_exe
+        launcher_reached_unreal=1
         break
     fi
-    current_launcher_exe=$(readlink "/proc/$launcher_pid/exe" 2>/dev/null || true)
-    current_launcher_starttime=$(read_process_starttime "$launcher_pid" || true)
-    if [[ $current_launcher_starttime != "$launcher_starttime" ||
-        ( $current_launcher_exe != "$launcher_exe" &&
-        $current_launcher_exe != "$expected_unreal_exe" ) ]]; then
+    if observe_allowed_launcher_transition; then
+        :
+    else
+        launcher_observation_status=$?
+        if (( launcher_observation_status == 2 )); then
+            fail "the guarded launcher entered an unexpected executable; inspect $launcher_log"
+        fi
+        if ! process_is_live_with_starttime "$launcher_pid" "$launcher_starttime"; then
+            fail "the guarded launcher exited before Unreal started; inspect $launcher_log"
+        fi
+    fi
+    if (( launcher_reached_unreal == 1 )) &&
+        ! process_matches_identity \
+            "$launcher_pid" "$expected_unreal_exe" "$launcher_starttime"; then
         fail "the guarded launcher exited before Unreal started; inspect $launcher_log"
     fi
     sleep 1

@@ -46,9 +46,14 @@ sends `TERM` only to that process, and waits up to 30 seconds for an ordinary
 exit. If the same executable and Linux `/proc` start time are still present, it
 sends `KILL`, reaps the owned child, and fails the run rather than leaving a
 project process behind or treating forced termination as qualification. The
-launcher may retain its PID and start time while changing only from the Bash
-wrapper to the expected sealed Unreal executable; any other executable
-transition is refused and never signaled.
+launcher is owned by its immutable child PID and Linux `/proc` start time.
+Before runtime it may move repeatedly through only the exact canonical Bash
+and `/usr/bin/env` interpreters used by the reviewed script chain. The expected
+sealed Unreal executable is a terminal state. A scanned Unreal PID is never
+adopted until it matches that original PID and start time; a collision or any
+unexpected transition fails the run. Early-error cleanup still terminates and
+reaps the known child by that immutable identity so an allowed interpreter
+handoff cannot strand Unreal.
 
 The strict harness runs in a project-owned process session with a derived,
 finite wall-clock deadline. `HUP`, `INT`, `TERM`, timeout, and ordinary error
