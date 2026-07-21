@@ -363,7 +363,10 @@ for record in git_output("ls-files", "--stage", "-z").split(b"\0"):
 
 python_sources = (
     Path("tools/fay-avatar-smoke-test.py"),
+    Path("tools/validate_ardy_service.py"),
+    Path("tools/tests/test_activate_ardy_provider.py"),
     Path("tools/tests/test_run_spark_avatar_gate.py"),
+    Path("tools/tests/test_validate_ardy_service.py"),
     Path("scripts/character-profiles.py"),
     Path("scripts/cook-state.py"),
     Path("scripts/inspect-metahuman-runtime-contract.py"),
@@ -728,7 +731,11 @@ for marker in (
     "arrays_are_equal fay_listener_bindings_before fay_listener_bindings_after",
     "other_owner=$(grep -oE 'pid=[0-9]+,'",
     "capture_ardy_snapshot ardy_after",
-    "arrays_are_equal ardy_before ardy_after",
+    "ardy_immutable_snapshot_is_equal ardy_before ardy_after",
+    'value.get("provider") != "ardy"',
+    'value.get("checkpoint") != "ARDY-Core-RP-20FPS-Horizon8"',
+    'value["embeddingCount"] != 3',
+    "not 0.0 < p95 < 400.0",
     '"$gate_root/gate-before.txt"',
     '"$gate_root/gate-after.txt"',
     '"$gate_root/gate-result.txt"',
@@ -1044,8 +1051,10 @@ PY
 fi
 
 if [[ -n $python_bin ]] && ! "$python_bin" -m unittest \
-    tools.tests.test_run_spark_avatar_gate; then
-    fail 'guarded Spark avatar gate tests failed'
+    tools.tests.test_activate_ardy_provider \
+    tools.tests.test_run_spark_avatar_gate \
+    tools.tests.test_validate_ardy_service; then
+    fail 'guarded Spark ARDY and avatar gate tests failed'
 fi
 
 if [[ -n $python_bin ]] && ! "$python_bin" -m unittest discover \

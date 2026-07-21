@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import re
 import shutil
 import subprocess
@@ -130,10 +131,80 @@ wait "$runner_pid"
             "arrays_are_equal fay_listener_bindings_before fay_listener_bindings_after",
             "other_owner=$(grep -oE 'pid=[0-9]+,'",
             "capture_ardy_snapshot ardy_after",
-            "arrays_are_equal ardy_before ardy_after",
+            "ardy_immutable_snapshot_is_equal ardy_before ardy_after",
             "loopback_listener_owned_by_pid 8777",
+            'value.get("provider") != "ardy"',
+            'value.get("checkpoint") != "ARDY-Core-RP-20FPS-Horizon8"',
+            'value["embeddingCount"] != 3',
+            "not 0.0 < p95 < 400.0",
+            '"ardy_p95_generation_ms=${ardy_after[18]:-not-available}"',
         ):
             self.assertIn(marker, self.source)
+
+    def test_ardy_health_parser_rejects_nonsealed_payloads(self) -> None:
+        prefix = 'printf \'%s\' "$body" | python3 -c \'\n'
+        start = self.source.index(prefix) + len(prefix)
+        end = self.source.index("\n'\n", start)
+        parser = self.source[start:end]
+        valid = {
+            "status": "ready",
+            "provider": "ardy",
+            "protocolVersion": 1,
+            "fps": 20,
+            "bufferFrames": 8,
+            "facialControl": "excluded",
+            "checkpoint": "ARDY-Core-RP-20FPS-Horizon8",
+            "embeddingCount": 3,
+            "p95GenerationMs": 212.343,
+        }
+
+        def parse(payload: object) -> subprocess.CompletedProcess[str]:
+            return subprocess.run(
+                (sys.executable, "-c", parser),
+                input=json.dumps(payload),
+                check=False,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+
+        accepted = parse(valid)
+        self.assertEqual(accepted.returncode, 0, accepted.stderr)
+        self.assertEqual(
+            accepted.stdout.splitlines(),
+            ["ardy", "ARDY-Core-RP-20FPS-Horizon8", "3", "212.343"],
+        )
+        invalid_cases = []
+        for key, value in (
+            ("provider", "mock"),
+            ("status", "degraded"),
+            ("checkpoint", "ARDY-Core-RP-20FPS-Horizon40"),
+            ("embeddingCount", 2),
+            ("embeddingCount", 3.0),
+            ("p95GenerationMs", 0.0),
+            ("p95GenerationMs", 400.0),
+            ("protocolVersion", True),
+        ):
+            changed = dict(valid)
+            changed[key] = value
+            invalid_cases.append(changed)
+        missing = dict(valid)
+        missing.pop("checkpoint")
+        invalid_cases.append(missing)
+        extra = dict(valid)
+        extra["unexpected"] = True
+        invalid_cases.append(extra)
+        for payload in invalid_cases:
+            with self.subTest(payload=payload):
+                self.assertNotEqual(parse(payload).returncode, 0)
+
+    def test_ardy_immutable_comparator_excludes_only_latency(self) -> None:
+        function_start = self.source.index("ardy_immutable_snapshot_is_equal() {")
+        function_end = self.source.index("\n\narray_digest() {", function_start)
+        comparator = self.source[function_start:function_end]
+        self.assertIn("${#left[@]} == 19", comparator)
+        self.assertIn("for index in $(seq 0 17); do", comparator)
+        self.assertNotIn("${left[18]}", comparator)
 
     def test_restore_and_runner_ownership_are_on_every_exit_path(self) -> None:
         restore_arm = self.source.index("voxtral_restore_required=1")

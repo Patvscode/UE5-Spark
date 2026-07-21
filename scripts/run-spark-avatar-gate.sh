@@ -250,29 +250,59 @@ probe_ardy_health() {
     mapfile -t health < <(
         printf '%s' "$body" | python3 -c '
 import json
+import math
 import sys
 
 value = json.load(sys.stdin)
-if not isinstance(value, dict):
+expected_keys = {
+    "status",
+    "provider",
+    "protocolVersion",
+    "fps",
+    "bufferFrames",
+    "facialControl",
+    "checkpoint",
+    "embeddingCount",
+    "p95GenerationMs",
+}
+if not isinstance(value, dict) or set(value) != expected_keys:
     raise SystemExit(1)
 if value.get("status") != "ready":
     raise SystemExit(1)
-if value.get("provider") not in {"mock", "ardy"}:
+if value.get("provider") != "ardy":
     raise SystemExit(1)
-if value.get("protocolVersion") != 1 or value.get("fps") != 20:
+if type(value.get("protocolVersion")) is not int or value["protocolVersion"] != 1:
     raise SystemExit(1)
-if value.get("bufferFrames") != 8 or value.get("facialControl") != "excluded":
+if type(value.get("fps")) is not int or value["fps"] != 20:
+    raise SystemExit(1)
+if type(value.get("bufferFrames")) is not int or value["bufferFrames"] != 8:
+    raise SystemExit(1)
+if value.get("facialControl") != "excluded":
+    raise SystemExit(1)
+if value.get("checkpoint") != "ARDY-Core-RP-20FPS-Horizon8":
+    raise SystemExit(1)
+if type(value.get("embeddingCount")) is not int or value["embeddingCount"] != 3:
+    raise SystemExit(1)
+p95 = value.get("p95GenerationMs")
+if isinstance(p95, bool) or not isinstance(p95, (int, float)):
+    raise SystemExit(1)
+p95 = float(p95)
+if not math.isfinite(p95) or not 0.0 < p95 < 400.0:
     raise SystemExit(1)
 print(value["provider"])
+print(value["checkpoint"])
+print(value["embeddingCount"])
+print(p95)
 '
     )
-    (( ${#health[@]} == 1 )) || return 1
-    printf '%s\n' "${health[0]}"
+    (( ${#health[@]} == 4 )) || return 1
+    printf '%s\n' "${health[@]}"
 }
 
 capture_ardy_snapshot() {
     local -n destination=$1
-    local ardy_pid ardy_exe ardy_starttime ardy_provider
+    local ardy_pid ardy_exe ardy_starttime
+    local -a ardy_health=()
     destination=()
     mapfile -t destination < <(
         docker inspect --type container "$ARDY_CONTAINER" | python3 -c '
@@ -325,8 +355,9 @@ for value in values:
     [[ $ardy_exe == */python* && -n $ardy_starttime ]] || return 1
     process_matches_identity "$ardy_pid" "$ardy_exe" "$ardy_starttime" || return 1
     loopback_listener_owned_by_pid 8777 "$ardy_pid" || return 1
-    ardy_provider=$(probe_ardy_health) || return 1
-    destination+=("$ardy_exe" "$ardy_starttime" "$ardy_provider")
+    mapfile -t ardy_health < <(probe_ardy_health)
+    (( ${#ardy_health[@]} == 4 )) || return 1
+    destination+=("$ardy_exe" "$ardy_starttime" "${ardy_health[@]}")
 }
 
 arrays_are_equal() {
@@ -334,6 +365,15 @@ arrays_are_equal() {
     local index
     (( ${#left[@]} == ${#right[@]} )) || return 1
     for index in "${!left[@]}"; do
+        [[ ${left[$index]} == "${right[$index]}" ]] || return 1
+    done
+}
+
+ardy_immutable_snapshot_is_equal() {
+    local -n left=$1 right=$2
+    local index
+    (( ${#left[@]} == 19 && ${#right[@]} == 19 )) || return 1
+    for index in $(seq 0 17); do
         [[ ${left[$index]} == "${right[$index]}" ]] || return 1
     done
 }
@@ -569,7 +609,7 @@ write_final_record() {
 
 write_after_record() {
     local models_mount_sha256=not-available fay_listener_bindings_sha256=not-available
-    if (( ${#ardy_after[@]} == 16 )); then
+    if (( ${#ardy_after[@]} == 19 )); then
         models_mount_sha256=$(printf '%s' "${ardy_after[10]}" | sha256sum)
         models_mount_sha256=${models_mount_sha256%% *}
     fi
@@ -596,6 +636,9 @@ write_after_record() {
         "ardy_process_executable=${ardy_after[13]:-not-available}" \
         "ardy_process_starttime=${ardy_after[14]:-not-available}" \
         "ardy_provider=${ardy_after[15]:-not-available}" \
+        "ardy_checkpoint=${ardy_after[16]:-not-available}" \
+        "ardy_embedding_count=${ardy_after[17]:-not-available}" \
+        "ardy_p95_generation_ms=${ardy_after[18]:-not-available}" \
         "ardy_identity_unchanged=$ardy_identity_unchanged" \
         "voxtral_unit=$VOXTRAL_UNIT" \
         "voxtral_pid=${voxtral_after[1]:-not-available}" \
@@ -664,7 +707,8 @@ on_exit() {
     fi
 
     if (( ardy_snapshot_ready == 1 )); then
-        if capture_ardy_snapshot ardy_after && arrays_are_equal ardy_before ardy_after; then
+        if capture_ardy_snapshot ardy_after && \
+            ardy_immutable_snapshot_is_equal ardy_before ardy_after; then
             ardy_identity_unchanged=passed
         else
             ardy_identity_unchanged=failed
@@ -766,6 +810,9 @@ write_record "$gate_root/gate-before.txt" \
     "ardy_starttime=${ardy_before[14]}" \
     "ardy_process_executable=${ardy_before[13]}" \
     "ardy_provider=${ardy_before[15]}" \
+    "ardy_checkpoint=${ardy_before[16]}" \
+    "ardy_embedding_count=${ardy_before[17]}" \
+    "ardy_p95_generation_ms=${ardy_before[18]}" \
     "ardy_models_mount_sha256=$models_mount_sha256" \
     "voxtral_unit=$VOXTRAL_UNIT" \
     "voxtral_pid=${voxtral_before[1]}" \
@@ -786,7 +833,8 @@ capture_fay_listener_bindings fay_listener_bindings_after || \
 arrays_are_equal fay_listener_bindings_before fay_listener_bindings_after || \
     fail 'Fay listener bindings changed during package verification'
 capture_ardy_snapshot ardy_after || fail 'ARDY changed during package verification'
-arrays_are_equal ardy_before ardy_after || fail 'ARDY changed during package verification'
+ardy_immutable_snapshot_is_equal ardy_before ardy_after || \
+    fail 'ARDY changed during package verification'
 capture_voxtral_snapshot voxtral_after || fail 'Voxtral changed during package verification'
 [[ ${voxtral_after[1]} == "${voxtral_before[1]}" && \
     ${voxtral_after[2]} == "${voxtral_before[2]}" && \
