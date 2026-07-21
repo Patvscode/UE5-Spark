@@ -32,6 +32,12 @@ shift 5
 [[ $fay_pid =~ ^[1-9][0-9]*$ ]] || fail 'FAY_PID must be a positive integer'
 [[ $duration =~ ^[1-9][0-9]*$ && $turn_count =~ ^[0-9]+$ ]] || \
     fail 'duration must be positive and turn count must be a non-negative integer'
+idle_warmup_seconds=${FAY_SOAK_IDLE_WARMUP_SECONDS:-120}
+[[ $idle_warmup_seconds =~ ^[0-9]+$ ]] || \
+    fail 'FAY_SOAK_IDLE_WARMUP_SECONDS must be a non-negative integer'
+if (( turn_count == 0 && duration < idle_warmup_seconds + 300 )); then
+    fail 'an idle diagnostic must include its warm-up plus at least 300 measured seconds'
+fi
 
 for command_name in basename grep kill mkdir ps readlink realpath seq sleep ss stat tail; do
     command -v "$command_name" >/dev/null 2>&1 || fail "missing command: $command_name"
@@ -64,7 +70,6 @@ character=${FAY_SOAK_CHARACTER:-Ada}
 enable_csv=${FAY_SOAK_ENABLE_CSV:-0}
 csv_capture_frames=${FAY_SOAK_CSV_CAPTURE_FRAMES:-60000}
 csv_compression=${FAY_SOAK_CSV_COMPRESSION:-0}
-idle_warmup_seconds=${FAY_SOAK_IDLE_WARMUP_SECONDS:-120}
 [[ $res_x =~ ^[1-9][0-9]*$ && $res_y =~ ^[1-9][0-9]*$ ]] || \
     fail 'FAY_SOAK_EXPECTED_RES_X/Y must be positive integers'
 [[ $character == Ada || $character == Aoi ]] || \
@@ -74,11 +79,6 @@ idle_warmup_seconds=${FAY_SOAK_IDLE_WARMUP_SECONDS:-120}
     fail 'FAY_SOAK_CSV_CAPTURE_FRAMES must be a positive integer'
 [[ $csv_compression =~ ^[01]$ ]] || \
     fail 'FAY_SOAK_CSV_COMPRESSION must be 0 or 1'
-[[ $idle_warmup_seconds =~ ^[0-9]+$ ]] || \
-    fail 'FAY_SOAK_IDLE_WARMUP_SECONDS must be a non-negative integer'
-if (( turn_count == 0 && duration < idle_warmup_seconds + 300 )); then
-    fail 'an idle diagnostic must include its warm-up plus at least 300 measured seconds'
-fi
 for argument in "$@"; do
     case "${argument,,}" in
         -nullrhi|-resx=*|-resy=*|-csvcaptureframes=*|-csvcompression=*)
