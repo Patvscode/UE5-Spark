@@ -3,6 +3,7 @@
 #include "Animation/AnimInstance.h"
 #include "Animation/AnimMontage.h"
 #include "Components/SkeletalMeshComponent.h"
+#include "Engine/SkeletalMesh.h"
 #include "FayArdyPoseClientComponent.h"
 #include "FayBodyMotionProvider.h"
 #include "GameFramework/Actor.h"
@@ -30,6 +31,40 @@ bool IsDeterministicBehavior(const FName Behavior)
     return Behavior == TEXT("wave") || Behavior == TEXT("invite") ||
         Behavior == TEXT("think") || Behavior == TEXT("warn") ||
         Behavior == TEXT("nod") || Behavior == TEXT("shake");
+}
+
+constexpr int32 Core27JointCount = 27;
+constexpr float GeneratedBlendInSeconds = 0.25f;
+constexpr float MaximumRootOffsetCentimetres = 20.0f;
+
+const TArray<FName>& Core27TargetBones()
+{
+    // Neck/head and the sparse Core27 hand endpoints remain intentionally
+    // unmapped. StreamingADA and reviewed hand poses retain those controls.
+    static const TArray<FName> Bones = {
+        TEXT("pelvis"),
+        TEXT("spine_01"), TEXT("spine_02"), TEXT("spine_03"), TEXT("spine_05"),
+        NAME_None, NAME_None,
+        TEXT("clavicle_r"), TEXT("upperarm_r"), TEXT("lowerarm_r"), TEXT("hand_r"),
+        NAME_None, NAME_None,
+        TEXT("clavicle_l"), TEXT("upperarm_l"), TEXT("lowerarm_l"), TEXT("hand_l"),
+        NAME_None, NAME_None,
+        TEXT("thigh_r"), TEXT("calf_r"), TEXT("foot_r"), TEXT("ball_r"),
+        TEXT("thigh_l"), TEXT("calf_l"), TEXT("foot_l"), TEXT("ball_l")};
+    return Bones;
+}
+
+FQuat ConvertArdyRotationToUnreal(const FQuat4f& Rotation)
+{
+    // ARDY X-right/Y-up/Z-forward -> Unreal X-forward/Y-right/Z-up.
+    FQuat Converted(Rotation.Z, Rotation.X, Rotation.Y, Rotation.W);
+    Converted.Normalize();
+    return Converted;
+}
+
+FVector ConvertArdyTranslationToUnrealCentimetres(const FVector3f& Translation)
+{
+    return FVector(Translation.Z, Translation.X, Translation.Y) * 100.0;
 }
 
 USkeletalMeshComponent* FindNamedBodyMesh(AActor* Avatar, const FName ComponentName)
@@ -247,11 +282,175 @@ bool UFayBodyMotionComponent::ConfigureAvatar(
     }
 
     BakedProvider = MakeUnique<FBakedMotionProvider>(BodyMesh, &BakedMontages);
+    bGeneratedRetargetReady = ConfigureGeneratedRetarget();
     ArdyProvider = MakeUnique<FArdyMotionProvider>(ArdyClient, &bGeneratedRetargetReady);
     SetState(EFayBodyMotionState::Idle, EFayBodyMotionProvider::Baked);
     UE_LOG(LogFayBodyMotion, Display,
-        TEXT("Configured character-neutral body-motion routing (face/head excluded, ARDY disabled until buffered validation)."));
+        TEXT("Configured character-neutral body-motion routing (face/head excluded, generated retarget=%s)."),
+        bGeneratedRetargetReady ? TEXT("ready") : TEXT("disabled"));
     return true;
+}
+
+bool UFayBodyMotionComponent::ConfigureGeneratedRetarget()
+{
+    if (!IsValid(BodyMesh) || !IsValid(BodyMesh->GetSkeletalMeshAsset()) ||
+        !IsValid(BodyMesh->GetAnimInstance()))
+    {
+        return false;
+    }
+    const TArray<FName>& TargetBones = Core27TargetBones();
+    if (TargetBones.Num() != Core27JointCount)
+    {
+        return false;
+    }
+    Core27TargetBoneIndices.SetNum(Core27JointCount);
+    int32 MappedBodyBones = 0;
+    for (int32 Index = 0; Index < TargetBones.Num(); ++Index)
+    {
+        Core27TargetBoneIndices[Index] = TargetBones[Index].IsNone()
+            ? INDEX_NONE
+            : BodyMesh->GetBoneIndex(TargetBones[Index]);
+        if (!TargetBones[Index].IsNone() && Core27TargetBoneIndices[Index] == INDEX_NONE)
+        {
+            UE_LOG(LogFayBodyMotion, Warning,
+                TEXT("Generated retarget disabled: reviewed target bone '%s' is absent."),
+                *TargetBones[Index].ToString());
+            Core27TargetBoneIndices.Reset();
+            return false;
+        }
+        MappedBodyBones += Core27TargetBoneIndices[Index] != INDEX_NONE ? 1 : 0;
+    }
+    if (MappedBodyBones < 19)
+    {
+        Core27TargetBoneIndices.Reset();
+        return false;
+    }
+
+    ResetRetargetCalibration();
+    BodyTransformsFinalizedHandle = BodyMesh->RegisterOnBoneTransformsFinalizedDelegate(
+        FOnBoneTransformsFinalizedMultiCast::FDelegate::CreateUObject(
+            this,
+            &UFayBodyMotionComponent::HandleBodyTransformsFinalized));
+    return BodyTransformsFinalizedHandle.IsValid();
+}
+
+void UFayBodyMotionComponent::HandleBodyTransformsFinalized()
+{
+    if (!bGeneratedRetargetReady || !IsValid(BodyMesh) || !IsValid(ArdyClient) ||
+        ActiveProvider != EFayBodyMotionProvider::Ardy)
+    {
+        GeneratedBlendWeight = 0.0f;
+        return;
+    }
+
+    const UWorld* World = GetWorld();
+    const double Now = World != nullptr ? World->GetTimeSeconds() : 0.0;
+    const float DeltaSeconds = LastRetargetSampleSeconds > 0.0
+        ? static_cast<float>(FMath::Clamp(Now - LastRetargetSampleSeconds, 0.0, 0.1))
+        : 1.0f / 60.0f;
+    LastRetargetSampleSeconds = Now;
+
+    FFayArdyPoseFrame Pose;
+    const bool bHasFreshPose = ArdyClient->SamplePose(DeltaSeconds, Pose) &&
+        Pose.JointRotations.Num() == Core27JointCount;
+    if (!bHasFreshPose)
+    {
+        GeneratedBlendWeight = FMath::Max(
+            0.0f,
+            GeneratedBlendWeight - DeltaSeconds / GeneratedBlendInSeconds);
+        if (!bHasLastGeneratedPose || GeneratedBlendWeight <= 0.0f)
+        {
+            return;
+        }
+        Pose = LastGeneratedPose;
+    }
+    else
+    {
+        LastGeneratedPose = Pose;
+        bHasLastGeneratedPose = true;
+    }
+
+    if (ArdyBaselineLocalRotations.Num() != Core27JointCount)
+    {
+        ArdyBaselineLocalRotations = Pose.JointRotations;
+        ArdyBaselineRootTranslation = Pose.RootTranslationMetres;
+        GeneratedBlendWeight = 0.0f;
+        return;
+    }
+
+    if (bHasFreshPose)
+    {
+        GeneratedBlendWeight = FMath::Min(
+            1.0f,
+            GeneratedBlendWeight + DeltaSeconds / GeneratedBlendInSeconds);
+    }
+
+    // FinalizeBoneTransform has just flipped the evaluated pose into the read
+    // buffer. This callback still precedes attachment, bounds, and render-data
+    // updates. The compatibility write is limited to the pinned UE 5.8 build
+    // and the validated skeleton mapping above.
+    const TArray<FTransform>& EvaluatedTransforms = BodyMesh->GetComponentSpaceTransforms();
+    if (EvaluatedTransforms.Num() != BodyMesh->GetNumBones())
+    {
+        return;
+    }
+    TArray<FTransform> OriginalTransforms = EvaluatedTransforms;
+    TArray<FTransform>& OutputTransforms =
+        const_cast<TArray<FTransform>&>(BodyMesh->GetComponentSpaceTransforms());
+    const FReferenceSkeleton& ReferenceSkeleton =
+        BodyMesh->GetSkeletalMeshAsset()->GetRefSkeleton();
+
+    TMap<int32, FQuat> BoneDeltas;
+    for (int32 JointIndex = 0; JointIndex < Core27JointCount; ++JointIndex)
+    {
+        const int32 BoneIndex = Core27TargetBoneIndices[JointIndex];
+        if (BoneIndex == INDEX_NONE || BoneIndex >= OutputTransforms.Num())
+        {
+            continue;
+        }
+        FQuat4f Delta = Pose.JointRotations[JointIndex] *
+            ArdyBaselineLocalRotations[JointIndex].Inverse();
+        Delta.Normalize();
+        FQuat ConvertedDelta = ConvertArdyRotationToUnreal(Delta);
+        ConvertedDelta = FQuat::Slerp(FQuat::Identity, ConvertedDelta, GeneratedBlendWeight);
+        BoneDeltas.Add(BoneIndex, ConvertedDelta);
+    }
+
+    FVector RootOffset = ConvertArdyTranslationToUnrealCentimetres(
+        Pose.RootTranslationMetres - ArdyBaselineRootTranslation);
+    RootOffset = RootOffset.GetClampedToMaxSize(MaximumRootOffsetCentimetres) *
+        GeneratedBlendWeight;
+    const int32 PelvisIndex = Core27TargetBoneIndices[0];
+
+    for (int32 BoneIndex = 0; BoneIndex < OutputTransforms.Num(); ++BoneIndex)
+    {
+        const int32 ParentIndex = ReferenceSkeleton.GetParentIndex(BoneIndex);
+        FTransform LocalTransform = ParentIndex == INDEX_NONE
+            ? OriginalTransforms[BoneIndex]
+            : OriginalTransforms[BoneIndex].GetRelativeTransform(
+                OriginalTransforms[ParentIndex]);
+        if (const FQuat* Delta = BoneDeltas.Find(BoneIndex))
+        {
+            LocalTransform.SetRotation((*Delta * LocalTransform.GetRotation()).GetNormalized());
+        }
+        if (BoneIndex == PelvisIndex)
+        {
+            LocalTransform.AddToTranslation(RootOffset);
+        }
+        OutputTransforms[BoneIndex] = ParentIndex == INDEX_NONE
+            ? LocalTransform
+            : LocalTransform * OutputTransforms[ParentIndex];
+    }
+}
+
+void UFayBodyMotionComponent::ResetRetargetCalibration()
+{
+    ArdyBaselineLocalRotations.Reset();
+    ArdyBaselineRootTranslation = FVector3f::ZeroVector;
+    LastGeneratedPose = FFayArdyPoseFrame();
+    GeneratedBlendWeight = 0.0f;
+    LastRetargetSampleSeconds = 0.0;
+    bHasLastGeneratedPose = false;
 }
 
 bool UFayBodyMotionComponent::PerformAction(
@@ -376,6 +575,14 @@ void UFayBodyMotionComponent::ResetProviders()
     }
     BakedProvider.Reset();
     ArdyProvider.Reset();
+    if (IsValid(BodyMesh) && BodyTransformsFinalizedHandle.IsValid())
+    {
+        BodyMesh->UnregisterOnBoneTransformsFinalizedDelegate(BodyTransformsFinalizedHandle);
+        BodyTransformsFinalizedHandle.Reset();
+    }
+    ResetRetargetCalibration();
+    Core27TargetBoneIndices.Reset();
+    bGeneratedRetargetReady = false;
     BodyMesh = nullptr;
     Avatar = nullptr;
     SetState(EFayBodyMotionState::Unconfigured, EFayBodyMotionProvider::Baked);

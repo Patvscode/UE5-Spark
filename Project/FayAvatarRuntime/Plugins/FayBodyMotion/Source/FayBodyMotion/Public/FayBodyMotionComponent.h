@@ -83,6 +83,9 @@ private:
     bool Dispatch(const FFayBodyMotionRequest& Request);
     void EnterBakedIdle(FName FailedBehavior, const FString& Reason);
     void ResetProviders();
+    bool ConfigureGeneratedRetarget();
+    void HandleBodyTransformsFinalized();
+    void ResetRetargetCalibration();
 
     UPROPERTY(Transient)
     TObjectPtr<UFayAvatarBridgeComponent> Bridge;
@@ -101,4 +104,12 @@ private:
     EFayBodyMotionState MotionState = EFayBodyMotionState::Unconfigured;
     EFayBodyMotionProvider ActiveProvider = EFayBodyMotionProvider::Baked;
     bool bGeneratedRetargetReady = false;
+    FDelegateHandle BodyTransformsFinalizedHandle;
+    TArray<int32> Core27TargetBoneIndices;
+    TArray<FQuat4f> ArdyBaselineLocalRotations;
+    FVector3f ArdyBaselineRootTranslation = FVector3f::ZeroVector;
+    FFayArdyPoseFrame LastGeneratedPose;
+    float GeneratedBlendWeight = 0.0f;
+    double LastRetargetSampleSeconds = 0.0;
+    bool bHasLastGeneratedPose = false;
 };

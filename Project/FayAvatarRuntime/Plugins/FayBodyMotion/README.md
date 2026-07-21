@@ -16,11 +16,13 @@ The current verified boundary provides:
   non-Core27 data; and
 - forced exclusion of facial, neck, and head ownership from generated motion.
 
-The ARDY client and provider compile for Linux ARM64. Generated motion remains
-disabled at the final provider switch until the post-evaluation MetaHuman
-Control Rig/IK retarget adapter passes face-conflict and teardown tests. This is
-intentional: the plugin never replaces Ada's proven StreamingADA Body
-`ULiveLinkInstance` merely to make a generated pose appear.
+The ARDY client, provider, and guarded UE 5.8 post-evaluation retarget adapter
+compile for Linux ARM64. The adapter preserves Ada's proven StreamingADA Body
+`ULiveLinkInstance`, calibrates generated rotations against the first buffered
+pose, and directly excludes neck, head, and sparse hand endpoints. Missing
+bones, malformed data, a buffer underrun, or daemon loss returns control to the
+ordinary evaluated pose. The adapter is enabled only after the reviewed
+MetaHuman body mapping validates at runtime.
 
 Licensed character assets, animation montages, checkpoints, prompt embeddings,
 and cooked packages are not part of this repository.
