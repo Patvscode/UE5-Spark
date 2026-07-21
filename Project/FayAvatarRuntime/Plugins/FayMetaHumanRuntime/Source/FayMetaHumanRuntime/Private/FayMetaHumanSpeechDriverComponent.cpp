@@ -10,6 +10,8 @@
 #include "ILiveLinkSource.h"
 #include "LiveLinkInstance.h"
 #include "LiveLinkTypes.h"
+#include "Misc/CommandLine.h"
+#include "Misc/Parse.h"
 #include "Modules/ModuleManager.h"
 #include "NNEModelData.h"
 #include "Roles/LiveLinkBasicRole.h"
@@ -958,6 +960,17 @@ UFayMetaHumanSpeechDriverComponent::UFayMetaHumanSpeechDriverComponent()
 void UFayMetaHumanSpeechDriverComponent::BeginPlay()
 {
     Super::BeginPlay();
+    int32 ResetCacheOverride = bResetSolverCacheBetweenUtterances ? 1 : 0;
+    if (FParse::Value(
+            FCommandLine::Get(),
+            TEXT("FayResetSpeechCache="),
+            ResetCacheOverride))
+    {
+        bResetSolverCacheBetweenUtterances = ResetCacheOverride != 0;
+    }
+    UE_LOG(LogFayMetaHumanRuntime, Display,
+        TEXT("StreamingADA utterance cache reset is %s."),
+        bResetSolverCacheBetweenUtterances ? TEXT("enabled") : TEXT("disabled"));
     InitializeSolverAndSource();
 }
 
@@ -1539,7 +1552,10 @@ void UFayMetaHumanSpeechDriverComponent::HandleDecodedPcm(
     RemainingTailSteps = TailSolveSteps;
     MoodValue = static_cast<uint8>(ResolveMood(Message));
     MoodIntensity = ResolveMoodIntensity(Message);
-    RuntimeState->Solver->ClearCache();
+    if (bResetSolverCacheBetweenUtterances)
+    {
+        RuntimeState->Solver->ClearCache();
+    }
     bSpeechPrepared = true;
 }
 

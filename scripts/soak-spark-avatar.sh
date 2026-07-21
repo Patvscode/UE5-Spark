@@ -16,10 +16,13 @@ fay_pid=$2
 output_input=$3
 duration=$4
 turn_count=$5
+max_tail_rss_growth_kb=${FAY_SOAK_MAX_TAIL_RSS_GROWTH_KB:-262144}
 [[ $unreal_pid =~ ^[1-9][0-9]*$ && $fay_pid =~ ^[1-9][0-9]*$ ]] || \
     fail 'PIDs must be positive integers'
 [[ $duration =~ ^[1-9][0-9]*$ && $turn_count =~ ^[1-9][0-9]*$ ]] || \
     fail 'duration and turn count must be positive integers'
+[[ $max_tail_rss_growth_kb =~ ^[0-9]+$ ]] || \
+    fail 'FAY_SOAK_MAX_TAIL_RSS_GROWTH_KB must be a non-negative integer'
 (( duration >= turn_count && turn_count <= 100 )) || \
     fail 'duration must cover every turn and turn count must not exceed 100'
 for command_name in curl date mkdir nvidia-smi ps readlink ss; do
@@ -85,8 +88,16 @@ end=$(date +%s)
 first_rss=$(awk 'NR==2 {print $3}' "$metrics")
 last_rss=$(awk 'END {print $3}' "$metrics")
 max_rss=$(awk 'NR>1 && $3>m {m=$3} END {print m+0}' "$metrics")
+tail_start_row=$((2 + turn_count / 2))
+tail_start_rss=$(awk -v row="$tail_start_row" 'NR==row {print $3}' "$metrics")
+tail_rss_growth_kb=$((last_rss - tail_start_rss))
+(( tail_rss_growth_kb < 0 )) && tail_rss_growth_kb=0
+status=passed
+if (( tail_rss_growth_kb > max_tail_rss_growth_kb )); then
+    status=failed
+fi
 {
-    printf 'status=passed\n'
+    printf 'status=%s\n' "$status"
     printf 'duration_seconds=%s\n' "$((end - start))"
     printf 'turns=%s\n' "$turn_count"
     printf 'unreal_pid=%s\n' "$unreal_pid"
@@ -94,7 +105,12 @@ max_rss=$(awk 'NR>1 && $3>m {m=$3} END {print m+0}' "$metrics")
     printf 'rss_first_kb=%s\n' "$first_rss"
     printf 'rss_last_kb=%s\n' "$last_rss"
     printf 'rss_max_kb=%s\n' "$max_rss"
+    printf 'rss_tail_start_kb=%s\n' "$tail_start_rss"
+    printf 'rss_tail_growth_kb=%s\n' "$tail_rss_growth_kb"
+    printf 'rss_tail_growth_limit_kb=%s\n' "$max_tail_rss_growth_kb"
 } >"$summary"
+if [[ $status != passed ]]; then
+    fail "Unreal RSS grew by ${tail_rss_growth_kb} KB in the latter half of the soak (limit: ${max_tail_rss_growth_kb} KB)"
+fi
 printf 'Soak test passed: %s turn(s) over %s second(s).\n' "$turn_count" "$((end - start))"
 printf 'Private metrics: %s\n' "$metrics"
-

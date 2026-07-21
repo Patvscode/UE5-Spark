@@ -77,6 +77,14 @@ public:
         meta = (ClampMin = "2", ClampMax = "8"))
     int32 MaximumCatchUpSolveStepsPerTick = 4;
 
+    /**
+     * Reset StreamingADA's internal history before each independent utterance.
+     * The packaged runtime accepts -FayResetSpeechCache=0 or 1 so repeated-use
+     * memory behavior can be compared without rebuilding the licensed package.
+     */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Fay|MetaHuman", AdvancedDisplay)
+    bool bResetSolverCacheBetweenUtterances = true;
+
     /** Convert supported Fay semantic actions into conservative head gestures. */
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Fay|MetaHuman|Gestures")
     bool bEnableSemanticHeadGestures = true;
