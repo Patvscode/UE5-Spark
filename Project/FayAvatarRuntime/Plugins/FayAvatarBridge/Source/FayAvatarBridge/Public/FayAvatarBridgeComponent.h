@@ -195,6 +195,10 @@ public:
     UPROPERTY(BlueprintAssignable, Category = "Fay|Events")
     FFayAvatarBridgeStateEvent OnConnectionStateChanged;
 
+    /**
+     * Broadcast synchronously; audio accepted for playback enters the queue
+     * before this event is delivered.
+     */
     UPROPERTY(BlueprintAssignable, Category = "Fay|Events")
     FFayAvatarMessageEvent OnMessageReceived;
 
@@ -239,6 +243,13 @@ public:
 
     UFUNCTION(BlueprintPure, Category = "Fay|Audio")
     bool IsSpeechPlaying() const { return bSpeechPlaying; }
+
+    /**
+     * True from the moment accepted audio is queued until its download,
+     * decode, and playback work has completely drained.
+     */
+    UFUNCTION(BlueprintPure, Category = "Fay|Audio")
+    bool HasPendingSpeechWork() const;
 
 private:
     void ApplyRuntimeEndpointOverrides();

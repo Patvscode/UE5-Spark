@@ -7,6 +7,7 @@
 class UCameraComponent;
 class AActor;
 class UFayAvatarBridgeComponent;
+class UFayAvatarDormancyComponent;
 class UFayArdyPoseClientComponent;
 class UFayBodyMotionComponent;
 class UFayMetaHumanSpeechDriverComponent;
@@ -44,6 +45,9 @@ private:
 
     UPROPERTY(VisibleAnywhere, Category = "Spark Smoke Test")
     TObjectPtr<UFayAvatarBridgeComponent> Bridge;
+
+    UPROPERTY(VisibleAnywhere, Category = "MetaHuman|Reliability")
+    TObjectPtr<UFayAvatarDormancyComponent> Dormancy;
 
     UPROPERTY(VisibleAnywhere, Category = "MetaHuman|Body Motion")
     TObjectPtr<UFayArdyPoseClientComponent> ArdyPoseClient;

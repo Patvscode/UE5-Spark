@@ -68,6 +68,8 @@ res_x=${FAY_SOAK_EXPECTED_RES_X:-1280}
 res_y=${FAY_SOAK_EXPECTED_RES_Y:-720}
 character=${FAY_SOAK_CHARACTER:-Ada}
 scene_only=${FAY_SOAK_SCENE_ONLY:-0}
+avatar_dormancy=${FAY_SOAK_AVATAR_DORMANCY:-0}
+avatar_dormancy_delay=${FAY_SOAK_AVATAR_DORMANCY_DELAY_SECONDS:-5}
 enable_csv=${FAY_SOAK_ENABLE_CSV:-0}
 csv_capture_frames=${FAY_SOAK_CSV_CAPTURE_FRAMES:-60000}
 csv_compression=${FAY_SOAK_CSV_COMPRESSION:-0}
@@ -79,6 +81,23 @@ csv_compression=${FAY_SOAK_CSV_COMPRESSION:-0}
 if (( scene_only == 1 && turn_count != 0 )); then
     fail 'FAY_SOAK_SCENE_ONLY is restricted to zero-turn idle diagnostics'
 fi
+[[ $avatar_dormancy =~ ^[01]$ ]] || \
+    fail 'FAY_SOAK_AVATAR_DORMANCY must be 0 or 1'
+[[ $avatar_dormancy_delay =~ ^[0-9]+$ ]] || \
+    fail 'FAY_SOAK_AVATAR_DORMANCY_DELAY_SECONDS must be an integer from 2 through 60'
+if (( avatar_dormancy_delay < 2 || avatar_dormancy_delay > 60 )); then
+    fail 'FAY_SOAK_AVATAR_DORMANCY_DELAY_SECONDS must be an integer from 2 through 60'
+fi
+if (( avatar_dormancy == 0 && avatar_dormancy_delay != 5 )); then
+    fail 'FAY_SOAK_AVATAR_DORMANCY_DELAY_SECONDS must remain 5 while dormancy is disabled'
+fi
+if (( scene_only == 1 && avatar_dormancy == 1 )); then
+    fail 'scene-only and avatar dormancy diagnostics are mutually exclusive'
+fi
+if (( avatar_dormancy == 1 && turn_count > 0 &&
+    duration < turn_count * (avatar_dormancy_delay + 15) )); then
+    fail 'a dormant speech soak must allow every turn time to wake, finish, and re-enter dormancy'
+fi
 [[ $enable_csv =~ ^[01]$ ]] || fail 'FAY_SOAK_ENABLE_CSV must be 0 or 1'
 [[ $csv_capture_frames =~ ^[1-9][0-9]*$ ]] || \
     fail 'FAY_SOAK_CSV_CAPTURE_FRAMES must be a positive integer'
@@ -86,8 +105,8 @@ fi
     fail 'FAY_SOAK_CSV_COMPRESSION must be 0 or 1'
 for argument in "$@"; do
     case "${argument,,}" in
-        -nullrhi|-resx=*|-resy=*|-csvcaptureframes=*|-csvcompression=*|-faysceneonly|-faysceneonly=*)
-            fail 'the soak runner owns RHI, resolution, CSV, and scene-only arguments'
+        -nullrhi|-resx=*|-resy=*|-csvcaptureframes=*|-csvcompression=*|-faysceneonly|-faysceneonly=*|-fayavatardormancy|-fayavatardormancy=*|-fayavatardormancydelay=*)
+            fail 'the soak runner owns RHI, resolution, CSV, scene-only, and dormancy arguments'
             ;;
     esac
 done
@@ -177,6 +196,12 @@ runtime_arguments=(
 if [[ $scene_only == 1 ]]; then
     runtime_arguments+=("-FaySceneOnly=1")
 fi
+if [[ $avatar_dormancy == 1 ]]; then
+    runtime_arguments+=(
+        "-FayAvatarDormancy=1"
+        "-FayAvatarDormancyDelay=$avatar_dormancy_delay"
+    )
+fi
 if [[ $enable_csv == 1 ]]; then
     runtime_arguments+=(
         "-csvCaptureFrames=$csv_capture_frames"
@@ -219,9 +244,18 @@ for _ in $(seq 1 90); do
                 else
                     readiness_marker="Spawned character '$character'"
                 fi
+                dormancy_ready=1
+                if [[ $avatar_dormancy == 1 ]]; then
+                    dormancy_marker="MetaHuman idle dormancy: enabled (delay=${avatar_dormancy_delay}.00 seconds, neutral_prepare_frames=2)."
+                    if ! grep -Fq "$dormancy_marker" <<<"$current_launch_log" ||
+                        ! grep -Fq 'Entered MetaHuman idle dormancy' <<<"$current_launch_log"; then
+                        dormancy_ready=0
+                    fi
+                fi
                 if grep -Fq 'Connected to the Fay avatar WebSocket.' <<<"$current_launch_log" &&
                     grep -Fq 'Activated the visible Spark studio camera and lighting rig.' <<<"$current_launch_log" &&
-                    grep -Fq "$readiness_marker" <<<"$current_launch_log"; then
+                    grep -Fq "$readiness_marker" <<<"$current_launch_log" &&
+                    (( dormancy_ready == 1 )); then
                     runtime_ready=1
                     break
                 fi
@@ -243,7 +277,10 @@ fi
 export FAY_SOAK_EXPECTED_UNREAL_EXE="$expected_unreal_exe"
 export FAY_SOAK_EXPECTED_RES_X="$res_x"
 export FAY_SOAK_EXPECTED_RES_Y="$res_y"
+export FAY_SOAK_RUNTIME_LOG_START_LINE="$current_launch_start"
 export FAY_SOAK_EXPECT_SCENE_ONLY="$scene_only"
+export FAY_SOAK_EXPECT_AVATAR_DORMANCY="$avatar_dormancy"
+export FAY_SOAK_EXPECT_AVATAR_DORMANCY_DELAY_SECONDS="$avatar_dormancy_delay"
 export FAY_SOAK_MAX_TAIL_RSS_GROWTH_KB=${FAY_SOAK_MAX_TAIL_RSS_GROWTH_KB:-131072}
 if (( turn_count == 0 )); then
     export FAY_SOAK_MAX_RSS_KB=${FAY_SOAK_MAX_RSS_KB:-3040870}

@@ -1119,13 +1119,78 @@ bool UFayMetaHumanSpeechDriverComponent::IsAvatarConfigured() const
     const bool bFaceDriving = bActionHeadGestureActive ||
         (bSpeechPrepared && bSpeechStarted);
     return Readiness == EFayLiveLinkSubjectReadiness::Ready ||
-        (!bEnableIdleNeutralHeartbeat && !bFaceDriving &&
+        ((!bEnableIdleNeutralHeartbeat || bDormancyPrepared) && !bFaceDriving &&
+            Readiness == EFayLiveLinkSubjectReadiness::SnapshotDormant) ||
+        (bDormancyWakePending &&
             Readiness == EFayLiveLinkSubjectReadiness::SnapshotDormant);
 }
 
 bool UFayMetaHumanSpeechDriverComponent::IsAvatarConfigurationPending() const
 {
     return IsValid(PendingAvatar);
+}
+
+bool UFayMetaHumanSpeechDriverComponent::IsFaceIdleForDormancy() const
+{
+    return IsAvatarConfigured() && !IsValid(PendingAvatar) &&
+        !bLiveLinkHealthPending && !bDormancyWakePending &&
+        !bActionHeadGestureActive &&
+        !bSpeechPrepared && !bSpeechStarted && !bSpeechFinished &&
+        (Bridge == nullptr || !Bridge->HasPendingSpeechWork());
+}
+
+bool UFayMetaHumanSpeechDriverComponent::PrepareAvatarForDormancy()
+{
+    if (!IsFaceIdleForDormancy() || !RuntimeState.IsValid())
+    {
+        if (bDormancyPrepared)
+        {
+            WakeAvatarFromDormancy();
+        }
+        return false;
+    }
+    if (!RuntimeState->PushNeutral())
+    {
+        // A failed second preparation frame must not strand the source in the
+        // heartbeat-suppressed state.
+        WakeAvatarFromDormancy();
+        return false;
+    }
+
+    // The external controller waits for the neutral frame to settle before
+    // freezing expensive avatar evaluation. Suppress the ordinary heartbeat
+    // throughout that window and explicitly accept snapshot dormancy even
+    // when the packaged defaults keep the heartbeat enabled.
+    bDormancyPrepared = true;
+    LiveLinkHeartbeatElapsedSeconds = 0.0;
+    return true;
+}
+
+bool UFayMetaHumanSpeechDriverComponent::WakeAvatarFromDormancy()
+{
+    // Clear the exception before auditing so any failure wakes/restores rather
+    // than being mistaken for intentional idle dormancy.
+    bDormancyPrepared = false;
+    bDormancyWakePending = false;
+    LiveLinkHeartbeatElapsedSeconds = 0.0;
+    LiveLinkHealthCheckElapsedSeconds = LiveLinkHealthCheckIntervalSeconds;
+    LiveLinkPendingElapsedSeconds = 0.0;
+    bLiveLinkPendingGraceLogged = false;
+    bLiveLinkHealthPending = true;
+
+    if (!IsSolverReady() || !IsValid(Avatar) ||
+        !HasVerifiedLiveLinkConsumer(Avatar, LiveLinkSubjectName) ||
+        !RuntimeState->PushNeutral())
+    {
+        return false;
+    }
+
+    // PushNeutral is synchronous, but Live Link evaluates the new frame on a
+    // later tick. Permit only this verified wake transition to consume the
+    // still-dormant snapshot; the regular health audit clears the exception as
+    // soon as the exact subject is current again.
+    bDormancyWakePending = true;
+    return true;
 }
 
 void UFayMetaHumanSpeechDriverComponent::InitializeSolverAndSource()
@@ -1528,6 +1593,8 @@ bool UFayMetaHumanSpeechDriverComponent::ApplyAvatarConfiguration(AActor* InAvat
     LiveLinkPendingElapsedSeconds = 0.0;
     bLiveLinkPendingGraceLogged = false;
     bLiveLinkHealthPending = false;
+    bDormancyPrepared = false;
+    bDormancyWakePending = false;
     Avatar = InAvatar;
     UE_LOG(LogFayMetaHumanRuntime, Display,
         TEXT("Configured assembled MetaHuman Body LiveLinkInstance to consume the local Fay "
@@ -1613,6 +1680,8 @@ bool UFayMetaHumanSpeechDriverComponent::RestoreConfiguredAvatar()
     LiveLinkPendingElapsedSeconds = 0.0;
     bLiveLinkPendingGraceLogged = false;
     bLiveLinkHealthPending = false;
+    bDormancyPrepared = false;
+    bDormancyWakePending = false;
     bActionHeadGestureActive = false;
     ActionHeadGestureElapsedSeconds = 0.0f;
     ActionHeadGestureDurationSeconds = 0.0f;
@@ -1681,6 +1750,13 @@ void UFayMetaHumanSpeechDriverComponent::HandleDecodedPcm(
 void UFayMetaHumanSpeechDriverComponent::HandleAvatarMessage(
     const FFayAvatarMessage& Message)
 {
+    if (bDormancyPrepared)
+    {
+        // OnMessageReceived is synchronous and audio is already queued. Wake
+        // Live Link before download/playback or a semantic action can begin.
+        WakeAvatarFromDormancy();
+    }
+
     // Audio-backed messages enter HandleSpeechStarted after their PCM has been
     // prepared. This path exists only for action-only MCP events so head-owned
     // behaviors remain visible without giving the body layer neck/head bones.
@@ -1714,7 +1790,8 @@ void UFayMetaHumanSpeechDriverComponent::HandleAvatarMessage(
     ActionHeadGestureElapsedSeconds = 0.0f;
     bActionHeadGestureActive = true;
     LiveLinkHeartbeatElapsedSeconds = 0.0;
-    if (!bEnableIdleNeutralHeartbeat && RuntimeState.IsValid())
+    if ((!bEnableIdleNeutralHeartbeat || bDormancyPrepared ||
+            bDormancyWakePending) && RuntimeState.IsValid())
     {
         // A deliberately quiet source leaves Live Link's current snapshot
         // while idle. Wake it before the next strict action-time health audit.
@@ -1781,7 +1858,8 @@ void UFayMetaHumanSpeechDriverComponent::HandleSpeechStarted(
     AnimationElapsedSeconds = 0.0;
     bSpeechStarted = true;
     bSpeechFinished = false;
-    if (!bEnableIdleNeutralHeartbeat && RuntimeState.IsValid())
+    if ((!bEnableIdleNeutralHeartbeat || bDormancyPrepared ||
+            bDormancyWakePending) && RuntimeState.IsValid())
     {
         // Prime a dormant source before the first speech solve so a scheduled
         // health audit cannot prevent the frame that would make it current.
@@ -1845,7 +1923,7 @@ void UFayMetaHumanSpeechDriverComponent::TickComponent(
         {
             LiveLinkHeartbeatElapsedSeconds = 0.0;
         }
-        else if (bEnableIdleNeutralHeartbeat)
+        else if (bEnableIdleNeutralHeartbeat && !bDormancyPrepared)
         {
             LiveLinkHeartbeatElapsedSeconds += SafeDeltaSeconds;
             if (LiveLinkHeartbeatElapsedSeconds >= LiveLinkHeartbeatSeconds)
@@ -1885,7 +1963,7 @@ void UFayMetaHumanSpeechDriverComponent::TickComponent(
         }
         const bool bSpeechDriving = bSpeechPrepared && bSpeechStarted;
         const bool bExpectedIdleDormancy =
-            !bEnableIdleNeutralHeartbeat &&
+            (!bEnableIdleNeutralHeartbeat || bDormancyPrepared) &&
             !bSpeechDriving &&
             !bActionHeadGestureActive &&
             SubjectReadiness == EFayLiveLinkSubjectReadiness::SnapshotDormant;
@@ -1902,9 +1980,11 @@ void UFayMetaHumanSpeechDriverComponent::TickComponent(
             // speech/action work stays paused until the subject recovers.
             bLiveLinkHealthPending = true;
             LiveLinkPendingElapsedSeconds += FMath::Max(DeltaTime, 0.0f);
-            if (!bEnableIdleNeutralHeartbeat &&
-                (bSpeechDriving || bActionHeadGestureActive) &&
-                RuntimeState.IsValid())
+            const bool bWakeFrameRequired =
+                ((!bEnableIdleNeutralHeartbeat || bDormancyPrepared) &&
+                    (bSpeechDriving || bActionHeadGestureActive)) ||
+                bDormancyWakePending;
+            if (bWakeFrameRequired && RuntimeState.IsValid())
             {
                 // Health runs before speech/head-frame publication. Republish
                 // a bounded neutral wake frame so recovery cannot deadlock.
@@ -1937,6 +2017,7 @@ void UFayMetaHumanSpeechDriverComponent::TickComponent(
             LiveLinkPendingElapsedSeconds = 0.0;
             bLiveLinkPendingGraceLogged = false;
             bLiveLinkHealthPending = false;
+            bDormancyWakePending = false;
             bTerminalSubjectFailureLogged = false;
         }
         else
@@ -1959,6 +2040,7 @@ void UFayMetaHumanSpeechDriverComponent::TickComponent(
             RestoreConfiguredAvatar();
             ResetSpeechState();
             bLiveLinkHealthPending = false;
+            bDormancyWakePending = false;
             if (SubjectReadiness == EFayLiveLinkSubjectReadiness::Collision ||
                 SubjectReadiness == EFayLiveLinkSubjectReadiness::Invalid)
             {

@@ -660,6 +660,15 @@ float UFayAvatarBridgeComponent::GetSpeechPlaybackSeconds() const
     return static_cast<float>(FMath::Max(0.0, FPlatformTime::Seconds() - PlaybackStartedAtSeconds));
 }
 
+bool UFayAvatarBridgeComponent::HasPendingSpeechWork() const
+{
+    // Accepted audio is inserted into PendingAudioMessages before
+    // OnMessageReceived is broadcast. A synchronous wake listener can
+    // therefore observe work even before StartNextAudio promotes it.
+    return !PendingAudioMessages.IsEmpty() || bHasCurrentMessage ||
+        ActiveHttpRequest.IsValid() || bSpeechPlaying;
+}
+
 void UFayAvatarBridgeComponent::SetConnectionState(const EFayAvatarBridgeState NewState)
 {
     if (ConnectionState == NewState)

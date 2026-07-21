@@ -8,6 +8,7 @@
 #include "Engine/SkeletalMesh.h"
 #include "Engine/World.h"
 #include "FayAvatarBridgeComponent.h"
+#include "FayAvatarDormancyComponent.h"
 #include "FayArdyPoseClientComponent.h"
 #include "FayBodyMotionComponent.h"
 #include "FayMetaHumanSpeechDriverComponent.h"
@@ -79,9 +80,12 @@ AFayAvatarBootstrapGameMode::AFayAvatarBootstrapGameMode()
     Camera->SetActive(true);
 
     Bridge = CreateDefaultSubobject<UFayAvatarBridgeComponent>(TEXT("FayAvatarBridge"));
+    Dormancy = CreateDefaultSubobject<UFayAvatarDormancyComponent>(TEXT("FayAvatarDormancy"));
     ArdyPoseClient = CreateDefaultSubobject<UFayArdyPoseClientComponent>(TEXT("FayArdyPoseClient"));
     BodyMotion = CreateDefaultSubobject<UFayBodyMotionComponent>(TEXT("FayBodyMotion"));
     SpeechDriver = CreateDefaultSubobject<UFayMetaHumanSpeechDriverComponent>(TEXT("FayMetaHumanSpeechDriver"));
+    Dormancy->AddTickPrerequisiteComponent(SpeechDriver);
+    Dormancy->AddTickPrerequisiteComponent(BodyMotion);
 
     KeyLight = CreateDefaultSubobject<UPointLightComponent>(TEXT("KeyLight"));
     KeyLight->SetupAttachment(SceneRoot);
@@ -120,6 +124,12 @@ void AFayAvatarBootstrapGameMode::BeginPlay()
     {
         UE_LOG(LogFayAvatarRuntime, Warning,
             TEXT("Unreal's background-window idle control is unavailable; keep the avatar window focused during speech."));
+    }
+    if (Dormancy != nullptr)
+    {
+        Dormancy->AttachBridge(Bridge);
+        Dormancy->AttachSpeechDriver(SpeechDriver);
+        Dormancy->AttachBodyMotion(BodyMotion);
     }
     if (SpeechDriver != nullptr)
     {
@@ -344,6 +354,10 @@ void AFayAvatarBootstrapGameMode::TrySpawnMetaHuman()
         bLiveLinkConfigured = SpeechDriver->ConfigureAvatar(MetaHumanActor);
         bLiveLinkConfigurationRequested =
             !bLiveLinkConfigured && SpeechDriver->IsAvatarConfigurationPending();
+    }
+    if (Dormancy != nullptr)
+    {
+        Dormancy->ConfigureAvatar(MetaHumanActor);
     }
     UE_LOG(LogFayAvatarRuntime, Display,
         TEXT("Spawned character '%s' (speech_live_link=%s)."),

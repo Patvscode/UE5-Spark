@@ -33,6 +33,9 @@ expected_unreal_input=${FAY_SOAK_EXPECTED_UNREAL_EXE:-}
 expected_res_x=${FAY_SOAK_EXPECTED_RES_X:-1280}
 expected_res_y=${FAY_SOAK_EXPECTED_RES_Y:-720}
 expected_scene_only=${FAY_SOAK_EXPECT_SCENE_ONLY:-0}
+expected_avatar_dormancy=${FAY_SOAK_EXPECT_AVATAR_DORMANCY:-0}
+expected_avatar_dormancy_delay=${FAY_SOAK_EXPECT_AVATAR_DORMANCY_DELAY_SECONDS:-5}
+runtime_log_start_line=${FAY_SOAK_RUNTIME_LOG_START_LINE:-}
 
 [[ $unreal_pid =~ ^[1-9][0-9]*$ && $fay_pid =~ ^[1-9][0-9]*$ ]] || \
     fail 'PIDs must be positive integers'
@@ -61,6 +64,19 @@ expected_scene_only=${FAY_SOAK_EXPECT_SCENE_ONLY:-0}
     fail 'expected rendered resolution must contain positive integers'
 [[ $expected_scene_only =~ ^[01]$ ]] || \
     fail 'FAY_SOAK_EXPECT_SCENE_ONLY must be 0 or 1'
+[[ $expected_avatar_dormancy =~ ^[01]$ ]] || \
+    fail 'FAY_SOAK_EXPECT_AVATAR_DORMANCY must be 0 or 1'
+[[ $expected_avatar_dormancy_delay =~ ^[0-9]+$ ]] || \
+    fail 'FAY_SOAK_EXPECT_AVATAR_DORMANCY_DELAY_SECONDS must be an integer from 2 through 60'
+if (( expected_avatar_dormancy_delay < 2 || expected_avatar_dormancy_delay > 60 )); then
+    fail 'FAY_SOAK_EXPECT_AVATAR_DORMANCY_DELAY_SECONDS must be an integer from 2 through 60'
+fi
+if [[ $expected_scene_only == 1 && $expected_avatar_dormancy == 1 ]]; then
+    fail 'scene-only and avatar dormancy evidence are mutually exclusive'
+fi
+if [[ -n $runtime_log_start_line && ! $runtime_log_start_line =~ ^[1-9][0-9]*$ ]]; then
+    fail 'FAY_SOAK_RUNTIME_LOG_START_LINE must be a positive integer when supplied'
+fi
 (( duration >= turn_count && turn_count <= 100 )) || \
     fail 'duration must cover every turn and turn count must not exceed 100'
 if (( turn_count == 0 && duration < idle_warmup_seconds + 300 )); then
@@ -105,11 +121,26 @@ else
         fail 'ordinary avatar evidence refuses an unexpected -FaySceneOnly=1 argument'
     fi
 fi
+if [[ $expected_avatar_dormancy == 1 ]]; then
+    grep -Fxiq -- '-FayAvatarDormancy=1' <<<"$unreal_arguments" || \
+        fail 'dormancy evidence requires the exact -FayAvatarDormancy=1 argument'
+    grep -Fxiq -- "-FayAvatarDormancyDelay=$expected_avatar_dormancy_delay" \
+        <<<"$unreal_arguments" || \
+        fail 'dormancy evidence requires the exact reviewed delay argument'
+else
+    if grep -Eiq -- '^-FayAvatarDormancy(=|Delay=)' <<<"$unreal_arguments"; then
+        fail 'ordinary avatar evidence refuses unexpected dormancy arguments'
+    fi
+fi
 
 runtime_root=$(realpath "$(dirname "$unreal_exe")/../..")
 runtime_log="$runtime_root/Saved/Logs/FayAvatarRuntime.log"
 [[ -f $runtime_log ]] || fail "Unreal runtime log is missing: $runtime_log"
-runtime_log_start_lines=$(wc -l <"$runtime_log")
+if [[ -n $runtime_log_start_line ]]; then
+    runtime_log_start_lines=$((runtime_log_start_line - 1))
+else
+    runtime_log_start_lines=$(wc -l <"$runtime_log")
+fi
 
 output_dir=$(mkdir -p "$output_input" && cd "$output_input" && pwd -P)
 case "$output_dir/" in
@@ -282,6 +313,8 @@ if (( turn_count == 0 )); then
     run_mode=idle
     if [[ $expected_scene_only == 1 ]]; then
         run_mode=scene-only-idle
+    elif [[ $expected_avatar_dormancy == 1 ]]; then
+        run_mode=dormant-idle
     fi
     idle_measurement_start_rss=$(awk -v warmup="$idle_warmup_seconds" \
         'NR>1 && $1>=warmup {print $3; exit}' "$metrics")
@@ -320,6 +353,9 @@ if (( turn_count == 0 )); then
         END {print count + 0}' "$metrics")
 else
     run_mode=speech
+    if [[ $expected_avatar_dormancy == 1 ]]; then
+        run_mode=dormant-speech
+    fi
     idle_measurement_start_rss=0
     idle_measurement_growth_kb=0
     idle_slope_kb_per_second=0.00
@@ -402,6 +438,34 @@ allocator_release_count=$(grep -Fc 'Released completed-utterance allocator pools
 delayed_collection_count=$(grep -Fc 'Collected completed speech objects and released delayed' "$runtime_new_log" || true)
 audio_watchdog_count=$(grep -Ec 'Procedural PCM did not drain|Unreal did not report audio completion' "$runtime_new_log" || true)
 bridge_warning_count=$(grep -Fc 'LogFayAvatarBridge: Warning' "$runtime_new_log" || true)
+dormancy_configured_count=$(grep -Fc \
+    'Configured fail-open dormancy for the reviewed avatar.' \
+    "$runtime_new_log" || true)
+dormancy_enter_count=$(grep -Fc 'Entered MetaHuman idle dormancy' \
+    "$runtime_new_log" || true)
+dormancy_wake_count=$(grep -Fc 'Woke the MetaHuman from idle dormancy' \
+    "$runtime_new_log" || true)
+dormancy_cancel_count=$(grep -Fc 'Cancelled MetaHuman dormancy preparation' \
+    "$runtime_new_log" || true)
+dormancy_enabled_marker="MetaHuman idle dormancy: enabled (delay=${expected_avatar_dormancy_delay}.00 seconds, neutral_prepare_frames=2)."
+dormancy_disabled_marker="MetaHuman idle dormancy: disabled (delay=${expected_avatar_dormancy_delay}.00 seconds, neutral_prepare_frames=2)."
+dormancy_enabled_count=$(grep -Fc "$dormancy_enabled_marker" "$runtime_new_log" || true)
+dormancy_disabled_count=$(grep -Fc "$dormancy_disabled_marker" "$runtime_new_log" || true)
+if [[ $expected_avatar_dormancy == 1 ]]; then
+    if (( dormancy_enabled_count != 1 || dormancy_disabled_count != 0 ||
+        dormancy_configured_count < 1 || dormancy_enter_count < 1 )); then
+        status=failed
+    fi
+    if (( turn_count > 0 && (dormancy_wake_count != turn_count ||
+        dormancy_enter_count < turn_count + 1) )); then
+        status=failed
+    fi
+else
+    if (( dormancy_disabled_count != 1 || dormancy_enabled_count != 0 ||
+        dormancy_enter_count > 0 || dormancy_wake_count > 0 )); then
+        status=failed
+    fi
+fi
 if [[ $require_normal_audio == 1 ]]; then
     if (( finished_playback_count != turn_count || allocator_release_count != turn_count ||
         delayed_collection_count != turn_count || audio_watchdog_count > 0 ||
@@ -427,10 +491,17 @@ if [[ $require_procedural_actions == 1 ]]; then
         explain_fallback_count=$(grep -Fci \
             "Using character-neutral procedural fallback for 'explain'." \
             "$runtime_new_log" || true)
-        explain_ardy_count=$(grep -Fci \
-            "Using ARDY generated motion provider for 'explain'." \
+        explain_ardy_start_count=$(grep -Fci \
+            "Using ARDY generated motion provider for 'explain' (bounded_seconds=" \
             "$runtime_new_log" || true)
-        if (( explain_fallback_count + explain_ardy_count < 1 )); then
+        explain_ardy_complete_count=$(grep -Fci \
+            "Completed bounded ARDY action 'explain' and returned to baked idle." \
+            "$runtime_new_log" || true)
+        explain_ardy_completed=0
+        if (( explain_ardy_start_count >= 1 && explain_ardy_complete_count >= 1 )); then
+            explain_ardy_completed=1
+        fi
+        if (( explain_fallback_count + explain_ardy_completed < 1 )); then
             ((++procedural_action_failures))
         fi
     fi
@@ -455,8 +526,11 @@ fi
     printf 'rendered_required=%s\n' "$require_rendered"
     printf 'normal_audio_required=%s\n' "$require_normal_audio"
     printf 'procedural_actions_required=%s\n' "$require_procedural_actions"
+    printf 'avatar_dormancy_expected=%s\n' "$expected_avatar_dormancy"
+    printf 'avatar_dormancy_delay_seconds=%s\n' "$expected_avatar_dormancy_delay"
     printf 'unreal_pid=%s\n' "$unreal_pid"
     printf 'fay_pid=%s\n' "$fay_pid"
+    printf 'runtime_log_start_line=%s\n' "$((runtime_log_start_lines + 1))"
     printf 'rss_first_kb=%s\n' "$first_rss"
     printf 'rss_last_kb=%s\n' "$last_rss"
     printf 'rss_max_kb=%s\n' "$max_rss"
@@ -487,6 +561,12 @@ fi
     printf 'delayed_collection_count=%s\n' "$delayed_collection_count"
     printf 'audio_watchdog_count=%s\n' "$audio_watchdog_count"
     printf 'bridge_warning_count=%s\n' "$bridge_warning_count"
+    printf 'dormancy_configured_count=%s\n' "$dormancy_configured_count"
+    printf 'dormancy_enabled_marker_count=%s\n' "$dormancy_enabled_count"
+    printf 'dormancy_disabled_marker_count=%s\n' "$dormancy_disabled_count"
+    printf 'dormancy_enter_count=%s\n' "$dormancy_enter_count"
+    printf 'dormancy_wake_count=%s\n' "$dormancy_wake_count"
+    printf 'dormancy_cancel_count=%s\n' "$dormancy_cancel_count"
     printf 'procedural_action_failures=%s\n' "$procedural_action_failures"
     printf 'runtime_failure_count=%s\n' "$runtime_failure_count"
     printf 'kernel_failure_count=%s\n' "$kernel_failure_count"

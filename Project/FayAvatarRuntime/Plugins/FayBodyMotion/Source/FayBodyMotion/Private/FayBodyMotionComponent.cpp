@@ -43,6 +43,7 @@ bool HasProceduralFallback(const FName Behavior)
 
 constexpr int32 Core27JointCount = 27;
 constexpr float GeneratedBlendInSeconds = 0.25f;
+constexpr float GeneratedBlendOutMaximumSeconds = 0.50f;
 constexpr float MaximumRootOffsetCentimetres = 20.0f;
 
 const TArray<FName>& Core27TargetBones()
@@ -250,6 +251,7 @@ void UFayBodyMotionComponent::TickComponent(
     FActorComponentTickFunction* ThisTickFunction)
 {
     Super::TickComponent(DeltaTime, TickType, ThisTickFunction);
+    const float SafeDeltaSeconds = FMath::Max(0.0f, DeltaTime);
     if (BakedProvider != nullptr)
     {
         BakedProvider->Tick(DeltaTime);
@@ -260,7 +262,7 @@ void UFayBodyMotionComponent::TickComponent(
     }
     if (!ProceduralBehavior.IsNone())
     {
-        ProceduralGestureElapsedSeconds += FMath::Max(0.0f, DeltaTime);
+        ProceduralGestureElapsedSeconds += SafeDeltaSeconds;
         if (ProceduralGestureElapsedSeconds >= ProceduralGestureDurationSeconds)
         {
             StopProceduralGesture();
@@ -268,6 +270,48 @@ void UFayBodyMotionComponent::TickComponent(
             {
                 SetState(EFayBodyMotionState::Idle, EFayBodyMotionProvider::Baked);
             }
+        }
+    }
+    if (bGeneratedActionActive)
+    {
+        GeneratedActionElapsedSeconds += SafeDeltaSeconds;
+        if (!bGeneratedBlendOutActive)
+        {
+            if (ArdyProvider == nullptr || !ArdyProvider->IsReady())
+            {
+                BeginGeneratedActionBlendOut(
+                    true,
+                    TEXT("generated provider became unavailable during the action"));
+            }
+            else if (GeneratedActionElapsedSeconds >= GeneratedActionDurationSeconds)
+            {
+                BeginGeneratedActionBlendOut(false, FString());
+            }
+        }
+        if (bGeneratedBlendOutActive)
+        {
+            GeneratedBlendOutElapsedSeconds += SafeDeltaSeconds;
+            const bool bPoseHasBlendedOut =
+                GeneratedBlendOutElapsedSeconds >= GeneratedBlendInSeconds &&
+                GeneratedBlendWeight <= KINDA_SMALL_NUMBER;
+            if (bPoseHasBlendedOut ||
+                GeneratedBlendOutElapsedSeconds >= GeneratedBlendOutMaximumSeconds)
+            {
+                CompleteGeneratedActionBlendOut();
+            }
+        }
+    }
+    if ((MotionState == EFayBodyMotionState::Performing ||
+            MotionState == EFayBodyMotionState::FallingBack) &&
+        ActiveProvider == EFayBodyMotionProvider::Baked &&
+        ProceduralBehavior.IsNone())
+    {
+        const UAnimInstance* Animation = IsValid(BodyMesh)
+            ? BodyMesh->GetAnimInstance()
+            : nullptr;
+        if (Animation == nullptr || !Animation->IsAnyMontagePlaying())
+        {
+            SetState(EFayBodyMotionState::Idle, EFayBodyMotionProvider::Baked);
         }
     }
 }
@@ -643,6 +687,104 @@ void UFayBodyMotionComponent::ResetRetargetCalibration()
     bHasLastGeneratedPose = false;
 }
 
+void UFayBodyMotionComponent::StartGeneratedAction(
+    const FFayBodyMotionRequest& Request)
+{
+    GeneratedBehavior = Request.Behavior;
+    GeneratedActionElapsedSeconds = 0.0f;
+    GeneratedActionDurationSeconds = FMath::IsFinite(Request.DurationSeconds)
+        ? FMath::Clamp(Request.DurationSeconds, 0.2f, 10.0f)
+        : 1.0f;
+    GeneratedBlendOutElapsedSeconds = 0.0f;
+    bGeneratedActionActive = true;
+    bGeneratedBlendOutActive = false;
+}
+
+void UFayBodyMotionComponent::BeginGeneratedActionBlendOut(
+    const bool bProviderFailure,
+    const FString& Reason)
+{
+    if (!bGeneratedActionActive || bGeneratedBlendOutActive)
+    {
+        return;
+    }
+
+    bGeneratedBlendOutActive = true;
+    GeneratedBlendOutElapsedSeconds = 0.0f;
+    if (ArdyProvider != nullptr)
+    {
+        // Stop new pose batches but leave this provider selected while the
+        // finalized-transform hook fades its last validated pose to zero.
+        ArdyProvider->Stop(GeneratedBlendInSeconds);
+    }
+
+    if (bProviderFailure)
+    {
+        SetState(EFayBodyMotionState::FallingBack, EFayBodyMotionProvider::Ardy);
+        OnMotionFallback.Broadcast(GeneratedBehavior, Reason);
+        UE_LOG(LogFayBodyMotion, Warning,
+            TEXT("ARDY action '%s' began a bounded fallback to baked idle: %s."),
+            *GeneratedBehavior.ToString(),
+            *Reason);
+    }
+    else
+    {
+        UE_LOG(LogFayBodyMotion, Display,
+            TEXT("ARDY action '%s' reached its bounded duration; blending to baked idle."),
+            *GeneratedBehavior.ToString());
+    }
+}
+
+void UFayBodyMotionComponent::CompleteGeneratedActionBlendOut()
+{
+    if (!bGeneratedActionActive)
+    {
+        return;
+    }
+
+    const FName CompletedBehavior = GeneratedBehavior;
+    GeneratedBlendWeight = 0.0f;
+    GeneratedBehavior = NAME_None;
+    GeneratedActionElapsedSeconds = 0.0f;
+    GeneratedActionDurationSeconds = 0.0f;
+    GeneratedBlendOutElapsedSeconds = 0.0f;
+    bGeneratedActionActive = false;
+    bGeneratedBlendOutActive = false;
+
+    if (BakedProvider == nullptr || !BakedProvider->IsReady())
+    {
+        SetState(EFayBodyMotionState::Error, EFayBodyMotionProvider::Baked);
+        OnMotionFallback.Broadcast(
+            CompletedBehavior,
+            TEXT("baked idle was unavailable after generated motion"));
+        UE_LOG(LogFayBodyMotion, Error,
+            TEXT("ARDY action '%s' stopped, but its reviewed baked-idle fallback was unavailable."),
+            *CompletedBehavior.ToString());
+        return;
+    }
+
+    BakedProvider->Stop(GeneratedBlendInSeconds);
+    SetState(EFayBodyMotionState::Idle, EFayBodyMotionProvider::Baked);
+    UE_LOG(LogFayBodyMotion, Display,
+        TEXT("Completed bounded ARDY action '%s' and returned to baked idle."),
+        *CompletedBehavior.ToString());
+}
+
+void UFayBodyMotionComponent::StopGeneratedActionImmediately()
+{
+    if (ArdyProvider != nullptr)
+    {
+        ArdyProvider->Stop(0.0f);
+    }
+    GeneratedBlendWeight = 0.0f;
+    GeneratedBehavior = NAME_None;
+    GeneratedActionElapsedSeconds = 0.0f;
+    GeneratedActionDurationSeconds = 0.0f;
+    GeneratedBlendOutElapsedSeconds = 0.0f;
+    bGeneratedActionActive = false;
+    bGeneratedBlendOutActive = false;
+}
+
 bool UFayBodyMotionComponent::PerformAction(
     const FName Behavior,
     const float Intensity,
@@ -662,6 +804,20 @@ bool UFayBodyMotionComponent::PerformAction(
 bool UFayBodyMotionComponent::IsBehaviorAllowed(const FName Behavior)
 {
     return AllowedBehaviors().Contains(NormalizeBehavior(Behavior));
+}
+
+bool UFayBodyMotionComponent::CanEnterDormancy() const
+{
+    if (MotionState != EFayBodyMotionState::Idle || !IsValid(Avatar) ||
+        !IsValid(BodyMesh) || BakedProvider == nullptr ||
+        !BakedProvider->IsReady() || !ProceduralBehavior.IsNone() ||
+        bGeneratedActionActive)
+    {
+        return false;
+    }
+
+    const UAnimInstance* Animation = BodyMesh->GetAnimInstance();
+    return Animation == nullptr || !Animation->IsAnyMontagePlaying();
 }
 
 void UFayBodyMotionComponent::HandleAvatarMessage(const FFayAvatarMessage& Message)
@@ -707,9 +863,18 @@ bool UFayBodyMotionComponent::Dispatch(const FFayBodyMotionRequest& Request)
     {
         if (Preferred == ArdyProvider.Get())
         {
+            StartGeneratedAction(Request);
             UE_LOG(LogFayBodyMotion, Display,
-                TEXT("Using ARDY generated motion provider for '%s'."),
-                *Request.Behavior.ToString());
+                TEXT("Using ARDY generated motion provider for '%s' (bounded_seconds=%.2f)."),
+                *Request.Behavior.ToString(),
+                GeneratedActionDurationSeconds);
+        }
+        else
+        {
+            if (bGeneratedActionActive)
+            {
+                StopGeneratedActionImmediately();
+            }
         }
         SetState(
             Request.Behavior == TEXT("idle")
@@ -721,6 +886,7 @@ bool UFayBodyMotionComponent::Dispatch(const FFayBodyMotionRequest& Request)
 
     if (Preferred != BakedProvider.Get() && BakedProvider->Perform(Request))
     {
+        StopGeneratedActionImmediately();
         SetState(EFayBodyMotionState::FallingBack, EFayBodyMotionProvider::Baked);
         OnMotionFallback.Broadcast(Request.Behavior, TEXT("generated provider unavailable"));
         return true;
@@ -738,6 +904,7 @@ void UFayBodyMotionComponent::EnterBakedIdle(
     {
         BakedProvider->Stop(0.2f);
     }
+    StopGeneratedActionImmediately();
     SetState(EFayBodyMotionState::FallingBack, EFayBodyMotionProvider::Baked);
     OnMotionFallback.Broadcast(FailedBehavior, Reason);
     UE_LOG(LogFayBodyMotion, Display,
@@ -765,10 +932,7 @@ void UFayBodyMotionComponent::ResetProviders()
     {
         BakedProvider->Stop(0.1f);
     }
-    if (ArdyProvider != nullptr)
-    {
-        ArdyProvider->Stop(0.1f);
-    }
+    StopGeneratedActionImmediately();
     BakedProvider.Reset();
     ArdyProvider.Reset();
     if (IsValid(BodyMesh) && BodyTransformsFinalizedHandle.IsValid())

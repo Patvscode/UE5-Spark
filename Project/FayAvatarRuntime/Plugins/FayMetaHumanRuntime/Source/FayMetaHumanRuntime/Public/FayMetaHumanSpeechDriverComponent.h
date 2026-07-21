@@ -51,6 +51,18 @@ public:
     UFUNCTION(BlueprintPure, Category = "Fay|MetaHuman")
     bool IsAvatarConfigurationPending() const;
 
+    /** True only when the configured face has no queued or active work. */
+    UFUNCTION(BlueprintPure, Category = "Fay|MetaHuman|Dormancy")
+    bool IsFaceIdleForDormancy() const;
+
+    /** Publish neutral and permit a deliberately dormant Live Link snapshot. */
+    UFUNCTION(BlueprintCallable, Category = "Fay|MetaHuman|Dormancy")
+    bool PrepareAvatarForDormancy();
+
+    /** Republish neutral and force the existing Live Link health audit. */
+    UFUNCTION(BlueprintCallable, Category = "Fay|MetaHuman|Dormancy")
+    bool WakeAvatarFromDormancy();
+
     UFUNCTION(BlueprintPure, Category = "Fay|MetaHuman")
     FName GetLiveLinkSubjectName() const { return LiveLinkSubjectName; }
 
@@ -198,4 +210,9 @@ private:
     bool bSpeechStarted = false;
     bool bSpeechFinished = false;
     bool bActionHeadGestureActive = false;
+    bool bDormancyPrepared = false;
+    // Bounded exception for the neutral frame published while leaving
+    // intentional dormancy. This is deliberately separate from the generic
+    // health-pending flag so unrelated Live Link failures stay fail closed.
+    bool bDormancyWakePending = false;
 };

@@ -65,6 +65,10 @@ public:
     UFUNCTION(BlueprintPure, Category = "Fay|Body Motion")
     EFayBodyMotionProvider GetActiveProvider() const { return ActiveProvider; }
 
+    /** True only for configured idle with no montage, procedural, or generated work. */
+    UFUNCTION(BlueprintPure, Category = "Fay|Body Motion|Dormancy")
+    bool CanEnterDormancy() const;
+
     /** Deterministic local clips. Missing entries fail safely to idle. */
     UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Fay|Body Motion")
     TMap<FName, TSoftObjectPtr<UAnimMontage>> BakedMontages;
@@ -89,6 +93,10 @@ private:
     void BeginProceduralGesture(const FFayBodyMotionRequest& Request);
     void StopProceduralGesture();
     void ApplyProceduralGesture();
+    void StartGeneratedAction(const FFayBodyMotionRequest& Request);
+    void BeginGeneratedActionBlendOut(bool bProviderFailure, const FString& Reason);
+    void CompleteGeneratedActionBlendOut();
+    void StopGeneratedActionImmediately();
 
     UPROPERTY(Transient)
     TObjectPtr<UFayAvatarBridgeComponent> Bridge;
@@ -119,4 +127,10 @@ private:
     float ProceduralGestureElapsedSeconds = 0.0f;
     float ProceduralGestureDurationSeconds = 0.0f;
     float ProceduralGestureIntensity = 0.0f;
+    FName GeneratedBehavior = NAME_None;
+    float GeneratedActionElapsedSeconds = 0.0f;
+    float GeneratedActionDurationSeconds = 0.0f;
+    float GeneratedBlendOutElapsedSeconds = 0.0f;
+    bool bGeneratedActionActive = false;
+    bool bGeneratedBlendOutActive = false;
 };
