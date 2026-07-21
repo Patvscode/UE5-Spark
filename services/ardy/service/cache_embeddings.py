@@ -128,7 +128,10 @@ def main() -> int:
     parser.add_argument("--fp32", action="store_true")
     args = parser.parse_args()
 
-    from ardy.model import load_text_encoder
+    # The reviewed ARDY commit intentionally does not re-export this helper
+    # from ardy.model; use its stable defining module just like upstream's
+    # run_text_encoder_server.py.
+    from ardy.model.load_model import load_text_encoder
 
     precision = "float32" if args.fp32 else "bfloat16"
     encoder = load_text_encoder(

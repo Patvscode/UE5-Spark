@@ -26,6 +26,13 @@ if np is not None:
     )
 
 
+class EmbeddingSourceContractTests(unittest.TestCase):
+    def test_generator_uses_the_pinned_upstream_import_path(self) -> None:
+        source = (SERVICE_ROOT / "cache_embeddings.py").read_text(encoding="utf-8")
+        self.assertIn("from ardy.model.load_model import load_text_encoder", source)
+        self.assertNotIn("from ardy.model import load_text_encoder", source)
+
+
 @unittest.skipIf(np is None, "numpy is unavailable in the source-check interpreter")
 class FakeTensor:
     def __init__(self, values: np.ndarray) -> None:
