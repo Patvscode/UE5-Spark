@@ -6,6 +6,7 @@
 #include "Features/IModularFeatures.h"
 #include "GameFramework/Actor.h"
 #include "GuiToRawControlsUtils.h"
+#include "HAL/UnrealMemory.h"
 #include "ILiveLinkClient.h"
 #include "ILiveLinkSource.h"
 #include "LiveLinkInstance.h"
@@ -968,9 +969,23 @@ void UFayMetaHumanSpeechDriverComponent::BeginPlay()
     {
         bResetSolverCacheBetweenUtterances = ResetCacheOverride != 0;
     }
+    int32 RecreateSolverOverride = bRecreateSolverBetweenUtterances ? 1 : 0;
+    if (FParse::Value(
+            FCommandLine::Get(),
+            TEXT("FayRecreateSpeechSolver="),
+            RecreateSolverOverride))
+    {
+        bRecreateSolverBetweenUtterances = RecreateSolverOverride != 0;
+    }
+    if (bRecreateSolverBetweenUtterances)
+    {
+        bResetSolverCacheBetweenUtterances = false;
+    }
     UE_LOG(LogFayMetaHumanRuntime, Display,
-        TEXT("StreamingADA utterance cache reset is %s."),
-        bResetSolverCacheBetweenUtterances ? TEXT("enabled") : TEXT("disabled"));
+        TEXT("StreamingADA utterance reset mode: %s."),
+        bRecreateSolverBetweenUtterances
+            ? TEXT("recreate-solver")
+            : (bResetSolverCacheBetweenUtterances ? TEXT("clear-cache") : TEXT("contiguous-flag")));
     InitializeSolverAndSource();
 }
 
@@ -1552,7 +1567,24 @@ void UFayMetaHumanSpeechDriverComponent::HandleDecodedPcm(
     RemainingTailSteps = TailSolveSteps;
     MoodValue = static_cast<uint8>(ResolveMood(Message));
     MoodIntensity = ResolveMoodIntensity(Message);
-    if (bResetSolverCacheBetweenUtterances)
+    if (bRecreateSolverBetweenUtterances)
+    {
+        RuntimeState->Solver.Reset();
+        FMemory::Trim(true);
+        RuntimeState->Solver = MakeShared<FSpeechAnimationSolverV4>(
+            SpeechModel,
+            TEXT("NNERuntimeORTCpu"));
+        if (!RuntimeState->Solver->Initialize() ||
+            RuntimeState->Solver->GetNumCurves() != ExpectedSolverCurveCount ||
+            RuntimeState->Solver->GetCurveNames().Num() != ExpectedSolverCurveCount)
+        {
+            UE_LOG(LogFayMetaHumanRuntime, Error,
+                TEXT("Could not recreate the StreamingADA solver for the next utterance."));
+            RuntimeState->Solver.Reset();
+            return;
+        }
+    }
+    else if (bResetSolverCacheBetweenUtterances)
     {
         RuntimeState->Solver->ClearCache();
     }

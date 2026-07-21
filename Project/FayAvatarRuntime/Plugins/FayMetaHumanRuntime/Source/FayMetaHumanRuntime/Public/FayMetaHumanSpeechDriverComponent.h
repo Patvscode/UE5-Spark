@@ -85,6 +85,14 @@ public:
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Fay|MetaHuman", AdvancedDisplay)
     bool bResetSolverCacheBetweenUtterances = true;
 
+    /**
+     * Diagnostic fallback for SDK versions whose ClearCache implementation
+     * retains per-utterance arenas. Enable with -FayRecreateSpeechSolver=1;
+     * it is mutually exclusive with the lighter cache-reset path.
+     */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Fay|MetaHuman", AdvancedDisplay)
+    bool bRecreateSolverBetweenUtterances = false;
+
     /** Convert supported Fay semantic actions into conservative head gestures. */
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Fay|MetaHuman|Gestures")
     bool bEnableSemanticHeadGestures = true;
