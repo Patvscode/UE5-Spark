@@ -17,10 +17,17 @@ from pose_protocol import (  # noqa: E402
     ardy_translation_to_unreal_cm,
     validate_batch,
 )
-from providers import MockPoseProvider  # noqa: E402
+from providers import MockPoseProvider, _serialize_contact_values  # noqa: E402
 
 
 class PoseProtocolTests(unittest.TestCase):
+    def test_boolean_contacts_are_serialized_as_protocol_numbers(self) -> None:
+        values = _serialize_contact_values([True, False, True, False])
+        self.assertEqual(values, [1.0, 0.0, 1.0, 0.0])
+        self.assertTrue(all(type(value) is float for value in values))
+        with self.assertRaises(RuntimeError):
+            _serialize_contact_values([[True], [False], [True], [False]])
+
     def test_core27_hierarchy_is_exact_and_ordered(self) -> None:
         self.assertEqual(len(CORE27_HIERARCHY), 27)
         self.assertEqual(tuple(name for name, _ in CORE27_HIERARCHY), CORE27_JOINTS)

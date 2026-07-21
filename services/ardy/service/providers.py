@@ -46,6 +46,18 @@ def _sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
+def _serialize_contact_values(values: object) -> list[float]:
+    """Normalize ARDY's boolean foot-contact flags to protocol numbers."""
+
+    try:
+        result = [float(value) for value in values]  # type: ignore[union-attr]
+    except (TypeError, ValueError) as error:
+        raise RuntimeError("ARDY foot contacts are not a flat numeric vector") from error
+    if len(result) != 4 or not all(math.isfinite(value) for value in result):
+        raise RuntimeError("ARDY foot contacts must contain four finite values")
+    return result
+
+
 def load_embedding_cache(root: Path, np_module: object) -> dict[str, tuple[object, object]]:
     """Load only a complete, hash-sealed cache produced by cache_embeddings.py."""
 
@@ -323,7 +335,7 @@ class ArdyPoseProvider:
                     "time": round(self._time + index / FPS, 6),
                     "root": [*roots[index].tolist(), *root_quaternions[index].tolist()],
                     "joints": joints,
-                    "contacts": contacts[index].tolist(),
+                    "contacts": _serialize_contact_values(contacts[index]),
                 }
             )
         self._time = frames[-1]["time"] + 1.0 / FPS
