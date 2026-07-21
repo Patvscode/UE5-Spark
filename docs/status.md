@@ -48,8 +48,12 @@ content remain private and are not part of this repository.
   9.28 ms average, 11.17 ms p95, and 19.10 ms maximum.
 - A separate 4.64-second speech chunk solved exactly 242 frames after the
   background-window idle throttle was disabled in runtime code.
-- One idle diagnostic frame reported approximately 187.35 FPS / 5.34 ms. Treat
-  this as an observed frame, not a formal performance benchmark.
+- A later boot CSV made the v27 frame-rate limitation measurable: 12,000 frames
+  completed in 70.536429 seconds, or 170.125 FPS. The per-frame `FrameTime`
+  values summed to the same capture duration. V27's config had requested 30 FPS,
+  but the standard GameUserSettings value subsequently reset `t.MaxFPS` to zero.
+  V27 remains the prior production-qualified functional rollback, not a verified
+  30 FPS performance baseline.
 - The final sealed package completed two consecutive cold launches, reached the
   solver, exact Live Link consumer, Fay WebSocket, and background-throttle
   markers on each run, then completed clean teardown without leaving a runtime
@@ -106,9 +110,11 @@ content remain private and are not part of this repository.
   GB10 to about 90 percent utilization; the kernel recorded NVIDIA Xid 109
   (`CTX SWITCH TIMEOUT`) against Unreal before its render watchdog terminated.
   Fay remained alive. The soak tool now detects sustained shared-GPU saturation.
-- The sealed dual-character v15 package adds repeated neutral Live Link
-  bootstrap frames to remove a measured cold-start scheduler race and caps
-  rendering at 30 FPS to retain compute headroom. Its first cold launch
+- The sealed dual-character v15 package added repeated neutral Live Link
+  bootstrap frames to remove a measured cold-start scheduler race and introduced
+  the intended 30 FPS config value. The later v27 CSV proved that
+  GameUserSettings neutralized that value, so the historical v15 result is not
+  frame-cap evidence. Its first cold launch
   configured Ada immediately, then a GPU-isolated Null-RHI gate completed 20
   turns over 1,803 seconds: 6,552 exact facial frames over 127.040 speech
   seconds, zero frame-accounting failures, 11.69 ms worst p95, and no fatal,
@@ -199,7 +205,7 @@ content remain private and are not part of this repository.
   completion, allocator release, and delayed object collection. Five dormancy
   entries and four accepted-message wakes alternated exactly, and tail RSS grew
   only 10,704 KiB.
-- Ada then passed the current sealed 1,802-second / 20-turn rendered production soak.
+- Ada then passed the prior sealed 1,802-second / 20-turn rendered production soak.
   All 20 facial summaries, normal playbacks, allocator releases, delayed
   collections, and dormancy wakes were present; worst facial p95 was 15.92 ms
   and tail RSS growth was 29,072 KiB. There were no watchdog, queue, runtime,
@@ -225,6 +231,58 @@ content remain private and are not part of this repository.
   exact sealed executable, PID, start time, runtime log, reviewed profile, and
   real playback markers, recorded no desktop or audio, and revalidated the
   media before it was allowlisted on the private progress hub.
+
+## Current verified v28 result
+
+- The private v28 native ARM64 package is sealed. Its recorded package-seal
+  digest is
+  `653d14a1205a25bbd7c5f434c998919c3d5284af40717d0c267294909b67139f`,
+  and the native AArch64 executable SHA-256 begins with `b1184ec`.
+- Ada passed v28's rendered four-turn production qualification in 241 seconds.
+  Worst facial p95 was 17.03 ms, maximum Unreal RSS was 2,132,444 KiB, tail RSS
+  growth was 8,176 KiB, and minimum unified `MemAvailable` was 58,918,672 KiB.
+- The run verified the project-owned `FayGameUserSettings` policy exactly once,
+  enforced the reviewed frame-rate policy exactly once, and recorded zero policy
+  violations. These markers prove policy selection and enforcement; the guarded
+  CSV gate remains the separate measurement of effective frame rate.
+- Dormancy history contained five entries, four accepted-message wakes, and no
+  preparation cancellation. Runtime, kernel, and action failure counts were all
+  zero. Controlled teardown completed cleanly, the externally managed Fay and
+  ARDY services remained unchanged, and the separately managed Voxtral service
+  was restored.
+- Ada's separate production endurance gate passed 20 turns over 1,803 seconds.
+  Unreal RSS moved from 2,119,152 KiB in the first sample to 2,117,968 KiB in the
+  last, reached a 2,123,648 KiB maximum, and grew only 6,328 KiB across the
+  measured tail at a 6.10 KiB/s slope. Minimum `MemAvailable` was 58,743,872 KiB.
+  GPU utilization peaked briefly at 95 percent; no three-sample excessive-GPU
+  condition occurred.
+- All 20 endurance turns produced facial summaries, normal playbacks, allocator
+  releases, and delayed collections. Worst facial p95 was 6.56 ms. Dormancy
+  history contained 21 entries, 20 accepted-message wakes, and no preparation
+  cancellation. Policy, action, runtime, and kernel failure counts were zero;
+  controlled teardown, package-seal verification, and service-continuity checks
+  all passed.
+- Aoi passed its own 241-second / four-turn rendered qualification. Maximum
+  Unreal RSS was 2,177,596 KiB, tail growth was 2,512 KiB, and minimum
+  `MemAvailable` was 58,668,572 KiB. All four facial summaries completed with
+  6.54 ms worst p95; dormancy recorded five entries and four wakes. Frame-policy
+  drift, runtime failures, and kernel failures were zero, and the outer guarded
+  wrapper passed.
+- The guarded diagnostic captured exactly 6,000 CSV frames, trimmed 300 startup
+  and 30 ending frames, and analyzed 5,670 frames. Mean `FrameTime` was
+  33.33156 ms, average rate was 30.001596 FPS, p95 was 38.4833 ms, and p99 was
+  39.5503 ms. The complete capture lasted 202.981269 seconds; summed frame time
+  differed from metadata by only 0.0149 ms. The retained CSV SHA-256 is
+  `d7ce10963ab418dc30ecbc090918795a55b6c77605d24e5dd4e873d569dad9b1`.
+  Diagnostic teardown and the outer service-restoration checks passed cleanly.
+- V28 is therefore the current production-qualified package and measured 30 FPS
+  baseline. V27 remains intact as the prior production-qualified rollback, with
+  its known uncapped frame-rate limitation documented above.
+- A separate passing 90-second, one-turn diagnostic captured Ada's exact
+  1280x720 client as a PNG and an eight-second, 30 FPS MP4 for the private
+  progress hub. The outer gate still passed teardown, service restoration, and
+  process-identity checks; capture overhead is not part of the production or CSV
+  results above.
 
 ## Important boundary
 
@@ -262,15 +320,13 @@ deployable application.
   presentation for a polished long-running character experience.
 - Assemble and validate a second reviewed female preset. Aoi already proves the
   no-character-specific-C++ portability requirement but is male in UE 5.8.
-- Repeat the isolated malformed-envelope, stale/out-of-order sequence, and
-  ARDY service kill/restart injections against the sealed v27 package. Earlier
-  builds passed those recovery paths, but they remain separate from v27's
-  completed production soak and must not interrupt the externally managed Fay
-  process.
-- Run a short CSV-enabled performance diagnostic at 720p and 1080p, then retain
-  front/side motion review and an Aoi v27 comparison capture. CSV and capture
-  overhead remain diagnostic-only and cannot replace the already-passing
-  production qualification.
+- Repeat the isolated malformed-envelope, stale/out-of-order sequence, and ARDY
+  service kill/restart injections against sealed v28. Earlier
+  builds passed those recovery paths, but they remain separate from v28's
+  qualification and must not interrupt the externally managed Fay process.
+- Run the separate 1080p CSV diagnostic and retain side-view motion review plus
+  an updated Aoi comparison capture. CSV and capture overhead remain
+  diagnostic-only and cannot replace a production endurance qualification.
 - Keep the free modular Casual Girl Fab character as a deferred private
   compatibility target. Reliability, MCP control, deterministic motion, and
   real ARDY activation take precedence; no Fab content belongs in this public

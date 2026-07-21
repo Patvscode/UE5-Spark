@@ -151,7 +151,59 @@ samples above 95 percent. Preserve CSV timing and private beginning/midpoint/end
 media for the final visual review. A short 1080p gate follows the 720p endurance
 pass; do not substitute a 30-minute 1080p run for the qualification sequence.
 
-### Latest verified v27 result
+### Latest verified v28 result
+
+The private native ARM64 v28 package is sealed with package-seal digest
+`653d14a1205a25bbd7c5f434c998919c3d5284af40717d0c267294909b67139f`;
+the AArch64 executable SHA-256 begins with `b1184ec`. Ada passed its rendered
+four-turn production qualification in 241 seconds. Worst facial p95 was
+17.03 ms, maximum Unreal RSS was 2,132,444 KiB, tail RSS growth was 8,176 KiB,
+and minimum `MemAvailable` was 58,918,672 KiB.
+
+The finalized summary recorded one project-owned GameUserSettings verification,
+one reviewed frame-policy enforcement, and zero frame-policy violations. It also
+recorded five dormancy entries, four accepted-message wakes, no dormancy
+preparation cancellation, and zero runtime, kernel, or action failures.
+Controlled teardown was clean. Fay and ARDY remained unchanged, and the
+separately managed Voxtral service was restored.
+
+Ada's separate production endurance gate passed 20 turns over 1,803 seconds.
+Unreal RSS began at 2,119,152 KiB, ended at 2,117,968 KiB, reached a maximum of
+2,123,648 KiB, and grew 6,328 KiB across the measured tail with a 6.10 KiB/s
+slope. Minimum `MemAvailable` was 58,743,872 KiB. GPU utilization peaked
+briefly at 95 percent; no three-sample excessive-GPU condition occurred.
+
+All 20 turns produced facial summaries, normal playbacks, allocator releases,
+and delayed collections; worst facial p95 was 6.56 ms. The ordered dormancy
+history contained 21 entries, 20 accepted-message wakes, and no preparation
+cancellation. Policy, action, runtime, and kernel failure counts were zero.
+Controlled teardown, post-run seal verification, and external-service
+continuity all passed.
+
+Aoi then passed its 241-second / four-turn rendered qualification. Maximum RSS
+was 2,177,596 KiB, tail growth was 2,512 KiB, and minimum `MemAvailable` was
+58,668,572 KiB. Four facial summaries completed with 6.54 ms worst p95;
+dormancy recorded five entries and four wakes. Frame-policy drift, runtime
+failures, and kernel failures were zero, and the outer wrapper passed.
+
+The separate guarded CSV run was diagnostic-only. It captured exactly 6,000
+frames, discarded 300 startup and 30 ending frames, and evaluated 5,670 frames.
+Mean `FrameTime` was 33.33156 ms, average rate was 30.001596 FPS, p95 was
+38.4833 ms, and p99 was 39.5503 ms. Capture duration was 202.981269 seconds,
+with only 0.0149 ms difference between summed frame time and duration metadata.
+The retained CSV SHA-256 is
+`d7ce10963ab418dc30ecbc090918795a55b6c77605d24e5dd4e873d569dad9b1`.
+Diagnostic teardown and outer service restoration passed cleanly. This measured
+result confirms the intended limiter without promoting profiling overhead into
+the production endurance evidence.
+
+A separate 90-second, one-turn v28 diagnostic produced a guarded 1280x720 PNG
+and an exact eight-second, 30 FPS MP4 for the private progress hub. The capture
+watcher selected Ada's exact X11 client and the outer gate still passed teardown,
+service restoration, and identity checks. Those pixels are visual evidence only;
+capture and encoder overhead were absent from the production and CSV gates above.
+
+### Prior verified v27 rollback result
 
 The sealed Ada v27 package passed this sequence on Spark. Its four-turn
 qualification produced 1,640 exact facial frames over 32 seconds of speech,
@@ -165,6 +217,11 @@ collections, 21 dormancy entries and 20 accepted-message wakes, 15.92 ms worst
 facial p95, and 29,072 KiB tail RSS growth. No watchdog, queue, runtime, Vulkan,
 kernel, forced-teardown, Fay-survival, or package-seal check failed.
 
+V27 remains intact as the prior production-qualified functional rollback, but
+it is not the verified frame-cap baseline. A later boot diagnostic captured
+exactly 12,000 frames in 70.536429 seconds, or 170.125 FPS, after the standard
+GameUserSettings value reset the intended `t.MaxFPS=30` configuration to zero.
+
 The Ada PNG and eight-second MP4 allowlisted on the private progress hub came
 from a later one-turn diagnostic. They are visual evidence only; the guarded
 capture's extra X11 and encoder work was not present in either production
@@ -177,8 +234,10 @@ because resident model servers can otherwise make Vulkan fail with
 workload without explicit operator approval. Null-RHI diagnostics skip the
 Vulkan-memory gate but do not
 prove audio-device completion, skin/hair rendering, frame rate, or the delayed
-rendered cleanup path. The packaged avatar caps rendering at 30 FPS to retain
-compute headroom for speech and motion.
+rendered cleanup path. V28 verifies the project-owned 30 FPS policy at startup,
+audits it every five seconds, and now has a separate exact-frame CSV measurement
+at 30.001596 FPS. V27 remains a functional rollback with the known uncapped
+limitation above.
 
 ## Tailscale progress hub
 
