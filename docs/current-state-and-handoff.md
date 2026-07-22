@@ -17,7 +17,9 @@ MetaHuman assets, and captured media are intentionally not stored in Git.
 - Replacement source candidate: exact `CasualGirl` / `UE5EpicArkit` profile,
   direct ARKit morph driver, package/cook guards, and capture/soak selection;
   its changed translation units compile cleanly as ARM64 objects on the Spark,
-  but vendor content is not acquired and no replacement binary exists yet
+  and the official Fab 0.0.13 Editor module now compiles and initializes in an
+  isolated x86-64/FEX acquisition project on the Spark. Vendor content is not
+  acquired and no replacement runtime binary exists yet
 - Current motion service: real ARDY Horizon8 image `0.2.0`, protocol v1,
   three approved cached embeddings (`idle`, `listen`, `explain`)
 - Current private controller: immersive live Unreal preview plus narrow chat and
@@ -241,7 +243,9 @@ image and remains untouched for rollback.
 - The free Fab Casual Girl is not installed. The source profile remains
   `pending_asset_audit`; its wardrobe controls are disabled, and full undress is
   prohibited until every hidden body region, material, and LOD is manually
-  verified as complete.
+  verified as complete. The Spark-only Fab staging Editor is built and sealed;
+  the remaining acquisition gate is user-owned Epic sign-in, Standard License
+  acceptance, and adding the listing to the user's Fab library.
 
 ## Next implementation order
 

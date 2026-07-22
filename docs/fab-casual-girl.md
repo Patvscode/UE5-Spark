@@ -51,6 +51,67 @@ the project. The Editor can then install the owned asset from the Fab library.
 8. Up-convert and resave only inside the private content workspace, then cook a
    minimal LinuxArm64 test before adding it to the production package.
 
+## Spark-only Fab acquisition staging
+
+The Spark's native ARM64 Engine cannot load Fab's x86-64 Linux downloader and
+browser binaries. The guarded Spark-only path therefore runs Epic's x86-64
+Editor and Fab plugin through the already isolated rootless FEX environment.
+It does not add Fab to `FayAvatarRuntime.uproject`.
+
+Prepare the content-only project first. This copies only reviewed public
+configuration and creates private state/log directories; it does not launch an
+Editor, authenticate, accept an agreement, or download content:
+
+```bash
+./scripts/prepare-fex-fab-staging.sh \
+  "$cooker_workspace" "$isolated_engine" \
+  "$cooker_workspace/fab-acquisition-staging/FayFabAcquisition"
+```
+
+Inspect the build inputs without compiling, then build the Fab Editor module
+when ready:
+
+```bash
+./scripts/build-fex-fab-staging.sh --check \
+  "$cooker_workspace" "$isolated_engine" \
+  "$cooker_workspace/fab-acquisition-staging/FayFabAcquisition/FayFabAcquisition.uproject"
+
+./scripts/build-fex-fab-staging.sh \
+  "$cooker_workspace" "$isolated_engine" \
+  "$cooker_workspace/fab-acquisition-staging/FayFabAcquisition/FayFabAcquisition.uproject"
+```
+
+Create a private non-content baseline only after the plugin build and any
+reviewed initialization changes. The manifest must stay outside the project:
+
+```bash
+./scripts/fab-staging-manifest.py create \
+  "$cooker_workspace/fab-acquisition-staging/FayFabAcquisition" \
+  "$cooker_workspace/logs-private/fab-acquisition/before-import.json"
+```
+
+The launcher requires that baseline, verifies the exact x86-64 Editor/Fab
+build and guarded browser portal, keeps HOME/XDG state private, suppresses
+Editor output from the terminal, and verifies the seal again after exit:
+
+```bash
+DISPLAY=:1 XAUTHORITY="$spark_xauthority" \
+./scripts/run-fex-fab-staging.sh --check \
+  "$cooker_workspace" "$isolated_engine" \
+  "$cooker_workspace/fab-acquisition-staging/FayFabAcquisition/FayFabAcquisition.uproject" \
+  "$cooker_workspace/logs-private/fab-acquisition/before-import.json"
+
+DISPLAY=:1 XAUTHORITY="$spark_xauthority" \
+./scripts/run-fex-fab-staging.sh \
+  "$cooker_workspace" "$isolated_engine" \
+  "$cooker_workspace/fab-acquisition-staging/FayFabAcquisition/FayFabAcquisition.uproject" \
+  "$cooker_workspace/logs-private/fab-acquisition/before-import.json"
+```
+
+Authentication is always completed interactively in the browser opened by the
+desktop portal. Never place an Epic password, authorization code, cookie, or
+token in a command, project file, repository, or support log.
+
 The public pending wardrobe profile is
 `config/wardrobe-profiles/CasualGirl.pending.json`. It exposes logical choices,
 not asset paths. `allowFullyUnclothed` remains false until the complete body and

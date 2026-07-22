@@ -1,0 +1,16 @@
+{
+  "FileVersion": 3,
+  "EngineAssociation": "5.8",
+  "Category": "Private Fab acquisition staging",
+  "Description": "Disposable content-only project for acquiring and reviewing licensed Fab assets.",
+  "DisableEnginePluginsByDefault": true,
+  "Plugins": [
+    {
+      "Name": "Fab",
+      "Enabled": true,
+      "TargetAllowList": [
+        "Editor"
+      ]
+    }
+  ]
+}

@@ -29,6 +29,7 @@ IGNORED_TOP_LEVEL = {
     "Saved",
 }
 MAX_FILES = 100_000
+MAX_IGNORED_ENTRIES = 1_000_000
 
 
 class StagingManifestError(RuntimeError):
@@ -55,10 +56,51 @@ def _sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
+def _walk_error(error: OSError) -> None:
+    location = getattr(error, "filename", None) or "unknown path"
+    raise StagingManifestError(f"could not inspect staging tree: {location}") from error
+
+
+def _validate_ignored_trees(root: Path) -> None:
+    """Reject write escapes without hashing generated or licensed content."""
+    entry_count = 0
+    for name in sorted(IGNORED_TOP_LEVEL):
+        ignored_root = root / name
+        if ignored_root.is_symlink():
+            raise StagingManifestError(f"ignored top-level path is a symlink: {name}")
+        if not ignored_root.exists():
+            continue
+        if not ignored_root.is_dir():
+            raise StagingManifestError(f"ignored top-level path is not a directory: {name}")
+        for directory, directory_names, file_names in os.walk(
+            ignored_root, followlinks=False, onerror=_walk_error
+        ):
+            directory_path = Path(directory)
+            for child_name in tuple(directory_names):
+                child = directory_path / child_name
+                if child.is_symlink():
+                    raise StagingManifestError(
+                        f"ignored tree contains a symlink: {child.relative_to(root)}"
+                    )
+            for child_name in file_names:
+                child = directory_path / child_name
+                if child.is_symlink() or not child.is_file():
+                    raise StagingManifestError(
+                        "ignored tree contains a non-regular file: "
+                        f"{child.relative_to(root)}"
+                    )
+            entry_count += len(directory_names) + len(file_names)
+            if entry_count > MAX_IGNORED_ENTRIES:
+                raise StagingManifestError("ignored staging trees contain too many entries")
+
+
 def snapshot(root_input: Path) -> dict[str, object]:
     root = _safe_root(root_input)
+    _validate_ignored_trees(root)
     records: dict[str, dict[str, object]] = {}
-    for directory, directory_names, file_names in os.walk(root, followlinks=False):
+    for directory, directory_names, file_names in os.walk(
+        root, followlinks=False, onerror=_walk_error
+    ):
         directory_path = Path(directory)
         relative_directory = directory_path.relative_to(root)
         if relative_directory == Path("."):

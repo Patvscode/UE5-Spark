@@ -376,7 +376,9 @@ python_sources = (
     Path("tools/tests/test_ardy_editor_asset_builder_contract.py"),
     Path("tools/tests/test_capture_spark_avatar_window.py"),
     Path("tools/tests/test_character_camera_framing.py"),
+    Path("tools/tests/test_fab_module_metadata.py"),
     Path("tools/tests/test_fab_staging_manifest.py"),
+    Path("tools/tests/test_fex_fab_staging.py"),
     Path("tools/tests/test_package_manifest_compatibility.py"),
     Path("tools/tests/test_run_spark_avatar_gate.py"),
     Path("tools/tests/test_run_spark_ardy_recovery_gate.py"),
@@ -388,6 +390,7 @@ python_sources = (
         "Tests/test_arkit_runtime_contract.py"
     ),
     Path("scripts/audit-fab-casual-girl.py"),
+    Path("scripts/fab-module-metadata.py"),
     Path("scripts/fab-staging-manifest.py"),
     Path("scripts/character-profiles.py"),
     Path("scripts/cook-state.py"),
@@ -446,8 +449,21 @@ json_sources = (
     Path("config/motion-catalog.json"),
     Path("config/wardrobe-profiles/CasualGirl.pending.json"),
     Path("scripts/fex-vulkan-thunks.json"),
+    Path("staging/fab-acquisition-template/FayFabAcquisition.uproject"),
 )
 parsed_json = {source: json.loads(source.read_text()) for source in json_sources}
+
+fab_staging_path = Path(
+    "staging/fab-acquisition-template/FayFabAcquisition.uproject"
+)
+fab_staging_project = parsed_json[fab_staging_path]
+if (
+    fab_staging_project.get("DisableEnginePluginsByDefault") is not True
+    or fab_staging_project.get("Modules")
+    or fab_staging_project.get("Plugins")
+    != [{"Name": "Fab", "Enabled": True, "TargetAllowList": ["Editor"]}]
+):
+    reject("Fab acquisition staging must remain content-only and enable only Fab for Editor")
 
 motion_catalog_path = Path("config/motion-catalog.json")
 motion_catalog = parsed_json[motion_catalog_path]
@@ -1419,7 +1435,9 @@ if [[ -n $python_bin ]] && ! "$python_bin" -m unittest \
     tools.tests.test_ardy_unreal_contract \
     tools.tests.test_capture_spark_avatar_window \
     tools.tests.test_character_camera_framing \
+    tools.tests.test_fab_module_metadata \
     tools.tests.test_fab_staging_manifest \
+    tools.tests.test_fex_fab_staging \
     tools.tests.test_package_manifest_compatibility \
     tools.tests.test_run_spark_avatar_gate \
     tools.tests.test_run_spark_ardy_recovery_gate \

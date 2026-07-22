@@ -4,6 +4,7 @@ import importlib.util
 from pathlib import Path
 import tempfile
 import unittest
+from unittest import mock
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -50,6 +51,56 @@ class FabStagingManifestTests(unittest.TestCase):
             (root / "Plugins/link").symlink_to("new.so")
             with self.assertRaisesRegex(MANIFEST.StagingManifestError, "symlink"):
                 MANIFEST.snapshot(root)
+
+    def test_ignored_content_symlinks_fail_closed_without_hashing_assets(self) -> None:
+        with tempfile.TemporaryDirectory() as directory_name:
+            private = Path(directory_name)
+            root = private / "stage"
+            root.mkdir()
+            self.make_project(root)
+            outside = private / "outside"
+            outside.mkdir()
+
+            (root / "Content/Asset.uasset").write_bytes(b"licensed")
+            before = MANIFEST.snapshot(root)
+            (root / "Content/Asset.uasset").write_bytes(b"changed")
+            self.assertEqual(before, MANIFEST.snapshot(root))
+
+            (root / "Content/escape").symlink_to(outside, target_is_directory=True)
+            with self.assertRaisesRegex(MANIFEST.StagingManifestError, "symlink"):
+                MANIFEST.snapshot(root)
+
+    def test_ignored_top_level_directory_cannot_be_replaced_by_symlink(self) -> None:
+        with tempfile.TemporaryDirectory() as directory_name:
+            private = Path(directory_name)
+            root = private / "stage"
+            root.mkdir()
+            self.make_project(root)
+            outside = private / "outside"
+            outside.mkdir()
+            (root / "Content").rmdir()
+            (root / "Content").symlink_to(outside, target_is_directory=True)
+            with self.assertRaisesRegex(MANIFEST.StagingManifestError, "top-level"):
+                MANIFEST.snapshot(root)
+
+    def test_ignored_tree_walk_error_fails_closed(self) -> None:
+        with tempfile.TemporaryDirectory() as directory_name:
+            root = Path(directory_name) / "stage"
+            root.mkdir()
+            self.make_project(root)
+
+            def fail_walk(*_args, onerror=None, **_kwargs):
+                error = PermissionError("denied")
+                error.filename = str(root / "Content/hidden")
+                assert onerror is not None
+                onerror(error)
+                return iter(())
+
+            with mock.patch.object(MANIFEST.os, "walk", side_effect=fail_walk):
+                with self.assertRaisesRegex(
+                    MANIFEST.StagingManifestError, "could not inspect"
+                ):
+                    MANIFEST._validate_ignored_trees(root)
 
     def test_manifest_must_stay_outside_staging_root(self) -> None:
         source = SCRIPT.read_text(encoding="utf-8")
