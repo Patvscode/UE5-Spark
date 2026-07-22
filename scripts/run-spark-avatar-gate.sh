@@ -299,6 +299,27 @@ print(p95)
     printf '%s\n' "${health[@]}"
 }
 
+resolve_fixed_ardy_image_id() {
+    local value
+    value=$(docker image inspect --format '{{.Id}}' "$ARDY_IMAGE" 2>/dev/null) || return 1
+    [[ $value =~ ^sha256:[0-9a-f]{64}$ ]] || return 1
+    printf '%s\n' "$value"
+}
+
+ardy_image_tag_matches_expected() {
+    local current_image_id
+    current_image_id=$(resolve_fixed_ardy_image_id) || return 1
+    [[ $current_image_id == "$ardy_expected_image_id" ]]
+}
+
+ardy_image_reference_is_expected() {
+    local config_image_reference=$1 runtime_image_id=$2
+    [[ $ardy_expected_image_id =~ ^sha256:[0-9a-f]{64}$ ]] || return 1
+    [[ $runtime_image_id == "$ardy_expected_image_id" ]] || return 1
+    [[ $config_image_reference == "$ARDY_IMAGE" ||
+        $config_image_reference == "$ardy_expected_image_id" ]]
+}
+
 capture_ardy_snapshot() {
     local -n destination=$1
     local ardy_pid ardy_exe ardy_starttime
@@ -342,13 +363,13 @@ for value in values:
     (( ${#destination[@]} == 13 )) || return 1
     [[ ${destination[0]} == "/$ARDY_CONTAINER" ]] || return 1
     [[ ${destination[1]} =~ ^[0-9a-f]{64}$ ]] || return 1
-    [[ ${destination[2]} == "$ARDY_IMAGE" && ${destination[3]} == true ]] || return 1
+    ardy_image_reference_is_expected "${destination[2]}" "${destination[12]}" || return 1
+    [[ ${destination[3]} == true ]] || return 1
     [[ ${destination[4]} =~ ^[1-9][0-9]*$ && -n ${destination[5]} ]] || return 1
     [[ ${destination[6]} == true && ${destination[7]} == host && \
         ${destination[8]} == true && ${destination[9]} == 0 ]] || return 1
     [[ -d ${destination[10]} && ! -L ${destination[10]} && \
         ${destination[11]} == false ]] || return 1
-    [[ ${destination[12]} =~ ^sha256:[0-9a-f]{64}$ ]] || return 1
     ardy_pid=${destination[4]}
     ardy_exe=$(readlink -f "/proc/$ardy_pid/exe" 2>/dev/null || true)
     ardy_starttime=$(read_process_starttime "$ardy_pid" || true)
@@ -485,6 +506,7 @@ voxtral_restore_verified=0
 runner_group_post_exit_policy=not-reached
 fay_identity_unchanged=not-checked
 ardy_identity_unchanged=not-checked
+ardy_image_tag_unchanged=not-checked
 unreal_absent_after=not-checked
 gate_started_utc=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 fay_exe=''
@@ -597,6 +619,7 @@ write_final_record() {
         "voxtral_restore_verified=$voxtral_restore_verified" \
         "fay_identity_unchanged=$fay_identity_unchanged" \
         "ardy_identity_unchanged=$ardy_identity_unchanged" \
+        "ardy_image_tag_unchanged=$ardy_image_tag_unchanged" \
         "unreal_absent_after=$unreal_absent_after" \
         "cleanup_error_count=$error_count" \
         "finished_utc=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
@@ -640,6 +663,7 @@ write_after_record() {
         "ardy_embedding_count=${ardy_after[17]:-not-available}" \
         "ardy_p95_generation_ms=${ardy_after[18]:-not-available}" \
         "ardy_identity_unchanged=$ardy_identity_unchanged" \
+        "ardy_image_tag_unchanged=$ardy_image_tag_unchanged" \
         "voxtral_unit=$VOXTRAL_UNIT" \
         "voxtral_pid=${voxtral_after[1]:-not-available}" \
         "voxtral_executable=${voxtral_after[2]:-not-available}" \
@@ -707,6 +731,13 @@ on_exit() {
     fi
 
     if (( ardy_snapshot_ready == 1 )); then
+        if [[ $ardy_image_tag_unchanged != failed ]] &&
+            ardy_image_tag_matches_expected; then
+            ardy_image_tag_unchanged=passed
+        else
+            ardy_image_tag_unchanged=failed
+            note_cleanup_error 'the fixed ARDY production image tag changed identity'
+        fi
         if capture_ardy_snapshot ardy_after && \
             ardy_immutable_snapshot_is_equal ardy_before ardy_after; then
             ardy_identity_unchanged=passed
@@ -758,6 +789,9 @@ trap 'on_exit $?' EXIT
 trap 'handle_signal HUP 129' HUP
 trap 'handle_signal INT 130' INT
 trap 'handle_signal TERM 143' TERM
+
+ardy_expected_image_id=$(resolve_fixed_ardy_image_id) || \
+    fail 'the fixed ARDY production image tag did not resolve to one immutable image ID'
 
 mapfile -t existing_unreal_pids < <(find_expected_unreal_pids)
 (( ${#existing_unreal_pids[@]} == 0 )) || \
@@ -835,6 +869,10 @@ arrays_are_equal fay_listener_bindings_before fay_listener_bindings_after || \
 capture_ardy_snapshot ardy_after || fail 'ARDY changed during package verification'
 ardy_immutable_snapshot_is_equal ardy_before ardy_after || \
     fail 'ARDY changed during package verification'
+if ! ardy_image_tag_matches_expected; then
+    ardy_image_tag_unchanged=failed
+    fail 'the fixed ARDY production image tag changed during package verification'
+fi
 capture_voxtral_snapshot voxtral_after || fail 'Voxtral changed during package verification'
 [[ ${voxtral_after[1]} == "${voxtral_before[1]}" && \
     ${voxtral_after[2]} == "${voxtral_before[2]}" && \

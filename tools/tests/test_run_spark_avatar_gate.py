@@ -137,9 +137,56 @@ wait "$runner_pid"
             'value.get("checkpoint") != "ARDY-Core-RP-20FPS-Horizon8"',
             'value["embeddingCount"] != 3',
             "not 0.0 < p95 < 400.0",
+            "docker image inspect --format '{{.Id}}' \"$ARDY_IMAGE\"",
+            "ardy_expected_image_id=$(resolve_fixed_ardy_image_id)",
+            'ardy_image_reference_is_expected "${destination[2]}" "${destination[12]}"',
+            "ardy_image_tag_matches_expected",
+            '"ardy_image_tag_unchanged=$ardy_image_tag_unchanged"',
             '"ardy_p95_generation_ms=${ardy_after[18]:-not-available}"',
         ):
             self.assertIn(marker, self.source)
+
+    def test_ardy_image_reference_accepts_fixed_tag_or_exact_image_id_only(self) -> None:
+        function_start = self.source.index("ardy_image_reference_is_expected() {")
+        function_end = self.source.index("\n\ncapture_ardy_snapshot() {", function_start)
+        reference_function = self.source[function_start:function_end]
+        expected_id = "sha256:" + "1" * 64
+        foreign_id = "sha256:" + "2" * 64
+
+        def check(config_reference: str, runtime_image_id: str) -> bool:
+            harness = f"""
+set -euo pipefail
+readonly ARDY_IMAGE='ue5-spark-ardy:0.2.0'
+ardy_expected_image_id={expected_id!r}
+{reference_function}
+ardy_image_reference_is_expected {config_reference!r} {runtime_image_id!r}
+"""
+            result = subprocess.run(
+                ("bash", "-c", harness),
+                cwd=REPO_ROOT,
+                check=False,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+            return result.returncode == 0
+
+        self.assertTrue(check("ue5-spark-ardy:0.2.0", expected_id))
+        self.assertTrue(check(expected_id, expected_id))
+        self.assertFalse(check(foreign_id, expected_id))
+        self.assertFalse(check("ue5-spark-ardy:0.2.0", foreign_id))
+
+    def test_ardy_tag_identity_is_rechecked_before_pause_and_on_exit(self) -> None:
+        self.assertIn(
+            "the fixed ARDY production image tag changed during package verification",
+            self.source,
+        )
+        exit_handler = self.source[
+            self.source.index("on_exit() {") : self.source.index("handle_signal() {")
+        ]
+        self.assertIn("ardy_image_tag_matches_expected", exit_handler)
+        self.assertIn("ardy_image_tag_unchanged=passed", exit_handler)
+        self.assertIn("ardy_image_tag_unchanged=failed", exit_handler)
 
     def test_ardy_health_parser_rejects_nonsealed_payloads(self) -> None:
         prefix = 'printf \'%s\' "$body" | python3 -c \'\n'
