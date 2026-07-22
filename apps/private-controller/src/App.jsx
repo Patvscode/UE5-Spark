@@ -142,13 +142,18 @@ export function App() {
   const cameraStreamRef = useRef(null);
   const cameraPreviewRef = useRef(null);
   const statusStaleTimerRef = useRef(null);
-  const media = MEDIA[character];
-  const videoSource = media[motion] || media.idle;
+  const selectedCharacter = CHARACTERS.find((item) => item.id === character) || CHARACTERS[0];
+  const media = MEDIA[character] || null;
+  const videoSource = media ? (media[motion] || media.idle) : null;
   const systemsReady = health.fay && health.ardy;
   const streamRequested = health.renderer && health.stream && statusFresh;
-  const liveStage = streamRequested && streamState === "live" && Boolean(liveFrameUrl);
-  const liveLabel = !health.checked ? "Checking" : liveStage ? "Stage live" : streamRequested && streamState === "error" ? "Replay fallback" : streamRequested ? "Stream connecting" : health.renderer ? "Renderer linked" : systemsReady ? "Systems ready" : "Limited preview";
-  const characterName = character === "ada" ? "Ada" : "Aoi";
+  const liveStage = character === "ada" && streamRequested && streamState === "live" && Boolean(liveFrameUrl);
+  const liveLabel = !selectedCharacter.ready
+    ? "Renderer package pending"
+    : character !== "ada"
+      ? "Verified replay"
+      : !health.checked ? "Checking" : liveStage ? "Stage live" : streamRequested && streamState === "error" ? "Replay fallback" : streamRequested ? "Stream connecting" : health.renderer ? "Renderer linked" : systemsReady ? "Systems ready" : "Limited preview";
+  const characterName = selectedCharacter.name;
   const selectedAiControl = aiControl.modes.find((item) => item.id === aiControl.selectedMode) || aiControl.modes[1];
   const stageMediaStyle = { "--stage-zoom": stageZoom };
   const sheetMeta = activeSheet === "conversation"
@@ -770,17 +775,14 @@ export function App() {
 
   function chooseCharacter(id) {
     const candidate = CHARACTERS.find((item) => item.id === id);
-    if (!candidate?.ready) {
-      setNotice("Free Casual Girl saved for compatibility review");
-      return;
-    }
-    if (health.renderer && id !== "ada") {
-      setNotice(`${candidate.name} needs a reviewed renderer restart · keeping Ada live`);
-      return;
-    }
+    if (!candidate) return;
     setCharacter(id);
     setMotion(id === "ada" ? "explain" : "idle");
-    setNotice(`${candidate.name} · verified private replay`);
+    setPlaying(true);
+    setActiveSheet(null);
+    setNotice(candidate.ready
+      ? `${candidate.name} · verified private replay selected`
+      : `${candidate.name} selected · renderer package still pending`);
   }
 
   function togglePlayback() {
@@ -838,11 +840,19 @@ export function App() {
 
   return (
     <main className="app-shell">
-      <section className="avatar-stage" aria-label={`${character === "ada" ? "Ada" : "Aoi"} avatar stage`}>
-        <video ref={videoRef} className={`avatar-video ${liveStage ? "is-behind-live" : ""}`} style={stageMediaStyle} key={videoSource} autoPlay muted loop={motion === "idle" || Boolean(motionLoop)} playsInline poster={media.poster} aria-hidden={liveStage} onPlay={() => setPlaying(true)} onPause={() => setPlaying(false)} onEnded={finishReplay}>
-          <source src={videoSource} type="video/mp4" />
-        </video>
-        {liveStage && <img className="avatar-live-frame" style={stageMediaStyle} src={liveFrameUrl} alt={`${character === "ada" ? "Ada" : "Aoi"} live renderer stream`} draggable="false" />}
+      <section className="avatar-stage" aria-label={`${characterName} avatar stage`}>
+        {media ? (
+          <video ref={videoRef} className={`avatar-video ${liveStage ? "is-behind-live" : ""}`} style={stageMediaStyle} key={videoSource} autoPlay muted loop={motion === "idle" || Boolean(motionLoop)} playsInline poster={media.poster} aria-hidden={liveStage} onPlay={() => setPlaying(true)} onPause={() => setPlaying(false)} onEnded={finishReplay}>
+            <source src={videoSource} type="video/mp4" />
+          </video>
+        ) : (
+          <div className="avatar-pending-stage" role="status">
+            <UserCircle size={84} weight="light" />
+            <strong>{characterName}</strong>
+            <span>Selected · renderer package pending</span>
+          </div>
+        )}
+        {liveStage && <img className="avatar-live-frame" style={stageMediaStyle} src={liveFrameUrl} alt={`${characterName} live renderer stream`} draggable="false" />}
 
         {!chromeHidden ? (
           <>
@@ -943,14 +953,14 @@ export function App() {
                 <div className="sheet-truth"><span className={`status-dot ${systemsReady ? "is-ready" : ""}`} />{health.fay ? "Fay conversation live" : "Conversation limited"}<span aria-hidden="true">·</span><span>{liveStage ? "Stage stream live" : "Stage is replay"}</span></div>
                 <div className="transcript" aria-live="polite">
                   {messages.map((message) => (
-                    <article className={`message ${message.role}`} key={message.id}><small>{message.role === "assistant" ? (character === "ada" ? "Ada" : "Aoi") : message.role === "user" ? "You" : "System"}</small><p>{message.content}</p></article>
+                    <article className={`message ${message.role}`} key={message.id}><small>{message.role === "assistant" ? characterName : message.role === "user" ? "You" : "System"}</small><p>{message.content}</p></article>
                   ))}
-                  {sending && <div className="thinking" aria-label={`${character === "ada" ? "Ada" : "Aoi"} is thinking`}><span /><span /><span /></div>}
+                  {sending && <div className="thinking" aria-label={`${characterName} is thinking`}><span /><span /><span /></div>}
                 </div>
                 <div className="sheet-composer">
                   <button className={`voice-preview ${deviceVoice ? "is-on" : ""}`} onClick={() => setDeviceVoice((value) => !value)} type="button"><span className="toggle-track"><span /></span>Device voice preview</button>
                   <form className="composer" onSubmit={(event) => { event.preventDefault(); sendMessage(); }}>
-                    <ChatCircleDots size={20} /><input ref={inputRef} value={draft} onChange={(event) => setDraft(event.target.value)} placeholder="Type a message" maxLength={2000} aria-label={`Message ${character === "ada" ? "Ada" : "Aoi"}`} />
+                    <ChatCircleDots size={20} /><input ref={inputRef} value={draft} onChange={(event) => setDraft(event.target.value)} placeholder="Type a message" maxLength={2000} aria-label={`Message ${characterName}`} />
                     <button type="submit" disabled={!draft.trim() || sending} aria-label="Send message">{sending ? <CircleNotch className="spin" size={18} /> : <ArrowRight size={18} weight="bold" />}</button>
                   </form>
                 </div>

@@ -563,6 +563,21 @@ h2 { margin: 0; font-family: "Cormorant Garamond", Georgia, serif; font-size: 28
 .character-button > svg:last-child { flex: 0 0 auto; margin-left: auto; color: var(--mint); }
 .character-button.is-active { border-color: var(--mint); background: var(--mint-soft); }
 .character-button.is-pending { border-style: dashed; opacity: .65; }
+
+.avatar-pending-stage {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-content: center;
+  justify-items: center;
+  gap: 10px;
+  color: rgba(255, 255, 255, .78);
+  background: radial-gradient(circle at 50% 42%, rgba(37, 88, 74, .28), transparent 42%);
+  text-align: center;
+}
+
+.avatar-pending-stage strong { font-size: 1.45rem; }
+.avatar-pending-stage span { color: rgba(255, 255, 255, .52); font-size: .84rem; }
 .section-state { color: var(--warm); font-size: 8px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; }
 .section-state.is-ready { color: var(--mint); }
 .vision-layout { display: grid; gap: 12px; }
