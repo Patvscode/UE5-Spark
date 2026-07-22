@@ -204,17 +204,93 @@ class ArdyRecoveryGateStaticTests(unittest.TestCase):
             "Using ARDY generated motion provider for 'listen'",
         ):
             self.assertIn(marker, self.source)
-        first_post = self.source.index('post_explain_action "$FIRST_ACTION_DURATION"')
+        speech_start = self.source.index("speech_start_line=")
+        first_post = self.source.index(
+            'post_explain_action "$FIRST_ACTION_DURATION"', speech_start
+        )
         first_marker = self.source.index("bounded_seconds=10.00", first_post)
+        finished_check = self.source.index("finished_during_dispatch=", first_marker)
         stop = self.source.index("stop_exact_old_ardy", first_marker)
         recovery = self.source.index("attempt_recovery", stop)
         ready = self.source.index("recovered_ready_line=", recovery)
         second_post = self.source.index('post_explain_action "$SECOND_ACTION_DURATION"', ready)
+        self.assertLess(speech_start, first_post)
         self.assertLess(first_post, first_marker)
-        self.assertLess(first_marker, stop)
+        self.assertLess(first_marker, finished_check)
+        self.assertLess(finished_check, stop)
         self.assertLess(stop, recovery)
         self.assertLess(recovery, ready)
         self.assertLess(ready, second_post)
+
+    def test_timing_sensitive_guards_use_the_exact_runtime_snapshot(self) -> None:
+        snapshot = function_source(
+            self.source, "validate_fay_runtime_snapshot", "array_digest"
+        )
+        for marker in (
+            'process_matches_identity "$fay_pid" "$fay_exe" "$fay_starttime"',
+            "capture_fay_listener_bindings bindings",
+            "arrays_are_equal fay_listener_bindings_before bindings",
+        ):
+            self.assertIn(marker, snapshot)
+        self.assertNotIn("fay_http_ready", snapshot)
+        self.assertNotIn("curl", snapshot)
+
+        timing_sensitive_regions = (
+            function_source(
+                self.source, "wait_for_runner_completion", "find_marker_line_after"
+            ),
+            function_source(self.source, "continuity_guard", "wait_for_marker_after"),
+            function_source(self.source, "post_motion_action", "post_explain_action"),
+        )
+        for region in timing_sensitive_regions:
+            self.assertIn("validate_fay_runtime_snapshot", region)
+            self.assertNotIn("validate_fay_identity", region)
+
+        # Full HTTP health checks still protect preflight, final verification,
+        # and exit cleanup, but must not consume the live speech/action window.
+        self.assertEqual(
+            self.source.count(
+                'validate_fay_identity "$fay_exe" "$fay_starttime"'
+            ),
+            4,
+        )
+
+    def test_exit_image_identity_checks_are_shell_predicates(self) -> None:
+        on_exit = function_source(self.source, "on_exit", "handle_signal")
+        self.assertNotRegex(on_exit, r"(?m)^\s*\$\(image_id ")
+        source_lines = self.source.splitlines()
+        for index, line in enumerate(source_lines):
+            if "$(image_id" not in line or not re.search(r"\)\s*(?:==|!=|=~)", line):
+                continue
+            logical_start = index
+            while logical_start > 0 and source_lines[logical_start - 1].rstrip().endswith(
+                "\\"
+            ):
+                logical_start -= 1
+            logical_prefix = "\n".join(source_lines[logical_start : index + 1])
+            comparison_offset = logical_prefix.index("$(image_id")
+            before_comparison = logical_prefix[:comparison_offset]
+            self.assertGreater(
+                before_comparison.count("[["),
+                before_comparison.count("]]"),
+                f"image comparison is outside [[ ]] on line {index + 1}",
+            )
+        self.assertEqual(
+            on_exit.count(
+                '[[ $(image_id "$ARDY_IMAGE" || true) == '
+                '"$ardy_expected_image_id" ]]'
+            ),
+            2,
+        )
+        self.assertIn(
+            '[[ $(image_id "$ARDY_ROLLBACK_IMAGE" || true) == \\\n'
+            '                "$ardy_rollback_image_id" ]]',
+            on_exit,
+        )
+        self.assertEqual(on_exit.count("ensure_ardy_endpoint_on_exit"), 2)
+        self.assertIn(
+            "ardy_immutable_snapshots_equal ardy_rollback final_mock", on_exit
+        )
 
     def test_runner_start_barrier_precedes_any_unreal_launch(self) -> None:
         for marker in (
@@ -363,11 +439,18 @@ class ArdyRecoveryGateDecisionTests(unittest.TestCase):
         cls.endpoint_cleanup_function = function_source(
             cls.source, "ensure_ardy_endpoint_on_exit", "on_exit"
         )
+        cls.on_exit_function = function_source(cls.source, "on_exit", "handle_signal")
         handle_start = cls.source.index("handle_signal() {")
         handle_end = cls.source.index("\n\ntrap 'on_exit", handle_start)
         cls.handle_signal_function = cls.source[handle_start:handle_end]
         cls.package_function = function_source(
             cls.source, "verify_package_postflight", "validate_soak_result"
+        )
+        cls.arrays_equal_function = function_source(
+            cls.source, "arrays_are_equal", "validate_fay_runtime_snapshot"
+        )
+        cls.fay_snapshot_function = function_source(
+            cls.source, "validate_fay_runtime_snapshot", "array_digest"
         )
         cls.find_marker_function = function_source(
             cls.source, "find_marker_line_after", "refresh_recovery_log"
@@ -388,6 +471,226 @@ class ArdyRecoveryGateDecisionTests(unittest.TestCase):
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
         )
+
+    def finalization_harness(
+        self, root: Path, *, endpoint: str, image_matches: bool
+    ) -> str:
+        container_id = "c" * 64
+        snapshot = (
+            "name",
+            container_id,
+            "tag",
+            "true",
+            "123",
+            "started",
+            "true",
+            "host",
+            "true",
+            "0",
+            "/models",
+            "false",
+            "image",
+            "python",
+            "456",
+            "ardy",
+            "checkpoint",
+            "3",
+            "1.0",
+        )
+        snapshot_words = " ".join(snapshot)
+        recovery_verified = 1 if endpoint == "real" else 0
+        rollback_verified = "passed" if endpoint == "mock" else "not-required"
+        main_completed = 1 if endpoint == "real" else 0
+        outage_performed = 0 if endpoint == "original" else 1
+        image_suffix = "" if image_matches else "-mismatch"
+        return textwrap.dedent(
+            f"""\
+            set -uo pipefail
+            ARDY_IMAGE=ue5-spark-ardy:0.2.0
+            ARDY_ROLLBACK_IMAGE=ue5-spark-ardy:0.1.0
+            ardy_expected_image_id=sha256:{'1' * 64}
+            ardy_rollback_image_id=sha256:{'2' * 64}
+            endpoint={endpoint}
+            runtime_snapshot=({snapshot_words})
+            ardy_before=({snapshot_words})
+            ardy_recovered=({snapshot_words})
+            ardy_rollback=({snapshot_words})
+            ardy_final=()
+            recovery_verified={recovery_verified}
+            rollback_mock_verified={rollback_verified}
+            recovery_blocked=none
+            recovery_reconciliation=not-required
+            outage_committed={outage_performed}
+            outage_performed={outage_performed}
+            pre_cleanup_recovery_verified=not-captured
+            pre_cleanup_rollback_mock_verified=not-captured
+            pre_cleanup_recovery_blocked=not-captured
+            pre_cleanup_recovery_reconciliation=not-captured
+            pre_cleanup_ardy_claim_kind=not-captured
+            pre_cleanup_ardy_claim_container_id=not-captured
+            pre_cleanup_ardy_claim_pid=not-captured
+            pre_cleanup_ardy_claim_process_starttime=not-captured
+            cleanup_ardy_validation_passes=0
+            runner_started=0
+            runner_reaped=0
+            runner_exit_status=0
+            runner_forced_kill=0
+            runner_group_post_exit_policy=not-started
+            package_preflight_ready=0
+            package_postflight_verified=not-checked
+            unreal_absent_after=not-checked
+            voxtral_pause_verified=not-checked
+            voxtral_pause_continuity=not-checked
+            voxtral_restore_required=0
+            voxtral_restore_verified=not-required
+            fay_snapshot_ready=0
+            ardy_snapshot_ready=1
+            main_completed={main_completed}
+            cleanup_errors=()
+            mapfile() {{ remaining_unreal_pids=(); }}
+            find_expected_unreal_pids() {{ return 0; }}
+            ensure_ardy_endpoint_on_exit() {{ return 0; }}
+            verify_package_postflight() {{ return 0; }}
+            voxtral_is_fully_inactive() {{ return 0; }}
+            restore_voxtral() {{ return 0; }}
+            validate_fay_identity() {{ return 0; }}
+            capture_fay_listener_bindings() {{ return 0; }}
+            arrays_are_equal() {{ return 0; }}
+            container_id_for_name() {{ printf '%s\n' {container_id}; }}
+            capture_real_ardy() {{ ardy_final=("${{runtime_snapshot[@]}}"); }}
+            capture_mock_ardy() {{ final_mock=("${{runtime_snapshot[@]}}"); }}
+            ardy_immutable_snapshots_equal() {{ return 0; }}
+            image_id() {{
+                if [[ $1 == "$ARDY_IMAGE" ]]; then
+                    printf '%s\n' "${{ardy_expected_image_id}}{image_suffix}"
+                else
+                    printf '%s\n' "${{ardy_rollback_image_id}}{image_suffix}"
+                fi
+            }}
+            note_cleanup_error() {{ cleanup_errors+=("$*"); }}
+            write_final_record() {{
+                printf '%s|%s|%s|%s\n' "$1" "$2" "$ardy_final_state" \
+                    "${{#cleanup_errors[@]}}" >{root / 'final.txt'}
+            }}
+            {self.on_exit_function}
+            trap 'on_exit $?' EXIT
+            exit 0
+            """
+        )
+
+    def test_production_exit_finalization_executes_all_claim_branches(self) -> None:
+        cases = (
+            ("real", True, 0, "0|0|new-real-healthy|0"),
+            ("mock", True, 1, "0|1|sealed-mock-after-failed-recovery|0"),
+            ("original", True, 1, "0|1|original-real-unchanged|0"),
+            ("real", False, 1, "0|1|failed|1"),
+        )
+        for endpoint, image_matches, returncode, expected in cases:
+            with self.subTest(
+                endpoint=endpoint, image_matches=image_matches
+            ), tempfile.TemporaryDirectory(prefix="ardy-finalization-") as directory:
+                root = Path(directory)
+                result = self.run_bash(
+                    self.finalization_harness(
+                        root, endpoint=endpoint, image_matches=image_matches
+                    ),
+                    root,
+                )
+                self.assertEqual(result.returncode, returncode, result.stderr)
+                self.assertNotIn("command not found", result.stderr)
+                self.assertEqual(
+                    (root / "final.txt").read_text(encoding="utf-8").strip(),
+                    expected,
+                )
+
+    def test_exit_repairs_stale_claims_and_never_touches_unknown_claimants(self) -> None:
+        cases = {
+            "healthy": (1, "not-required", 0, 0, 1, 1, "none"),
+            "real-absent": (1, "not-required", 1, 1, 1, 1, "none"),
+            "mock-absent": (0, "passed", 1, 1, 1, 1, "none"),
+            "second-real": (1, "not-required", 1, 0, 1, 1, "none"),
+            "unknown": (
+                1,
+                "not-required",
+                2,
+                0,
+                0,
+                1,
+                "unknown-container-claimant",
+            ),
+        }
+        for mode, expected in cases.items():
+            prior_recovery, prior_mock, errors, attempts, final_recovery, passes, blocked = (
+                expected
+            )
+            with self.subTest(mode=mode), tempfile.TemporaryDirectory(
+                prefix="ardy-exit-repair-"
+            ) as directory:
+                root = Path(directory)
+                source = textwrap.dedent(
+                    f"""\
+                    set +e
+                    mode={mode}
+                    ardy_snapshot_ready=1
+                    cleanup_ardy_validation_passes=0
+                    outage_committed=0
+                    outage_performed=1
+                    recovery_verified={prior_recovery}
+                    rollback_mock_verified={prior_mock}
+                    recovery_blocked=none
+                    recovery_reconciliation=exact-new-real
+                    activation_in_progress=0
+                    emergency_calls=0
+                    reconciliation_calls=0
+                    cleanup_errors=0
+                    validate_previously_verified_ardy_endpoint() {{
+                        [[ $mode == healthy ]]
+                    }}
+                    reconcile_recovery_endpoint() {{
+                        reconciliation_calls=$((reconciliation_calls + 1))
+                        case $mode in
+                            real-absent|mock-absent) return 2 ;;
+                            second-real)
+                                recovery_verified=1
+                                outage_committed=0
+                                recovery_reconciliation=exact-new-real
+                                return 0
+                                ;;
+                            unknown)
+                                recovery_blocked=unknown-container-claimant
+                                recovery_reconciliation=blocked-unqualified-fixed-name
+                                return 1
+                                ;;
+                        esac
+                        return 1
+                    }}
+                    prepare_emergency_activation_attempt() {{ return 0; }}
+                    attempt_recovery() {{
+                        emergency_calls=$((emergency_calls + 1))
+                        recovery_verified=1
+                        outage_committed=0
+                        return 0
+                    }}
+                    note_cleanup_error() {{ cleanup_errors=$((cleanup_errors + 1)); }}
+                    {self.endpoint_cleanup_function}
+                    ensure_ardy_endpoint_on_exit
+                    printf 'errors=%s\nattempts=%s\nrecovery=%s\npasses=%s\nblocked=%s\nreconciliations=%s\n' \
+                        "$cleanup_errors" "$emergency_calls" "$recovery_verified" \
+                        "$cleanup_ardy_validation_passes" "$recovery_blocked" \
+                        "$reconciliation_calls"
+                    """
+                )
+                result = self.run_bash(source, root)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertIn(f"errors={errors}", result.stdout)
+                self.assertIn(f"attempts={attempts}", result.stdout)
+                self.assertIn(f"recovery={final_recovery}", result.stdout)
+                self.assertIn(f"passes={passes}", result.stdout)
+                self.assertIn(f"blocked={blocked}", result.stdout)
+                if mode == "healthy":
+                    self.assertIn("reconciliations=0", result.stdout)
+                if mode == "unknown":
+                    self.assertIn("reconciliations=1", result.stdout)
 
     def stop_harness(self, root: Path, *, identity: str, capture_status: int) -> str:
         old_id = "a" * 64
@@ -449,6 +752,71 @@ class ArdyRecoveryGateDecisionTests(unittest.TestCase):
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertIn("status=1", result.stdout)
             self.assertFalse((root / "docker.log").exists())
+
+    @unittest.skipUnless(
+        sys.platform.startswith("linux"),
+        "the runtime snapshot harness requires Bash nameref support",
+    )
+    def test_fay_runtime_snapshot_is_exact_and_identity_is_bracketed(self) -> None:
+        cases = {
+            "stable": 0,
+            "first-process-failure": 1,
+            "second-process-failure": 1,
+            "capture-failure": 1,
+            "missing-listener": 1,
+            "extra-listener": 1,
+            "changed-listener": 1,
+        }
+        for mode, expected_status in cases.items():
+            with self.subTest(mode=mode), tempfile.TemporaryDirectory(
+                prefix="fay-runtime-snapshot-"
+            ) as directory:
+                root = Path(directory)
+                source = textwrap.dedent(
+                    f"""\
+                    set -uo pipefail
+                    fay_pid=123
+                    fay_exe=/usr/bin/python3.12
+                    fay_starttime=456
+                    mode={mode}
+                    process_calls=0
+                    fay_listener_bindings_before=(
+                        '5000|127.0.0.1:5000|0.0.0.0:*'
+                        '5010|127.0.0.1:5010|0.0.0.0:*'
+                    )
+                    process_matches_identity() {{
+                        process_calls=$((process_calls + 1))
+                        [[ $mode != first-process-failure || $process_calls -ne 1 ]] || return 1
+                        [[ $mode != second-process-failure || $process_calls -ne 2 ]] || return 1
+                    }}
+                    capture_fay_listener_bindings() {{
+                        local -n destination=$1
+                        [[ $mode != capture-failure ]] || return 1
+                        destination=(
+                            '5000|127.0.0.1:5000|0.0.0.0:*'
+                            '5010|127.0.0.1:5010|0.0.0.0:*'
+                        )
+                        case $mode in
+                            missing-listener) unset 'destination[1]' ;;
+                            extra-listener) destination+=(
+                                '8766|127.0.0.1:8766|0.0.0.0:*'
+                            ) ;;
+                            changed-listener) destination[1]=\
+                                '5010|127.0.0.1:5010|127.0.0.1:9' ;;
+                        esac
+                    }}
+                    {self.arrays_equal_function}
+                    {self.fay_snapshot_function}
+                    status=0
+                    validate_fay_runtime_snapshot || status=$?
+                    printf 'status=%s\nprocess_calls=%s\n' "$status" "$process_calls"
+                    """
+                )
+                result = self.run_bash(source, root)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertIn(f"status={expected_status}", result.stdout)
+                if mode == "stable":
+                    self.assertIn("process_calls=2", result.stdout)
 
     def test_success_stops_only_the_exact_64_hex_id(self) -> None:
         with tempfile.TemporaryDirectory(prefix="ardy-stop-success-") as directory:
@@ -977,7 +1345,9 @@ class ArdyRecoveryGateDecisionTests(unittest.TestCase):
             source = textwrap.dedent(
                 f"""\
                 set +e
+                ardy_snapshot_ready=1
                 outage_committed=1
+                outage_performed=1
                 recovery_verified=0
                 rollback_mock_verified=not-required
                 recovery_blocked=none
@@ -986,6 +1356,7 @@ class ArdyRecoveryGateDecisionTests(unittest.TestCase):
                 activation_returned=0
                 emergency_calls=0
                 cleanup_errors=0
+                validate_previously_verified_ardy_endpoint() {{ return 2; }}
                 reconcile_recovery_endpoint() {{ return 2; }}
                 prepare_emergency_activation_attempt() {{ return 0; }}
                 attempt_recovery() {{

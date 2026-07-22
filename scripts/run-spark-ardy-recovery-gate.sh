@@ -313,6 +313,14 @@ arrays_are_equal() {
     done
 }
 
+validate_fay_runtime_snapshot() {
+    local -a bindings=()
+    process_matches_identity "$fay_pid" "$fay_exe" "$fay_starttime" || return 1
+    capture_fay_listener_bindings bindings || return 1
+    arrays_are_equal fay_listener_bindings_before bindings || return 1
+    process_matches_identity "$fay_pid" "$fay_exe" "$fay_starttime"
+}
+
 array_digest() {
     local -n values=$1
     local digest
@@ -725,7 +733,7 @@ wait_for_runner_completion() {
     while runner_leader_is_live; do
         (( $(date +%s) < deadline )) || return 1
         voxtral_is_fully_inactive || return 1
-        validate_fay_identity "$fay_exe" "$fay_starttime" || return 1
+        validate_fay_runtime_snapshot || return 1
         sleep 2
     done
     if process_matches_starttime "$runner_pid" "$runner_starttime"; then
@@ -775,7 +783,7 @@ capture_log_cursor() {
 continuity_guard() {
     runner_leader_is_live || return 1
     voxtral_is_fully_inactive || return 1
-    validate_fay_identity "$fay_exe" "$fay_starttime"
+    validate_fay_runtime_snapshot
 }
 
 wait_for_marker_after() {
@@ -814,7 +822,7 @@ post_motion_action() {
         "listen:$BRIDGE_ACTION_INTENSITY:$BRIDGE_ACTION_DURATION") ;;
         *) return 1 ;;
     esac
-    validate_fay_identity "$fay_exe" "$fay_starttime" || return 1
+    validate_fay_runtime_snapshot || return 1
     host=$(fay_listener_host) || return 1
     [[ $host == "$fay_http_host" ]] || return 1
     formatted_host=$(url_host "$host")
@@ -883,7 +891,7 @@ PY
         return 1
     fi
     rm -f -- "$temporary"
-    validate_fay_identity "$fay_exe" "$fay_starttime"
+    validate_fay_runtime_snapshot
 }
 
 post_explain_action() {
@@ -928,7 +936,6 @@ activation_target_records_match() {
 validate_activation_failure_rollback() {
     local result="$activation_evidence/activation-result.txt"
     local current_id
-    declare -a rollback_snapshot=()
     [[ -f $result && ! -L $result ]] || return 1
     [[ $(grep -Fxc 'status=failed' "$result") == 1 ]] || return 1
     [[ $(grep -Fxc 'recovery_mode=1' "$result") == 1 ]] || return 1
@@ -936,7 +943,7 @@ validate_activation_failure_rollback() {
     [[ $(grep -Fxc 'rollback_verified=1' "$result") == 1 ]] || return 1
     [[ $(grep -Fxc 'rollback_status=verified' "$result") == 1 ]] || return 1
     current_id=$(container_id_for_name) || return 1
-    capture_mock_ardy rollback_snapshot "$current_id" || return 1
+    capture_mock_ardy ardy_rollback "$current_id" || return 1
     rollback_mock_verified=passed
 }
 
@@ -1059,6 +1066,7 @@ reconcile_recovery_endpoint() {
         reconciled_mock=()
         if capture_mock_ardy reconciled_mock "$current_id" && \
             [[ ${reconciled_mock[10]} == "$ardy_models_root" ]]; then
+            ardy_rollback=("${reconciled_mock[@]}")
             rollback_mock_verified=passed
             recovery_reconciliation=exact-sealed-mock
             return 0
@@ -1261,6 +1269,15 @@ write_final_record() {
         "recovery_reconciliation=$recovery_reconciliation"
         "recovery_verified=$recovery_verified"
         "rollback_mock_verified=$rollback_mock_verified"
+        "pre_cleanup_recovery_verified=$pre_cleanup_recovery_verified"
+        "pre_cleanup_rollback_mock_verified=$pre_cleanup_rollback_mock_verified"
+        "pre_cleanup_recovery_blocked=$pre_cleanup_recovery_blocked"
+        "pre_cleanup_recovery_reconciliation=$pre_cleanup_recovery_reconciliation"
+        "pre_cleanup_ardy_claim_kind=$pre_cleanup_ardy_claim_kind"
+        "pre_cleanup_ardy_claim_container_id=$pre_cleanup_ardy_claim_container_id"
+        "pre_cleanup_ardy_claim_pid=$pre_cleanup_ardy_claim_pid"
+        "pre_cleanup_ardy_claim_process_starttime=$pre_cleanup_ardy_claim_process_starttime"
+        "cleanup_ardy_validation_passes=$cleanup_ardy_validation_passes"
         "fay_identity_unchanged=$fay_identity_unchanged"
         "ardy_final_state=$ardy_final_state"
         "package_postflight_verified=$package_postflight_verified"
@@ -1303,6 +1320,15 @@ outage_committed=0
 outage_performed=0
 recovery_verified=0
 rollback_mock_verified=not-required
+pre_cleanup_recovery_verified=not-captured
+pre_cleanup_rollback_mock_verified=not-captured
+pre_cleanup_recovery_blocked=not-captured
+pre_cleanup_recovery_reconciliation=not-captured
+pre_cleanup_ardy_claim_kind=not-captured
+pre_cleanup_ardy_claim_container_id=not-captured
+pre_cleanup_ardy_claim_pid=not-captured
+pre_cleanup_ardy_claim_process_starttime=not-captured
+cleanup_ardy_validation_passes=0
 fay_identity_unchanged=not-checked
 ardy_final_state=not-checked
 unreal_absent_after=not-checked
@@ -1328,44 +1354,88 @@ declare -a fay_listener_bindings_after=()
 declare -a ardy_before=()
 declare -a ardy_pre_stop=()
 declare -a ardy_recovered=()
+declare -a ardy_rollback=()
 declare -a ardy_final=()
 declare -a voxtral_before=()
 declare -a voxtral_after=()
 
+validate_previously_verified_ardy_endpoint() {
+    local current_id
+    local -a observed=()
+    if (( recovery_verified == 1 )); then
+        current_id=$(container_id_for_name 2>/dev/null) || return 1
+        capture_real_ardy observed "$current_id" || return 1
+        ardy_immutable_snapshots_equal ardy_recovered observed || return 1
+        [[ $(image_id "$ARDY_IMAGE" || true) == "$ardy_expected_image_id" ]] || \
+            return 1
+        return 0
+    fi
+    if [[ $rollback_mock_verified == passed ]]; then
+        current_id=$(container_id_for_name 2>/dev/null) || return 1
+        capture_mock_ardy observed "$current_id" || return 1
+        ardy_immutable_snapshots_equal ardy_rollback observed || return 1
+        [[ ${observed[10]} == "$ardy_models_root" && \
+            $(image_id "$ARDY_ROLLBACK_IMAGE" || true) == \
+            "$ardy_rollback_image_id" ]] || return 1
+        return 0
+    fi
+    return 2
+}
+
 ensure_ardy_endpoint_on_exit() {
-    local reconciliation_status=0 emergency_status=0
-    if (( outage_committed == 1 && recovery_verified == 0 )) && \
-        [[ $rollback_mock_verified != passed && $recovery_blocked == none ]]; then
-        reconcile_recovery_endpoint
-        reconciliation_status=$?
-        if (( reconciliation_status == 2 )); then
-            # Reaching EXIT proves that no foreground activator invocation is
-            # still being awaited.  Clear only the transient handoff flag;
-            # activation_requested/returned retain the interrupted history.
-            activation_in_progress=0
-            if prepare_emergency_activation_attempt; then
-                attempt_recovery 0
-                emergency_status=$?
-                if (( emergency_status != 0 && recovery_verified == 0 )) && \
-                    [[ $rollback_mock_verified != passed ]]; then
-                    reconcile_recovery_endpoint || true
-                fi
-            else
-                emergency_status=1
+    local claim_status=2 reconciliation_status=0 emergency_status=0
+    (( ardy_snapshot_ready == 1 )) || return 0
+    cleanup_ardy_validation_passes=$((cleanup_ardy_validation_passes + 1))
+    # EXIT cannot run while a foreground activator call is still being
+    # awaited. Preserve requested/returned history but clear the transient
+    # handoff flag before any live endpoint reconciliation.
+    activation_in_progress=0
+
+    if validate_previously_verified_ardy_endpoint; then
+        claim_status=0
+    else
+        claim_status=$?
+    fi
+    if (( claim_status == 0 )); then
+        return 0
+    fi
+    if (( claim_status == 1 )); then
+        note_cleanup_error \
+            'the previously verified ARDY endpoint changed before final cleanup validation'
+    elif (( outage_committed == 0 && outage_performed == 0 )); then
+        return 0
+    fi
+
+    recovery_verified=0
+    rollback_mock_verified=not-required
+    recovery_blocked=none
+    recovery_reconciliation=cleanup-live-revalidation
+    outage_committed=1
+    reconcile_recovery_endpoint
+    reconciliation_status=$?
+    if (( reconciliation_status == 2 )); then
+        if prepare_emergency_activation_attempt; then
+            attempt_recovery 0
+            emergency_status=$?
+            if (( emergency_status != 0 && recovery_verified == 0 )) && \
+                [[ $rollback_mock_verified != passed ]]; then
+                reconcile_recovery_endpoint || true
             fi
-            if (( recovery_verified == 0 )); then
-                if [[ $rollback_mock_verified == passed ]]; then
-                    note_cleanup_error \
-                        'emergency ARDY recovery restored only the sealed mock provider'
-                else
-                    note_cleanup_error \
-                        'emergency ARDY recovery did not restore a verified real or mock provider'
-                fi
-            fi
-        elif (( reconciliation_status != 0 )); then
-            note_cleanup_error \
-                'ARDY endpoint reconciliation found an unknown fixed-name or port claimant; it was not touched'
+        else
+            emergency_status=1
         fi
+        if (( recovery_verified == 0 )); then
+            if [[ $rollback_mock_verified == passed ]]; then
+                note_cleanup_error \
+                    'emergency ARDY recovery restored only the sealed mock provider'
+            else
+                note_cleanup_error \
+                    'emergency ARDY recovery did not restore a verified real or mock provider'
+            fi
+        fi
+    elif (( reconciliation_status != 0 )); then
+        note_cleanup_error \
+            'ARDY endpoint reconciliation found an unknown fixed-name or port claimant; it was not touched'
     fi
 }
 
@@ -1388,6 +1458,26 @@ on_exit() {
         note_cleanup_error 'the exact packaged Unreal executable remained after runner cleanup'
     fi
 
+    pre_cleanup_recovery_verified=$recovery_verified
+    pre_cleanup_rollback_mock_verified=$rollback_mock_verified
+    pre_cleanup_recovery_blocked=$recovery_blocked
+    pre_cleanup_recovery_reconciliation=$recovery_reconciliation
+    if (( recovery_verified == 1 && ${#ardy_recovered[@]} == 19 )); then
+        pre_cleanup_ardy_claim_kind=new-real
+        pre_cleanup_ardy_claim_container_id=${ardy_recovered[1]}
+        pre_cleanup_ardy_claim_pid=${ardy_recovered[4]}
+        pre_cleanup_ardy_claim_process_starttime=${ardy_recovered[14]}
+    elif [[ $rollback_mock_verified == passed && ${#ardy_rollback[@]} == 19 ]]; then
+        pre_cleanup_ardy_claim_kind=sealed-mock
+        pre_cleanup_ardy_claim_container_id=${ardy_rollback[1]}
+        pre_cleanup_ardy_claim_pid=${ardy_rollback[4]}
+        pre_cleanup_ardy_claim_process_starttime=${ardy_rollback[14]}
+    else
+        pre_cleanup_ardy_claim_kind=none
+        pre_cleanup_ardy_claim_container_id=none
+        pre_cleanup_ardy_claim_pid=none
+        pre_cleanup_ardy_claim_process_starttime=none
+    fi
     ensure_ardy_endpoint_on_exit
 
     if [[ $package_preflight_ready == 1 && $unreal_absent_after == passed ]]; then
@@ -1421,12 +1511,17 @@ on_exit() {
         fi
     fi
 
+    # Revalidate after restoring the allowlisted speech service. That restore
+    # can take long enough that an earlier ARDY claim must not be trusted as
+    # the final endpoint state.
+    ensure_ardy_endpoint_on_exit
+
     if (( ardy_snapshot_ready == 1 )); then
         if (( recovery_verified == 1 )); then
             current_id=$(container_id_for_name || true)
             if [[ -n $current_id ]] && capture_real_ardy ardy_final "$current_id" && \
                 ardy_immutable_snapshots_equal ardy_recovered ardy_final && \
-                $(image_id "$ARDY_IMAGE" || true) == "$ardy_expected_image_id" ]]; then
+                [[ $(image_id "$ARDY_IMAGE" || true) == "$ardy_expected_image_id" ]]; then
                 ardy_final_state=new-real-healthy
             else
                 ardy_final_state=failed
@@ -1435,7 +1530,9 @@ on_exit() {
         elif [[ $rollback_mock_verified == passed ]]; then
             current_id=$(container_id_for_name || true)
             if [[ -n $current_id ]] && capture_mock_ardy final_mock "$current_id" && \
-                $(image_id "$ARDY_ROLLBACK_IMAGE" || true) == "$ardy_rollback_image_id"; then
+                ardy_immutable_snapshots_equal ardy_rollback final_mock && \
+                [[ $(image_id "$ARDY_ROLLBACK_IMAGE" || true) == \
+                "$ardy_rollback_image_id" ]]; then
                 ardy_final_state=sealed-mock-after-failed-recovery
             else
                 ardy_final_state=failed
@@ -1445,7 +1542,7 @@ on_exit() {
             current_id=$(container_id_for_name || true)
             if [[ -n $current_id ]] && capture_real_ardy ardy_final "$current_id" && \
                 ardy_immutable_snapshots_equal ardy_before ardy_final && \
-                $(image_id "$ARDY_IMAGE" || true) == "$ardy_expected_image_id"; then
+                [[ $(image_id "$ARDY_IMAGE" || true) == "$ardy_expected_image_id" ]]; then
                 ardy_final_state=original-real-unchanged
             else
                 ardy_final_state=failed
