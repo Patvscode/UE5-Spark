@@ -24,9 +24,11 @@ content remain private and are not part of this repository.
 - **Fab candidate:** Casual Girl is not present or imported in this workspace and
   remains `pending_asset_audit`. Source now contains its exact sealed character
   profile, a separate direct ARKit morph driver, adapter-aware cook/package
-  verification, and Casual Girl capture/soak selection. Those contracts have
-  not been compiled against the vendor asset or cooked for LinuxArm64; wardrobe
-  controls and full undress remain disabled.
+  verification, and Casual Girl capture/soak selection. The ARKit runtime and
+  character-selection translation units compile cleanly as Linux ARM64 objects
+  on the Spark. They have not been linked against an imported vendor character
+  or cooked into a replacement package; wardrobe controls and full undress
+  remain disabled.
 
 Source tests prove parsing and fail-closed contracts only. They do not prove a
 real ARDY v2 generation, Unreal asset binding, natural motion, correct retarget,

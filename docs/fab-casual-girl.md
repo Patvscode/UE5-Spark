@@ -68,6 +68,12 @@ This character is not a MetaHuman. It needs a separate `UE5EpicArkit` adapter:
 - an allowlisted wardrobe component that accepts preset/item IDs only; and
 - conservative cloth, hair, texture, and LOD settings for the Spark.
 
+The content-free `FayArkitRuntime` adapter and the Casual Girl selection path
+have passed focused Linux ARM64 translation-unit compilation on the Spark. This
+proves the source is valid for the target architecture; it does not prove the
+seller's mesh, morph names, Blueprint dependencies, retargeting, or cooked
+runtime until the licensed UE content is imported and audited.
+
 ARDY must not drive face, neck, head, detailed fingers, or any secondary breast
 bones. Clothing and hair physics run after the final body pose. The asset is
 promoted only after front/side full-body captures, speech/face validation,

@@ -16,7 +16,8 @@ MetaHuman assets, and captured media are intentionally not stored in Git.
 - Current production character: Ada
 - Replacement source candidate: exact `CasualGirl` / `UE5EpicArkit` profile,
   direct ARKit morph driver, package/cook guards, and capture/soak selection;
-  vendor content is not acquired and no replacement binary exists yet
+  its changed translation units compile cleanly as ARM64 objects on the Spark,
+  but vendor content is not acquired and no replacement binary exists yet
 - Current motion service: real ARDY Horizon8 image `0.2.0`, protocol v1,
   three approved cached embeddings (`idle`, `listen`, `explain`)
 - Current private controller: immersive live Unreal preview plus narrow chat and
