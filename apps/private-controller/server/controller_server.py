@@ -28,6 +28,12 @@ MAX_LIVE_FRAME_BYTES = 2 * 1024 * 1024
 MAX_LIVE_FRAME_AGE_SECONDS = 2.0
 SERVER_VERSION = "prototype-2"
 THINK_BLOCK_PATTERN = re.compile(r"<think>.*?(?:</think>|$)", re.IGNORECASE | re.DOTALL)
+LLM_MODEL_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}")
+CHAT_SYSTEM_PROMPT = (
+    "Reply in concise, natural English. Never expose hidden reasoning, analysis, "
+    "or <think> tags. Do not claim the avatar performed an action unless the user "
+    "used an available movement control."
+)
 ALLOWED_BEHAVIORS = frozenset({
     "idle", "listen", "wave", "invite", "think", "warn", "nod", "shake", "explain",
 })
@@ -105,6 +111,12 @@ def normalize_reply(value: object) -> str:
     return reply or "I’m ready—please try that again."
 
 
+def checked_model_name(value: str) -> str:
+    if not LLM_MODEL_PATTERN.fullmatch(value):
+        raise argparse.ArgumentTypeError("LLM model must be one reviewed simple name")
+    return value
+
+
 def safe_root(path: Path, label: str) -> Path:
     if path.is_symlink():
         raise ValueError(f"{label} must not be a symlink")
@@ -163,13 +175,16 @@ class ControllerServer(ThreadingHTTPServer):
     daemon_threads = True
 
     def __init__(self, address: tuple[str, int], dist: Path, media_root: Path,
-                 live_root: Path, fay_base: str, ardy_base: str):
+                 live_root: Path, fay_base: str, ardy_base: str,
+                 llm_base: str | None, llm_model: str | None):
         super().__init__(address, ControllerHandler)
         self.dist = dist
         self.media_root = media_root
         self.live_root = live_root
         self.fay_base = fay_base
         self.ardy_base = ardy_base
+        self.llm_base = llm_base
+        self.llm_model = llm_model
 
 
 class ControllerHandler(BaseHTTPRequestHandler):
@@ -271,32 +286,56 @@ class ControllerHandler(BaseHTTPRequestHandler):
 
     def _chat(self, payload: object) -> None:
         message = normalize_message(payload)
-        upstream_payload = {
-            "model": "fay", "user": "User",
-            "messages": [
-                {
-                    "role": "system",
-                    "content": (
-                        "Reply in concise, natural English. Never expose hidden reasoning, "
-                        "analysis, or <think> tags. Do not claim the avatar performed an "
-                        "action unless the user used an available movement control."
-                    ),
-                },
-                {"role": "user", "content": message},
-            ],
-        }
         try:
-            response = self._upstream_json(
-                f"{self.server.fay_base}/v1/chat/completions", upstream_payload, timeout=180,
-            )
-            reply = normalize_reply(response["choices"][0]["message"]["content"])
+            reply, avatar_speech = self._chat_reply(message)
         except urllib.error.HTTPError as exc:
             self._json(HTTPStatus.BAD_GATEWAY, {"error": f"Fay returned HTTP {exc.code}"})
             return
         except (KeyError, IndexError, TypeError, ValueError, OSError, urllib.error.URLError, socket.timeout):
             self._json(HTTPStatus.BAD_GATEWAY, {"error": "Fay conversation is temporarily unavailable"})
             return
-        self._json(HTTPStatus.OK, {"reply": reply, "liveRenderer": self._renderer_online()})
+        self._json(HTTPStatus.OK, {
+            "reply": reply,
+            "liveRenderer": self._renderer_online(),
+            "avatarSpeech": avatar_speech,
+        })
+
+    def _chat_reply(self, message: str) -> tuple[str, bool]:
+        messages = [
+            {"role": "system", "content": CHAT_SYSTEM_PROMPT},
+            {"role": "user", "content": message},
+        ]
+        if self.server.llm_base and self.server.llm_model:
+            response = self._upstream_json(
+                f"{self.server.llm_base}/v1/chat/completions",
+                {
+                    "model": self.server.llm_model,
+                    "messages": messages,
+                    "chat_template_kwargs": {"enable_thinking": False},
+                    "max_tokens": 256,
+                    "temperature": 0.6,
+                },
+                timeout=180,
+            )
+            reply = normalize_reply(response["choices"][0]["message"]["content"])
+            avatar_speech = False
+            try:
+                playback = self._upstream_json(
+                    f"{self.server.fay_base}/transparent-pass",
+                    {"user": "User", "text": reply},
+                    timeout=180,
+                )
+                avatar_speech = playback.get("code") == 200
+            except (OSError, ValueError, urllib.error.URLError, socket.timeout):
+                pass
+            return reply, avatar_speech
+
+        response = self._upstream_json(
+            f"{self.server.fay_base}/v1/chat/completions",
+            {"model": "fay", "user": "User", "messages": messages},
+            timeout=180,
+        )
+        return normalize_reply(response["choices"][0]["message"]["content"]), True
 
     def _action(self, payload: object) -> None:
         action = normalize_action(payload)
@@ -451,6 +490,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--live-root", required=True, type=Path)
     parser.add_argument("--fay-base", required=True)
     parser.add_argument("--ardy-base", default="http://127.0.0.1:8777")
+    parser.add_argument("--llm-base")
+    parser.add_argument("--llm-model", type=checked_model_name)
     return parser
 
 
@@ -464,6 +505,12 @@ def main() -> int:
         live_root = safe_private_root(args.live_root, "live root")
         fay_base = checked_upstream(args.fay_base)
         ardy_base = checked_upstream(args.ardy_base, loopback_only=True)
+        if bool(args.llm_base) != bool(args.llm_model):
+            raise ValueError("llm-base and llm-model must be supplied together")
+        llm_base = (
+            checked_upstream(args.llm_base, loopback_only=True)
+            if args.llm_base else None
+        )
     except (ValueError, argparse.ArgumentTypeError) as exc:
         raise SystemExit(str(exc)) from exc
     missing = [relative for relative in MEDIA_MAP.values() if not (media_root / relative).is_file()]
@@ -471,6 +518,7 @@ def main() -> int:
         raise SystemExit(f"missing private media: {', '.join(missing)}")
     server = ControllerServer(
         (args.host, args.port), dist, media_root, live_root, fay_base, ardy_base,
+        llm_base, args.llm_model,
     )
     try:
         server.serve_forever(poll_interval=0.25)

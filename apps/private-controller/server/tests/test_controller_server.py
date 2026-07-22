@@ -68,6 +68,15 @@ class ValidationTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             SERVER.normalize_reply({"reply": "no"})
 
+    def test_llm_model_name_is_narrow(self):
+        self.assertEqual(
+            SERVER.checked_model_name("qwen3-4b-q4-k-m"),
+            "qwen3-4b-q4-k-m",
+        )
+        for value in ("", "../model", "model name", "model/variant"):
+            with self.assertRaises(argparse.ArgumentTypeError):
+                SERVER.checked_model_name(value)
+
     def test_media_paths_are_relative(self):
         for path in SERVER.MEDIA_MAP.values():
             self.assertFalse(Path(path).is_absolute())

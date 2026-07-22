@@ -38,4 +38,6 @@ exec python3 "$script_dir/../apps/private-controller/server/controller_server.py
     --media-root "$media_root" \
     --live-root "$live_root" \
     --fay-base "http://$tailnet_ip:5000" \
-    --ardy-base http://127.0.0.1:8777
+    --ardy-base http://127.0.0.1:8777 \
+    --llm-base http://127.0.0.1:8090 \
+    --llm-model qwen3-4b-q4-k-m
