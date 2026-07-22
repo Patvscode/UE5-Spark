@@ -10,11 +10,13 @@ MetaHuman assets, and captured media are intentionally not stored in Git.
 - Recorded: 2026-07-22
 - Source branch: `agent/dgx-spark-metahuman`
 - Draft pull request: `Patvscode/UE5-Spark#1`
-- Last runtime-safety source checkpoint before this document: `b273278`
+- Last source checkpoint recorded here: `0844863`
 - Current package: sealed v29 native Linux ARM64, Ada and Aoi included; latest
   Ada production-qualified package
 - Current production character: Ada
 - Current motion service: real ARDY Horizon8, three approved cached embeddings
+- Current private controller: immersive live Unreal preview plus narrow chat and
+  action proxy, validated at a 390 × 844 iPhone viewport
 - Immediate rollback: sealed v28
 - Long-run and measured-30-FPS baseline: sealed v28
 - Older functional rollback: v27, with its documented uncapped-frame limitation
@@ -59,6 +61,19 @@ Verified capabilities:
 - The same source and package route work for Aoi without character-specific C++.
 - The package is created entirely on Spark: the x86-64 UE 5.8 Editor/cooker runs
   through rootless FEX and the shipped runtime runs natively on ARM64.
+- The private controller displays fresh 960 × 540 frames from the exact native
+  Unreal window without opening another network listener. The loopback BFF is
+  exposed only through the existing private Tailscale HTTPS boundary.
+- Mobile uses the live renderer as the full-screen stage. Conversation and
+  setup controls are dismissible sheets, and the movement controls stay in a
+  compact bottom shelf.
+- `Explain` and `Listen` dispatch to the real ARDY provider while it is healthy;
+  `Wave` is the deterministic real-time fallback. The UI falls back honestly to
+  retained evidence media if the renderer or frame producer is unavailable.
+- Text chat has a resource-aware prototype path: a small local Qwen model writes
+  the reply, then Fay performs TTS and sends the audio to Unreal for playback and
+  StreamingADA lip motion. Hidden reasoning tags are removed before display or
+  speech. The much larger 35B model is not required for this trial path.
 
 ## Current v29 evidence
 
@@ -108,6 +123,21 @@ The recovery run is diagnostic evidence. The fresh five-turn gate is the v29
 production qualification. V28's separate 20-turn endurance and exact
 6,000-frame 30.001596 FPS diagnostic remain the longer-term baselines.
 
+Private-controller live check at source checkpoint `0844863`:
+
+- Controller status reported Fay, ARDY, native renderer, and fresh live stream
+  ready at the same time.
+- The browser decoded the live 960 × 540 JPEG stage at 390 × 844 with no
+  horizontal or vertical page overflow.
+- A real `explain` request reached Unreal, used the ARDY provider for its bounded
+  duration, crossfaded to baked idle, and left Ada's face attached and visible.
+- A text request returned the exact requested English response, Fay accepted it
+  for transparent speech, and Unreal completed two seconds of audio playback
+  with 110 facial frames and 15.24 ms p95 solve time.
+- Only the small reviewed chat model remained loaded after the check, leaving
+  approximately 56.5 GiB of unified memory available while Unreal, ARDY, Fay,
+  the frame producer, and the controller were active.
+
 ## Runtime ownership and safety boundary
 
 Keep these rules for every future change:
@@ -137,10 +167,12 @@ user revokes the connected application.
 
 ## What is not finished
 
-- The private iPhone/desktop web controller is not built yet. Product design
-  selection must happen before implementation; the next step presents exactly
-  three visual directions.
-- The existing private media page is a progress viewer, not the interaction UI.
+- The current private controller services are a trial deployment, not yet a
+  reboot-persistent supervised product. Startup must retain the same ownership,
+  memory, exact-process, loopback, and private-file guards.
+- The lightweight trial chat path does not yet preserve Fay's full agent memory
+  or MCP planning. It deliberately keeps the native avatar usable alongside
+  ARDY; the full planner remains a separate resource profile.
 - Current Ada framing is portrait/chest-up. It proves face and upper-body motion
   but does not visually prove the lower-body retarget path.
 - Source now contains sealed per-character `FullBody` camera presets; a new
@@ -155,22 +187,21 @@ user revokes the connected application.
 
 ## Next implementation order
 
-1. Present three visual options for a responsive private controller and obtain
-   an explicit selection before scaffolding UI code.
-2. Build a loopback-only project BFF and expose only the UI through private
-   Tailscale HTTPS.
-3. Provide live avatar video, push-to-talk/text input, connection/voice state,
-   and allowlisted gesture buttons. Keep diagnostics and milestone media
-   secondary.
-4. Do not register the web client as a second `User` on Fay's avatar WebSocket;
+1. Keep the verified live controller usable while the new package is prepared;
+   do not reintroduce the large-model memory collision into this trial profile.
+2. Do not register the web client as a second `User` on Fay's avatar WebSocket;
    that could mask the real Unreal renderer. Proxy only the reviewed control and
    sanitized status surfaces.
-5. Recook the schema-v2 character profiles as a new package, select the sealed
+3. Recook the schema-v2 character profiles as a new package, select the sealed
    `FullBody` preset only through `-FayCameraFraming=FullBody`, and capture front
    plus side motion before calling lower-body quality proven. Never accept
    transforms or FOV values from command line, MCP, or the web UI.
-6. Run mobile Safari and desktop browser acceptance through Tailscale, including
+4. Run mobile Safari and desktop browser acceptance through Tailscale, including
    reconnection, microphone permission, media playback, and safe failure states.
+5. Add guarded startup/recovery for the lightweight model and three transient
+   controller services without modifying system drivers, CUDA, DGX OS, or Fay.
+6. Restore full Fay memory/MCP planning as an explicit resource profile after
+   measuring whether it can coexist with the full-body package.
 7. Run a longer v29 endurance gate after UI/camera changes settle; preserve v28
    until it passes.
 

@@ -8,7 +8,9 @@
 - Desktop implementation: private QA capture `qa-desktop-match.jpg`, 1180 × 793 CSS pixels at 1× density (ignored by Git).
 - Normalized desktop comparison: private QA capture `qa-comparison-desktop.jpg`, source and implementation side by side without scaling (ignored by Git).
 - Mobile implementation: private QA capture `qa-deployed-mobile.jpg`, 390 × 844 CSS pixels at 1× density (ignored by Git).
-- State: Ada selected, Explain initially selected, Full body selected as the pending target, Fay and ARDY ready, renderer honestly reported as verified replay.
+- Current live state: Ada selected, Fay and ARDY ready, the native Unreal
+  renderer and fresh frame stream both ready, Portrait framing, and the compact
+  mobile stage using the real renderer rather than replay media.
 
 ## Full-view comparison
 
@@ -35,21 +37,31 @@ caption, and composer at readable size.
 - Colors and tokens: near-black canvas, graphite panels, quiet gray copy, mint
   readiness/selection, and warm microphone treatment match the reference's
   palette without decorative gradients.
-- Image quality and asset fidelity: the stage uses real private Ada/Aoi captures
-  at their native aspect ratio. No placeholder, CSS drawing, generated stand-in,
-  or public licensed asset is used. The actual Ada media is chest-up until the
-  reviewed FullBody package is cooked; the interface states this directly.
-- Copy and content: live conversation, verified replay, renderer state, camera
-  availability, and the disabled Fab candidate are named precisely. The product
-  does not claim that prerecorded movement is a live video stream.
+- Image quality and asset fidelity: the ready path uses fresh 960 × 540 frames
+  from the exact native Unreal window. Mobile crops the black 16:9 studio frame
+  with `object-fit: cover` so Ada fills the portrait viewport without inventing
+  visual content. Retained real Ada/Aoi captures remain only as the explicit
+  unavailable-stream fallback. No placeholder, CSS drawing, generated stand-in,
+  or public licensed asset is used.
+- Copy and content: live renderer, stream, action, conversation, replay fallback,
+  camera availability, and the disabled Fab candidate are named precisely. The
+  product does not claim that an unavailable stream or prerecorded movement is
+  live.
 
 ## Interaction verification
 
-- The private HTTPS deployment loaded with Fay and ARDY reported ready.
-- Wave changed the selected motion, stage caption, and playing media to the real
-  `/media/ada-wave.mp4` asset; the browser reported ready state 4 and playback.
-- The same-origin chat form sent `Reply with exactly: Mobile trial ready.` and
-  displayed Fay's exact `Mobile trial ready.` response.
+- The private HTTPS deployment simultaneously reported Fay, ARDY, native
+  renderer, and fresh frame stream ready.
+- The browser decoded the live 960 × 540 frame at 390 × 844, used the mobile
+  `cover` crop, and showed no horizontal or page-height overflow.
+- Explain dispatched a live request and Unreal logged the real ARDY generated
+  provider, bounded playback, crossfade, and return to baked idle. Ada's face
+  remained visible in the sampled action and post-action frames.
+- The same-origin chat form sent `Reply with exactly: Phone prototype ready.`
+  and displayed the exact `Phone prototype ready.` response. Fay accepted the
+  reply for transparent TTS and Unreal completed its facial playback.
+- Wave remains a deterministic real-time body fallback; retained MP4 media is
+  exercised only when the live stream is unavailable.
 - Pause/play, Portrait/Full body selection, recenter, device-voice toggle, Ada/Aoi
   replay switching, disabled Fab candidate behavior, loading, and error states
   are implemented.
@@ -67,6 +79,10 @@ caption, and composer at readable size.
 2. Mobile verification confirmed the stage, controls, transcript, and camera
    sections fit at 390 × 844 with no horizontal overflow. No P0, P1, or P2 visual
    issues remained after the truth-labeling and responsive pass.
+3. Live-stream verification found that `contain` made Ada too small in a tall
+   phone viewport. The final mobile pass uses a centered `cover` crop, keeps the
+   face unobstructed, confines motion/chat controls to the lower portion, and
+   leaves conversation/setup in dismissible sheets.
 
 ## Follow-up polish
 
