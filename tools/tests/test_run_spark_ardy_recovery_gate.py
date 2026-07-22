@@ -329,14 +329,30 @@ class ArdyRecoveryGateStaticTests(unittest.TestCase):
         self.assertNotIn("kill -", recovery)
 
     def test_final_log_audit_rejects_all_late_degraded_states(self) -> None:
+        post_recovery_function = function_source(
+            self.source, "validate_post_recovery_log", "restore_voxtral"
+        )
+        marker_count_function = function_source(
+            self.source, "marker_count_between", "post_motion_action"
+        )
         for marker in (
             "late_rejected_count",
             "late_unavailable_count",
             "late_generated_fallback_count",
             "late_neutral_explain_count",
-            "validate_post_recovery_log \"$recovered_ready_line\"",
+            "post_recovery_audit_end_line",
+            "LogInit: Display: PreExit Game.",
+            "validate_post_recovery_log \"$recovered_ready_line\" \"$listen_complete_line\"",
         ):
             self.assertIn(marker, self.source)
+        self.assertIn(
+            "(( last_runtime_line < post_recovery_audit_end_line ))",
+            post_recovery_function,
+        )
+        self.assertIn(
+            "NR > after && NR < before",
+            marker_count_function,
+        )
 
     def test_voxtral_fay_locks_and_signal_cleanup_are_fixed(self) -> None:
         for marker in (
@@ -456,7 +472,7 @@ class ArdyRecoveryGateDecisionTests(unittest.TestCase):
             cls.source, "find_marker_line_after", "refresh_recovery_log"
         )
         cls.marker_count_function = function_source(
-            cls.source, "marker_count_after", "post_motion_action"
+            cls.source, "marker_count_between", "post_motion_action"
         )
         cls.post_recovery_function = function_source(
             cls.source, "validate_post_recovery_log", "restore_voxtral"
@@ -1642,22 +1658,163 @@ class ArdyRecoveryGateDecisionTests(unittest.TestCase):
             ) as directory:
                 root = Path(directory)
                 log = root / "recovery.log"
-                log.write_text(f"recovered ready\n{degraded}\n", encoding="utf-8")
+                log.write_text(
+                    f"recovered ready\nlisten complete\n{degraded}\n"
+                    "LogInit: Display: PreExit Game.\n",
+                    encoding="utf-8",
+                )
                 source = textwrap.dedent(
                     f"""\
                     set -euo pipefail
                     recovery_log={log}
                     refresh_recovery_log() {{ :; }}
+                    {self.find_marker_function}
                     {self.marker_count_function}
                     {self.post_recovery_function}
                     status=0
-                    validate_post_recovery_log 1 || status=$?
+                    validate_post_recovery_log 1 2 || status=$?
                     printf 'status=%s\\n' "$status"
                     """
                 )
                 result = self.run_bash(source, root)
                 self.assertEqual(result.returncode, 0, result.stderr)
                 self.assertIn("status=1", result.stdout)
+
+    def test_teardown_degraded_markers_after_preexit_are_excluded(self) -> None:
+        degraded_lines = (
+            "Rejected ARDY pose batch: teardown.",
+            "ARDY loopback service is unavailable; baked fallback remains active.",
+            "ARDY action 'explain' began a bounded fallback to baked idle: teardown.",
+            "Using character-neutral procedural fallback for 'explain'.",
+        )
+        for degraded in degraded_lines:
+            with self.subTest(degraded=degraded), tempfile.TemporaryDirectory(
+                prefix="ardy-teardown-degraded-"
+            ) as directory:
+                root = Path(directory)
+                log = root / "recovery.log"
+                log.write_text(
+                    "recovered ready\nlisten complete\n"
+                    f"LogInit: Display: PreExit Game.\n{degraded}\n",
+                    encoding="utf-8",
+                )
+                source = textwrap.dedent(
+                    f"""\
+                    set -euo pipefail
+                    recovery_log={log}
+                    refresh_recovery_log() {{ :; }}
+                    {self.find_marker_function}
+                    {self.marker_count_function}
+                    {self.post_recovery_function}
+                    status=0
+                    validate_post_recovery_log 1 2 || status=$?
+                    printf 'status=%s\\nend=%s\\ncounts=%s,%s,%s,%s\\n' \
+                        "$status" "$post_recovery_audit_end_line" \
+                        "$late_rejected_count" "$late_unavailable_count" \
+                        "$late_generated_fallback_count" "$late_neutral_explain_count"
+                    """
+                )
+                result = self.run_bash(source, root)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertIn("status=0", result.stdout)
+                self.assertIn("end=3", result.stdout)
+                self.assertIn("counts=0,0,0,0", result.stdout)
+
+    def test_post_recovery_audit_requires_fresh_preexit_after_last_action(self) -> None:
+        fixtures = (
+            ("recovered ready\nlisten complete\n", 1, 2),
+            (
+                "LogInit: Display: PreExit Game.\nrecovered ready\nlisten complete\n",
+                2,
+                3,
+            ),
+            (
+                "recovered ready\nLogInit: Display: PreExit Game.\n"
+                "listen complete\nLogInit: Display: PreExit Game.\n",
+                1,
+                3,
+            ),
+        )
+        for contents, cursor, last_runtime in fixtures:
+            with self.subTest(contents=contents), tempfile.TemporaryDirectory(
+                prefix="ardy-invalid-preexit-"
+            ) as directory:
+                root = Path(directory)
+                log = root / "recovery.log"
+                log.write_text(contents, encoding="utf-8")
+                source = textwrap.dedent(
+                    f"""\
+                    set -euo pipefail
+                    recovery_log={log}
+                    refresh_recovery_log() {{ :; }}
+                    {self.find_marker_function}
+                    {self.marker_count_function}
+                    {self.post_recovery_function}
+                    status=0
+                    validate_post_recovery_log {cursor} {last_runtime} || status=$?
+                    printf 'status=%s\\n' "$status"
+                    """
+                )
+                result = self.run_bash(source, root)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertIn("status=1", result.stdout)
+
+    def test_post_recovery_audit_rejects_malformed_or_nonincreasing_bounds(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="ardy-invalid-bounds-") as directory:
+            root = Path(directory)
+            log = root / "recovery.log"
+            log.write_text(
+                "recovered ready\nlisten complete\nLogInit: Display: PreExit Game.\n",
+                encoding="utf-8",
+            )
+            source = textwrap.dedent(
+                f"""\
+                set -euo pipefail
+                recovery_log={log}
+                refresh_recovery_log() {{ :; }}
+                {self.find_marker_function}
+                {self.marker_count_function}
+                {self.post_recovery_function}
+                for pair in 'x 2' '1 x' '2 2' '3 2'; do
+                    read -r cursor last_runtime <<<"$pair"
+                    status=0
+                    validate_post_recovery_log "$cursor" "$last_runtime" || status=$?
+                    printf '%s:%s=%s\\n' "$cursor" "$last_runtime" "$status"
+                done
+                """
+            )
+            result = self.run_bash(source, root)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            for expected in ("x:2=1", "1:x=1", "2:2=1", "3:2=1"):
+                self.assertIn(expected, result.stdout)
+
+    def test_stale_pre_cursor_degradation_is_ignored(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="ardy-stale-degraded-") as directory:
+            root = Path(directory)
+            log = root / "recovery.log"
+            log.write_text(
+                "ARDY loopback service is unavailable; baked fallback remains active.\n"
+                "recovered ready\nlisten complete\nLogInit: Display: PreExit Game.\n"
+                "ARDY loopback service is unavailable; baked fallback remains active.\n",
+                encoding="utf-8",
+            )
+            source = textwrap.dedent(
+                f"""\
+                set -euo pipefail
+                recovery_log={log}
+                refresh_recovery_log() {{ :; }}
+                {self.find_marker_function}
+                {self.marker_count_function}
+                {self.post_recovery_function}
+                status=0
+                validate_post_recovery_log 2 3 || status=$?
+                printf 'status=%s\\nend=%s\\n' "$status" "$post_recovery_audit_end_line"
+                """
+            )
+            result = self.run_bash(source, root)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn("status=0", result.stdout)
+            self.assertIn("end=4", result.stdout)
 
 
 if __name__ == "__main__":

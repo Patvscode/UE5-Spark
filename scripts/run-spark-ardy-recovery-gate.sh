@@ -807,11 +807,14 @@ wait_for_marker_after() {
     return 1
 }
 
-marker_count_after() {
-    local marker=$1 after_line=$2
-    refresh_recovery_log || return 1
-    awk -v marker="$marker" -v after="$after_line" \
-        'NR > after && index($0, marker) {count++} END {print count + 0}' "$recovery_log"
+marker_count_between() {
+    local marker=$1 after_line=$2 before_line=$3
+    [[ $after_line =~ ^[0-9]+$ && $before_line =~ ^[0-9]+$ ]] || return 1
+    (( after_line < before_line )) || return 1
+    [[ -f $recovery_log && ! -L $recovery_log ]] || return 1
+    awk -v marker="$marker" -v after="$after_line" -v before="$before_line" \
+        'NR > after && NR < before && index($0, marker) {count++} END {print count + 0}' \
+        "$recovery_log"
 }
 
 post_motion_action() {
@@ -1175,17 +1178,25 @@ verify_old_ardy_absent_without_claimant() {
 }
 
 validate_post_recovery_log() {
-    local cursor=$1
-    [[ $cursor =~ ^[0-9]+$ ]] || return 1
+    local cursor=$1 last_runtime_line=$2
+    [[ $cursor =~ ^[0-9]+$ && $last_runtime_line =~ ^[0-9]+$ ]] || return 1
+    (( cursor < last_runtime_line )) || return 1
     refresh_recovery_log || return 1
-    late_rejected_count=$(marker_count_after 'Rejected ARDY pose batch' "$cursor") || return 1
-    late_unavailable_count=$(marker_count_after \
+    post_recovery_audit_end_line=$(find_marker_line_after \
+        'LogInit: Display: PreExit Game.' "$cursor") || return 1
+    [[ $post_recovery_audit_end_line =~ ^[1-9][0-9]*$ ]] || return 1
+    (( last_runtime_line < post_recovery_audit_end_line )) || return 1
+    late_rejected_count=$(marker_count_between 'Rejected ARDY pose batch' \
+        "$cursor" "$post_recovery_audit_end_line") || return 1
+    late_unavailable_count=$(marker_count_between \
         'ARDY loopback service is unavailable; baked fallback remains active.' \
-        "$cursor") || return 1
-    late_generated_fallback_count=$(marker_count_after \
-        "began a bounded fallback to baked idle" "$cursor") || return 1
-    late_neutral_explain_count=$(marker_count_after \
-        "Using character-neutral procedural fallback for 'explain'." "$cursor") || return 1
+        "$cursor" "$post_recovery_audit_end_line") || return 1
+    late_generated_fallback_count=$(marker_count_between \
+        "began a bounded fallback to baked idle" \
+        "$cursor" "$post_recovery_audit_end_line") || return 1
+    late_neutral_explain_count=$(marker_count_between \
+        "Using character-neutral procedural fallback for 'explain'." \
+        "$cursor" "$post_recovery_audit_end_line") || return 1
     (( late_rejected_count == 0 && late_unavailable_count == 0 && \
         late_generated_fallback_count == 0 && late_neutral_explain_count == 0 ))
 }
@@ -1285,6 +1296,11 @@ write_final_record() {
         "ardy_final_state=$ardy_final_state"
         "package_postflight_verified=$package_postflight_verified"
         "unreal_absent_after=$unreal_absent_after"
+        "post_recovery_audit_end_line=$post_recovery_audit_end_line"
+        "post_recovery_rejected_pose_batches=$late_rejected_count"
+        "post_recovery_unavailable_transitions=$late_unavailable_count"
+        "post_recovery_generated_fallbacks=$late_generated_fallback_count"
+        "post_recovery_neutral_explain_fallbacks=$late_neutral_explain_count"
         "voxtral_pause_verified=$voxtral_pause_verified"
         "voxtral_pause_continuity=$voxtral_pause_continuity"
         "voxtral_restore_verified=$voxtral_restore_verified"
@@ -1345,6 +1361,7 @@ late_rejected_count=not-checked
 late_unavailable_count=not-checked
 late_generated_fallback_count=not-checked
 late_neutral_explain_count=not-checked
+post_recovery_audit_end_line=not-captured
 main_completed=0
 fay_exe=''
 fay_starttime=''
@@ -1919,7 +1936,7 @@ wait_for_runner_completion || \
 validate_soak_result || \
     fail 'the inner rendered diagnostic did not publish a passing diagnostic-only result'
 refresh_recovery_log || fail 'could not finalize the private recovery runtime log'
-validate_post_recovery_log "$recovered_ready_line" || \
+validate_post_recovery_log "$recovered_ready_line" "$listen_complete_line" || \
     fail 'Unreal entered a rejected, unavailable, or degraded ARDY state after recovery'
 
 mapfile -t remaining_unreal_pids < <(find_expected_unreal_pids)
@@ -1969,6 +1986,7 @@ write_record "$gate_root/recovery-events.txt" \
     "listen_action_cursor=$listen_action_cursor" \
     "listen_generated_line=$listen_generated_line" \
     "listen_complete_line=$listen_complete_line" \
+    "post_recovery_audit_end_line=$post_recovery_audit_end_line" \
     'post_recovery_rejected_pose_batches=0' \
     'post_recovery_unavailable_transitions=0' \
     'post_recovery_generated_fallbacks=0' \
