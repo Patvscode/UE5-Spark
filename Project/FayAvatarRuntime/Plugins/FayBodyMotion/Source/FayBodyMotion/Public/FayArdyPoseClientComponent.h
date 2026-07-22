@@ -30,6 +30,9 @@ public:
     void StopBehavior();
     bool SamplePose(float DeltaSeconds, FFayArdyPoseFrame& OutPose);
 
+    /** True only when the last strictly qualified health response advertises it. */
+    bool SupportsBehavior(FName Behavior) const;
+
     UFUNCTION(BlueprintPure, Category = "Fay|ARDY")
     bool IsReady() const { return bServiceReady; }
 
@@ -71,4 +74,5 @@ private:
     bool bPlaybackStarted = false;
     bool bHasLastRootTranslation = false;
     bool bAllowActionTransitionGap = false;
+    TSet<FName> SupportedBehaviors;
 };

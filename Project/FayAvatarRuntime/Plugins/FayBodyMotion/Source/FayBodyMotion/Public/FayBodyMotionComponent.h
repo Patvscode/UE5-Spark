@@ -3,13 +3,16 @@
 #include "CoreMinimal.h"
 #include "Components/ActorComponent.h"
 #include "FayAvatarBridgeComponent.h"
+#include "FayArdyRetargetProfile.h"
 #include "FayBodyMotionTypes.h"
 #include "FayBodyMotionComponent.generated.h"
 
 class AActor;
 class IFayBodyMotionProvider;
 class UAnimMontage;
+class UAnimInstance;
 class UFayArdyPoseClientComponent;
+class UFayCore27SourceAnimInstance;
 class UFayAvatarBridgeComponent;
 class USkeletalMeshComponent;
 
@@ -88,11 +91,18 @@ private:
     void EnterBakedIdle(FName FailedBehavior, const FString& Reason);
     void ResetProviders();
     bool ConfigureGeneratedRetarget();
-    void HandleBodyTransformsFinalized();
-    void ResetRetargetCalibration();
+    void TearDownGeneratedRetarget();
+    void ResetGeneratedRetargetState();
+    void UpdateGeneratedRetarget(float DeltaSeconds);
+    bool IsGeneratedRetargetBindingIntact() const;
+    FVector ComputeBoundedRootOffset(const FFayArdyPoseFrame& Pose);
+    bool HasReviewedBakedMontage(FName Behavior) const;
+    bool SetTargetObjectInput(FName PropertyName, UObject* Value);
+    bool SetTargetFloatInput(FName PropertyName, float Value);
+    bool SetTargetNameInput(FName PropertyName, FName Value);
     void BeginProceduralGesture(const FFayBodyMotionRequest& Request);
     void StopProceduralGesture();
-    void ApplyProceduralGesture();
+    void UpdateProceduralGestureBinding();
     void StartGeneratedAction(const FFayBodyMotionRequest& Request);
     void BeginGeneratedActionBlendOut(bool bProviderFailure, const FString& Reason);
     void CompleteGeneratedActionBlendOut();
@@ -110,18 +120,34 @@ private:
     UPROPERTY(Transient)
     TObjectPtr<USkeletalMeshComponent> BodyMesh;
 
+    UPROPERTY(Transient)
+    TObjectPtr<UFayArdyRetargetBindingComponent> RetargetBinding;
+
+    UPROPERTY(Transient)
+    TObjectPtr<UFayArdyRetargetProfile> RetargetProfile;
+
+    UPROPERTY(Transient)
+    TObjectPtr<USkeletalMeshComponent> ArdySourceMesh;
+
+    UPROPERTY(Transient)
+    TObjectPtr<UFayCore27SourceAnimInstance> ArdySourceAnimation;
+
+    UPROPERTY(Transient)
+    TObjectPtr<UAnimInstance> TargetPostProcessAnimation;
+
+    UPROPERTY(Transient)
+    TObjectPtr<UClass> OriginalBodyAnimClass;
+
     TUniquePtr<IFayBodyMotionProvider> BakedProvider;
     TUniquePtr<IFayBodyMotionProvider> ArdyProvider;
     EFayBodyMotionState MotionState = EFayBodyMotionState::Unconfigured;
     EFayBodyMotionProvider ActiveProvider = EFayBodyMotionProvider::Baked;
     bool bGeneratedRetargetReady = false;
-    FDelegateHandle BodyTransformsFinalizedHandle;
-    TArray<int32> Core27TargetBoneIndices;
-    TArray<FQuat4f> ArdyBaselineLocalRotations;
-    FVector3f ArdyBaselineRootTranslation = FVector3f::ZeroVector;
+    bool bSafeProceduralReady = false;
+    bool bHasGeneratedRootOrigin = false;
+    FVector3f GeneratedRootOriginMetres = FVector3f::ZeroVector;
     FFayArdyPoseFrame LastGeneratedPose;
     float GeneratedBlendWeight = 0.0f;
-    double LastRetargetSampleSeconds = 0.0;
     bool bHasLastGeneratedPose = false;
     FName ProceduralBehavior = NAME_None;
     float ProceduralGestureElapsedSeconds = 0.0f;

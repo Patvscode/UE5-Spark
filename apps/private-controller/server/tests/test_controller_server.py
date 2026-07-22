@@ -1,11 +1,13 @@
 import argparse
 import importlib.util
 import ipaddress
+import json
 import os
 import tempfile
 import time
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 
 
 MODULE_PATH = Path(__file__).parents[1] / "controller_server.py"
@@ -47,6 +49,166 @@ class ValidationTests(unittest.TestCase):
         ):
             with self.assertRaises(ValueError):
                 SERVER.normalize_action(payload)
+
+    def test_motion_command_is_narrow_and_does_not_accept_paths_or_urls(self):
+        self.assertEqual(
+            SERVER.normalize_motion_command({"command": "  please do jumping jacks  "}),
+            "please do jumping jacks",
+        )
+        for payload in (
+            {},
+            {"command": ""},
+            {"command": "wave", "duration": 100},
+            {"command": "open https://example.com/motion"},
+            {"command": "load ../motion.json"},
+            {"command": "x" * 161},
+        ):
+            with self.assertRaises(ValueError):
+                SERVER.normalize_motion_command(payload)
+
+    def test_motion_catalog_owns_parameters_and_route(self):
+        planned = SERVER.resolve_motion_command(
+            "Could you do ten jumping jacks please?",
+            planner_catalog_id="wave",
+        )
+        self.assertEqual(planned["catalogId"], "jumping_jacks")
+        self.assertEqual(planned["duration"], 8.0)
+        self.assertEqual(planned["intensity"], 0.72)
+        self.assertEqual(planned["rootMode"], "locked")
+        self.assertFalse(planned["rendererPackaged"])
+        self.assertEqual(planned["routeBehavior"], "jumping_jacks")
+
+        routed = SERVER.resolve_motion_command("please wave", planner_catalog_id="stretch")
+        self.assertEqual(routed["catalogId"], "wave")
+        self.assertEqual(routed["routeBehavior"], "wave")
+        self.assertTrue(routed["rendererPackaged"])
+
+    def test_planner_may_only_suggest_one_catalog_id(self):
+        self.assertEqual(
+            SERVER.parse_planner_catalog_id('{"catalogId":"run_in_place"}'),
+            "run_in_place",
+        )
+        for value in (
+            '{"catalogId":"unknown"}',
+            '{"catalogId":"wave","duration":100}',
+            '{"catalogId":"delete_files"}',
+            "```json\n{\"catalogId\":\"wave\"}\n```",
+            {"catalogId": "wave"},
+        ):
+            self.assertIsNone(SERVER.parse_planner_catalog_id(value))
+
+    def test_routable_motion_catalog_is_a_subset_of_existing_actions(self):
+        for catalog_id, item in SERVER.MOTION_CATALOG.items():
+            behavior = item["routeBehavior"]
+            if item["rendererPackaged"]:
+                self.assertIn(behavior, SERVER.ALLOWED_BEHAVIORS, catalog_id)
+            else:
+                self.assertEqual(behavior, catalog_id)
+
+    def test_staged_motion_is_never_dispatched_and_packaged_motion_is_normalized(self):
+        handler = object.__new__(SERVER.ControllerHandler)
+        responses = []
+        dispatched = []
+        handler._motion_planner_suggestion = lambda _command: None
+        handler._json = lambda status, payload: responses.append((status, payload))
+        handler._dispatch_action = lambda action: (
+            dispatched.append(action) or (
+                SERVER.HTTPStatus.OK,
+                {"ok": True, "live": True, "replay": False, "behavior": action["behavior"]},
+            )
+        )
+
+        handler._motion_command({"command": "do jumping jacks"})
+        self.assertEqual(responses[-1][0], SERVER.HTTPStatus.ACCEPTED)
+        self.assertEqual(responses[-1][1]["status"], "staged")
+        self.assertEqual(dispatched, [])
+
+        handler._motion_command({"command": "wave hello"})
+        self.assertEqual(responses[-1][0], SERVER.HTTPStatus.OK)
+        self.assertEqual(responses[-1][1]["status"], "routed")
+        self.assertEqual(dispatched[-1], {
+            "behavior": "wave", "duration": 2.4, "intensity": 0.65, "user": "User",
+        })
+
+    def test_motion_planner_can_use_a_model_independent_from_chat(self):
+        handler = object.__new__(SERVER.ControllerHandler)
+        handler.server = SimpleNamespace(
+            llm_base="http://127.0.0.1:8080",
+            llm_model="qwen3-4b-q4-k-m",
+            motion_planner_model="hauhau-qwen-9b",
+        )
+        captured = {}
+
+        def fake_upstream(url, payload, *, timeout):
+            captured.update({"url": url, "payload": payload, "timeout": timeout})
+            return {"choices": [{"message": {"content": '{"catalogId":"stretch"}'}}]}
+
+        handler._upstream_json = fake_upstream
+        self.assertEqual(handler._motion_planner_suggestion("loosen up"), "stretch")
+        self.assertEqual(captured["payload"]["model"], "hauhau-qwen-9b")
+        self.assertEqual(captured["payload"]["temperature"], 0.0)
+        self.assertEqual(captured["payload"]["max_tokens"], 32)
+
+    def test_shared_motion_catalog_loader_fails_closed(self):
+        catalog = json.loads(SERVER.MOTION_CATALOG_PATH.read_text(encoding="utf-8"))
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "motion-catalog.json"
+            path.write_text(json.dumps(catalog), encoding="utf-8")
+            loaded = SERVER.load_motion_catalog(path)
+            self.assertEqual(set(loaded), SERVER.MOTION_CATALOG_IDS)
+            self.assertEqual(loaded["wave"]["routeBehavior"], "wave")
+
+            catalog["items"]["wave"]["duration"] = 100
+            path.write_text(json.dumps(catalog), encoding="utf-8")
+            with self.assertRaises(RuntimeError):
+                SERVER.load_motion_catalog(path)
+
+    def test_wardrobe_is_sealed_and_full_undress_remains_disabled(self):
+        profile = SERVER.WARDROBE_PROFILE
+        self.assertFalse(profile["installed"])
+        self.assertFalse(profile["fullyUnclothed"]["enabled"])
+        self.assertEqual(
+            {item["id"] for item in profile["presets"]},
+            {"underwear", "casual", "hoodie"},
+        )
+        self.assertEqual(
+            SERVER.normalize_wardrobe({
+                "profileId": "casual-girl",
+                "preset": "casual",
+                "slots": {"top": "tank", "bottom": "shorts", "feet": "shoes_socks", "hair": "style_1"},
+            }),
+            {
+                "profileId": "casual-girl",
+                "preset": "casual",
+                "slots": {"top": "tank", "bottom": "shorts", "feet": "shoes_socks", "hair": "style_1"},
+            },
+        )
+        for payload in (
+            {"profileId": "casual-girl", "fullyUnclothed": True},
+            {"profileId": "casual-girl", "preset": "unreviewed"},
+            {"profileId": "casual-girl", "slots": {"top": "/Game/Anything"}},
+            {"profileId": "other", "preset": "casual"},
+        ):
+            with self.assertRaises(ValueError):
+                SERVER.normalize_wardrobe(payload)
+
+    def test_shared_pending_wardrobe_loader_is_sanitized_and_fails_closed(self):
+        profile = json.loads(SERVER.WARDROBE_PROFILE_PATH.read_text(encoding="utf-8"))
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "CasualGirl.pending.json"
+            path.write_text(json.dumps(profile), encoding="utf-8")
+            public, slots, presets = SERVER.load_wardrobe_profile(path)
+            self.assertEqual(public["profileId"], "casual-girl")
+            self.assertFalse(public["installed"])
+            self.assertNotIn("sourceListing", public)
+            self.assertNotIn("reviewedAssetRoot", public)
+            self.assertEqual(slots, SERVER.EXPECTED_WARDROBE_SLOT_VALUES)
+            self.assertEqual(presets, SERVER.EXPECTED_WARDROBE_PRESETS)
+
+            profile["allowFullyUnclothed"] = True
+            path.write_text(json.dumps(profile), encoding="utf-8")
+            with self.assertRaises(RuntimeError):
+                SERVER.load_wardrobe_profile(path)
 
     def test_message_is_narrow(self):
         self.assertEqual(SERVER.normalize_message({"message": " hello "}), "hello")

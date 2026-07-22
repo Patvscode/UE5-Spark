@@ -61,8 +61,8 @@ esac
     fail 'token must be a regular file'
 [[ $(stat -c '%a' "$token_file") =~ ^(400|600)$ ]] || \
     fail 'token file must not grant group or other access'
-docker image inspect ue5-spark-ardy:0.2.0 >/dev/null 2>&1 || \
-    fail 'build ue5-spark-ardy:0.2.0 first'
+docker image inspect ue5-spark-ardy:0.3.0 >/dev/null 2>&1 || \
+    fail 'build ue5-spark-ardy:0.3.0 first'
 
 umask 077
 models_parent=$(dirname "$models_root")
@@ -106,6 +106,6 @@ exec docker run --rm \
     --mount "type=bind,src=$encoder_cache,dst=/hf-cache" \
     --mount "type=bind,src=$token_file,dst=/run/secrets/hf_token,readonly" \
     --entrypoint python \
-    ue5-spark-ardy:0.2.0 \
+    ue5-spark-ardy:0.3.0 \
     /opt/ue5-spark-ardy/cache_embeddings.py \
     --models-root /models --device "$device" "${precision_args[@]}"

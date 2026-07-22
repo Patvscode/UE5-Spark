@@ -25,6 +25,10 @@
       "Enabled": true
     },
     {
+      "Name": "FayWardrobe",
+      "Enabled": true
+    },
+    {
       "Name": "AnimationData",
       "Enabled": true,
       "TargetAllowList": [

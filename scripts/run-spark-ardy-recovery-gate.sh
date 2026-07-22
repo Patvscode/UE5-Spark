@@ -28,7 +28,7 @@ fi
 
 readonly VOXTRAL_UNIT='codex-studio-voxtral-realtime.service'
 readonly ARDY_CONTAINER='ue5-spark-ardy'
-readonly ARDY_IMAGE='ue5-spark-ardy:0.2.0'
+readonly ARDY_IMAGE='ue5-spark-ardy:0.3.0'
 readonly ARDY_ROLLBACK_IMAGE='ue5-spark-ardy:0.1.0'
 readonly ARDY_PORT=8777
 readonly RUN_DURATION_SECONDS=180
@@ -361,13 +361,14 @@ import sys
 value = json.load(sys.stdin)
 expected_keys = {
     "status", "provider", "protocolVersion", "fps", "bufferFrames",
-    "facialControl", "checkpoint", "embeddingCount", "p95GenerationMs",
+    "facialControl", "coordinateSystem", "source", "motionCatalog",
+    "checkpoint", "embeddingCount", "p95GenerationMs",
 }
 if not isinstance(value, dict) or set(value) != expected_keys:
     raise SystemExit(1)
 if value.get("status") != "ready" or value.get("provider") != "ardy":
     raise SystemExit(1)
-if type(value.get("protocolVersion")) is not int or value["protocolVersion"] != 1:
+if type(value.get("protocolVersion")) is not int or value["protocolVersion"] != 2:
     raise SystemExit(1)
 if type(value.get("fps")) is not int or value["fps"] != 20:
     raise SystemExit(1)
@@ -375,9 +376,33 @@ if type(value.get("bufferFrames")) is not int or value["bufferFrames"] != 8:
     raise SystemExit(1)
 if value.get("facialControl") != "excluded":
     raise SystemExit(1)
+expected_source = {
+    "system": "nv-tlabs/ardy",
+    "revision": "693f74d13b3d04a0a22ce127ee79c929dd89756b",
+    "skeleton": "Core27",
+    "jointOrder": [
+        "Hips", "Spine", "Spine1", "Spine2", "Spine3", "Neck", "Head",
+        "RightShoulder", "RightArm", "RightForeArm", "RightHand", "RightHandEnd",
+        "RightHandThumb1", "LeftShoulder", "LeftArm", "LeftForeArm", "LeftHand",
+        "LeftHandEnd", "LeftHandThumb1", "RightUpLeg", "RightLeg", "RightFoot",
+        "RightToeBase", "LeftUpLeg", "LeftLeg", "LeftFoot", "LeftToeBase",
+    ],
+    "rotationSpace": "local",
+    "quaternionOrder": "xyzw",
+    "positionSpace": "global",
+    "contactOrder": ["left_heel", "left_toe", "right_heel", "right_toe"],
+}
+expected_catalog = [
+    "idle", "listen", "explain", "wave", "jog_in_place", "run_in_place",
+    "jumping_jacks", "stretch", "dance_relaxed",
+]
+if value.get("coordinateSystem") != "ardy-rh-x-left-y-up-z-forward-meters":
+    raise SystemExit(1)
+if value.get("source") != expected_source or value.get("motionCatalog") != expected_catalog:
+    raise SystemExit(1)
 if value.get("checkpoint") != "ARDY-Core-RP-20FPS-Horizon8":
     raise SystemExit(1)
-if type(value.get("embeddingCount")) is not int or value["embeddingCount"] != 3:
+if type(value.get("embeddingCount")) is not int or value["embeddingCount"] != 9:
     raise SystemExit(1)
 p95 = value.get("p95GenerationMs")
 if isinstance(p95, bool) or not isinstance(p95, (int, float)):

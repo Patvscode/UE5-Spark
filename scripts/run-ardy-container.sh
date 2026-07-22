@@ -22,8 +22,8 @@ case $provider in
     *) fail 'provider must be mock or ardy' ;;
 esac
 [[ -d $models_root && ! -L $models_root ]] || fail 'checkpoint root must be a real directory'
-docker image inspect ue5-spark-ardy:0.2.0 >/dev/null 2>&1 || \
-    fail 'build ue5-spark-ardy:0.2.0 first'
+docker image inspect ue5-spark-ardy:0.3.0 >/dev/null 2>&1 || \
+    fail 'build ue5-spark-ardy:0.3.0 first'
 
 exec docker run --rm \
     --name ue5-spark-ardy \
@@ -37,5 +37,5 @@ exec docker run --rm \
     --tmpfs /tmp:rw,noexec,nosuid,size=1g \
     --user "$(id -u):$(id -g)" \
     --mount "type=bind,src=$models_root,dst=/models,readonly" \
-    ue5-spark-ardy:0.2.0 \
+    ue5-spark-ardy:0.3.0 \
     --host 127.0.0.1 --port 8777 --provider "$provider" --models-root /models

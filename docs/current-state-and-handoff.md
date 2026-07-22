@@ -10,20 +10,56 @@ MetaHuman assets, and captured media are intentionally not stored in Git.
 - Recorded: 2026-07-22
 - Source branch: `agent/dgx-spark-metahuman`
 - Draft pull request: `Patvscode/UE5-Spark#1`
-- Last source checkpoint recorded here: `0844863`
+- Live-controller evidence source checkpoint: `0844863`
 - Current package: sealed v29 native Linux ARM64, Ada and Aoi included; latest
-  Ada production-qualified package
+  Ada production-qualified package, portrait/chest-up camera
 - Current production character: Ada
-- Current motion service: real ARDY Horizon8, three approved cached embeddings
+- Current motion service: real ARDY Horizon8 image `0.2.0`, protocol v1,
+  three approved cached embeddings (`idle`, `listen`, `explain`)
 - Current private controller: immersive live Unreal preview plus narrow chat and
-  action proxy, validated at a 390 × 844 iPhone viewport
+  three-action proxy, validated at a 390 × 844 iPhone viewport
 - Immediate rollback: sealed v28
 - Long-run and measured-30-FPS baseline: sealed v28
 - Older functional rollback: v27, with its documented uncapped-frame limitation
 
+## Deployment boundary: live v29 versus source-only v30
+
+The sealed v29 package is still the only deployed and qualified package. It
+uses the protocol-v1 ARDY client and the legacy nineteen-bone adapter that
+writes reconstructed component-space transforms after body evaluation. That
+writer relies on unsupported mutable access to finalized transforms and does
+not perform a source-rest/target-rest IK retarget. Its limited portrait evidence
+does not rule out ancestor propagation into the head/face or incorrect
+arm/hand/leg axes. Treat it as a rollback-capable prototype, not the motion
+architecture to extend.
+
+The current source tree contains a v30 candidate, but it has not been cooked,
+packaged, copied to Spark, activated, or visually qualified. The candidate adds:
+
+- ARDY protocol v2 at `POST /v2/poses`, with the exact reviewed ARDY revision,
+  Core27 hierarchy/joint order, right-handed +X-left/+Y-up/+Z-forward basis,
+  local XYZW rotations, global 27-joint positions, explicit contact order, and
+  quaternion-hemisphere continuity;
+- a hidden Core27 source skeletal mesh feeding a reviewed Unreal IK Retargeter
+  from a post-process Animation Blueprint, instead of mutating finalized Body
+  transforms;
+- explicit preservation of the Body's ordinary animation class, StreamingADA
+  face/head ownership, neck/head exclusion, and the existing finger pose;
+- one shared reviewed nine-motion catalog: `idle`, `listen`, `explain`, `wave`,
+  `jog_in_place`, `run_in_place`, `jumping_jacks`, `stretch`, and
+  `dance_relaxed`;
+- a fail-closed free-text movement director that may use a local Qwen model only
+  to suggest one catalog ID; deterministic code owns duration, intensity, root
+  mode, and whether the current renderer may receive it; and
+- content-free wardrobe/profile boundaries for the pending Fab Casual Girl.
+
+Source tests establish contract behavior only. They are not evidence of a v30
+binary, real nine-embedding ARDY run, correct IK assets, natural full-body
+motion, or long-running reliability.
+
 ## What works now
 
-The complete packaged path runs on DGX Spark:
+The live v29 packaged path runs on DGX Spark:
 
 ```text
 Fay conversation / LLM / ASR / TTS / MCP
@@ -51,8 +87,10 @@ Verified capabilities:
 - `idle`, `listen`, and `explain` can use the real Horizon8 provider.
 - `wave`, `invite`, `think`, and `warn` retain deterministic timing-safe
   fallbacks; `nod` and `shake` use bounded head curves.
-- The ARDY adapter maps nineteen reviewed body bones, including pelvis/root,
-  spine, shoulders/arms, thighs, calves, feet, and toes.
+- The legacy v29 ARDY adapter maps nineteen reviewed body bones, including
+  pelvis/root, spine, shoulders/arms, thighs, calves, feet, and toes. Its
+  unsupported late component-space writer is the defect the v30 IK-retarget
+  candidate is intended to remove.
 - ARDY does not own the face, neck, head, or sparse finger endpoints. This keeps
   facial speech and the body provider from competing for the same controls.
 - Provider loss crossfades to baked idle. A guarded external activator supplies
@@ -64,16 +102,17 @@ Verified capabilities:
 - The private controller displays fresh 960 × 540 frames from the exact native
   Unreal window without opening another network listener. The loopback BFF is
   exposed only through the existing private Tailscale HTTPS boundary.
-- Mobile uses the live renderer as the full-screen stage. Conversation and
-  setup controls are dismissible sheets, and the movement controls stay in a
-  compact bottom shelf.
+- The deployed mobile UI uses the live renderer as the full-screen stage.
+  Conversation and setup controls are dismissible sheets, and the movement
+  controls stay in a compact bottom shelf.
 - `Explain` and `Listen` dispatch to the real ARDY provider while it is healthy;
   `Wave` is the deterministic real-time fallback. The UI falls back honestly to
   retained evidence media if the renderer or frame producer is unavailable.
-- Text chat has a resource-aware prototype path: a small local Qwen model writes
-  the reply, then Fay performs TTS and sends the audio to Unreal for playback and
-  StreamingADA lip motion. Hidden reasoning tags are removed before display or
-  speech. The much larger 35B model is not required for this trial path.
+- Deployed text chat has a resource-aware prototype path: a small local Qwen
+  model writes the reply, then Fay performs TTS and sends the audio to Unreal
+  for playback and StreamingADA lip motion. Hidden reasoning tags are removed
+  before display or speech. The much larger 35B model is not required for this
+  trial path.
 
 ## Current v29 evidence
 
@@ -158,12 +197,17 @@ Keep these rules for every future change:
 
 ## Credential state
 
-The three approved ARDY prompt embeddings were generated and sealed privately.
-Ordinary ARDY runtime does not need the Hugging Face token or the Meta Llama
-encoder cache. Temporary authorization/cache cleanup is intentionally separate:
-preserve models, checkpoints, embeddings, and the default Hugging Face login;
-quarantine project OAuth material first, and finalize deletion only after the
-user revokes the connected application.
+The three live protocol-v1 ARDY prompt embeddings were generated and sealed
+privately. Ordinary ARDY runtime does not need the Hugging Face token or the
+Meta Llama encoder cache. Temporary authorization/cache cleanup is intentionally
+separate: preserve models, checkpoints, embeddings, and the default Hugging
+Face login; quarantine project OAuth material first, and finalize deletion only
+after the user revokes the connected application.
+
+Protocol v2 uses embedding-manifest schema 2 and requires nine private cached
+embeddings. Those six additional reviewed embeddings have not been generated or
+activated. The live three-file cache is intentionally incompatible with the v2
+image and remains untouched for rollback.
 
 ## What is not finished
 
@@ -173,37 +217,63 @@ user revokes the connected application.
 - The lightweight trial chat path does not yet preserve Fay's full agent memory
   or MCP planning. It deliberately keeps the native avatar usable alongside
   ARDY; the full planner remains a separate resource profile.
+- The free-text movement director and its optional local classifier exist only
+  in source. Direct alias matching is deterministic; an LLM response is merely
+  an advisory catalog ID and cannot supply poses, asset paths, timing, root
+  motion, or arbitrary ARDY text. Staged motions must not be presented as live.
 - Current Ada framing is portrait/chest-up. It proves face and upper-body motion
   but does not visually prove the lower-body retarget path.
 - Source now contains sealed per-character `FullBody` camera presets; a new
   package plus wide front/side capture is still required.
-- ARDY's current public runtime interface is deliberately limited to approved
-  behavior names. Arbitrary prompts do not enter Unreal.
+- Live ARDY v1 accepts only three generated behaviors. Candidate v2 remains
+  limited to the nine reviewed cached behaviors; arbitrary prompts still do not
+  enter Unreal.
 - Detailed fingers need reviewed hand poses or another compatible provider.
 - Head/neck behavior and emotional/gaze polish still need visual tuning.
 - Aoi proves portability but is male in the installed UE 5.8 preset set. A
   second reviewed female character remains pending.
-- The deferred free Fab character is not part of the reliability-critical path.
+- The free Fab Casual Girl is not installed. The source profile remains
+  `pending_asset_audit`; its wardrobe controls are disabled, and full undress is
+  prohibited until every hidden body region, material, and LOD is manually
+  verified as complete.
 
 ## Next implementation order
 
-1. Keep the verified live controller usable while the new package is prepared;
-   do not reintroduce the large-model memory collision into this trial profile.
-2. Do not register the web client as a second `User` on Fay's avatar WebSocket;
+1. Commit and back up the passing source candidate before any Spark sync. Keep
+   the v29 package, ARDY `0.2.0` image/cache, and v28 rollback immutable.
+2. Build the new `0.3.0` ARDY image in isolation, generate and hash-seal all nine
+   schema-2 embeddings, update the activator/qualification gates for the v2
+   endpoint and count, then pass mock and real canaries without replacing the
+   live v1 provider prematurely.
+3. In the UE 5.8 Editor, create and review the Core27 source mesh, IK Rig/IK
+   Retargeter, target post-process AnimBP, retarget profile, and one sealed
+   binding on both Ada and Aoi. A missing or changed asset must fail to baked
+   idle; it must never re-enable the legacy writer.
+4. Compile, cook, package, deep-verify, and seal a new v30 LinuxArm64 package.
+   Cold-launch it against the v2 canary before any production switch.
+5. Capture wide front and side full-body clips for every new catalog motion.
+   Reject wrong limb sides, palm inversion, elbow/knee hyperextension, root
+   jumps, foot sliding, face/head displacement, finger collapse, or facial
+   interruption.
+6. Run v30 speech overlap, malformed/stale pose, provider-loss/recovery,
+   Ada/Aoi portability, five-turn rendered qualification, and 30-minute mixed-
+   motion soak gates. Promote only after clean fallback and teardown.
+7. Deploy the controller movement director only after its advertised
+   `rendererPackaged` flags match the sealed v30 package. Keep large planner
+   models out of the trial resource profile unless measured coexistence passes.
+8. Do not register the web client as a second `User` on Fay's avatar WebSocket;
    that could mask the real Unreal renderer. Proxy only the reviewed control and
    sanitized status surfaces.
-3. Recook the schema-v2 character profiles as a new package, select the sealed
-   `FullBody` preset only through `-FayCameraFraming=FullBody`, and capture front
-   plus side motion before calling lower-body quality proven. Never accept
-   transforms or FOV values from command line, MCP, or the web UI.
-4. Run mobile Safari and desktop browser acceptance through Tailscale, including
+9. Run mobile Safari and desktop browser acceptance through Tailscale, including
    reconnection, microphone permission, media playback, and safe failure states.
-5. Add guarded startup/recovery for the lightweight model and three transient
+10. Add guarded startup/recovery for the lightweight model and three transient
    controller services without modifying system drivers, CUDA, DGX OS, or Fay.
-6. Restore full Fay memory/MCP planning as an explicit resource profile after
+11. Restore full Fay memory/MCP planning as an explicit resource profile after
    measuring whether it can coexist with the full-body package.
-7. Run a longer v29 endurance gate after UI/camera changes settle; preserve v28
-   until it passes.
+12. Acquire Casual Girl through the user's Fab library, import it only into an
+    isolated private project root, run the asset and complete-body/LOD audits,
+    build its separate Apple-ARKit face and Epic-skeleton retarget adapters, and
+    enable wardrobe controls only after native LinuxArm64 qualification.
 
 ## Resume checklist
 
@@ -212,8 +282,9 @@ Before resuming work:
 1. Confirm the Git branch is clean and matches its GitHub remote.
 2. Verify the v29 package seal and native executable hashes above.
 3. Confirm Fay process identity/listeners without changing it.
-4. Confirm the fixed ARDY container is the sealed Horizon8 image, healthy on
-   loopback, and reports exactly three embeddings.
+4. Confirm the fixed live ARDY container is sealed image `0.2.0`, protocol v1,
+   healthy on loopback, and reports exactly three embeddings. Do not point v29
+   at a v2 service.
 5. Confirm the fixed Voxtral user unit is active and no packaged Unreal process
    remains.
 6. Use a new private evidence directory for every gate or media capture.

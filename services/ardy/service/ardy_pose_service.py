@@ -9,8 +9,18 @@ import logging
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from socketserver import TCPServer
 
-from pose_protocol import PoseRequest, ProtocolError
+from motion_catalog import GENERATED_BEHAVIORS
+from pose_protocol import (
+    BATCH_FRAMES,
+    COORDINATE_SYSTEM,
+    FPS,
+    PROTOCOL_VERSION,
+    PoseRequest,
+    ProtocolError,
+    source_descriptor,
+)
 from providers import ArdyPoseProvider, MockPoseProvider
 
 
@@ -24,6 +34,14 @@ class PoseServer(ThreadingHTTPServer):
     def __init__(self, address: tuple[str, int], provider: object):
         super().__init__(address, PoseHandler)
         self.provider = provider
+
+    def server_bind(self) -> None:
+        """Bind without HTTPServer's unnecessary reverse-DNS lookup."""
+
+        TCPServer.server_bind(self)
+        host, port = self.server_address[:2]
+        self.server_name = str(host)
+        self.server_port = int(port)
 
 
 class PoseHandler(BaseHTTPRequestHandler):
@@ -39,16 +57,19 @@ class PoseHandler(BaseHTTPRequestHandler):
             {
                 "status": "ready" if self.server.provider.ready else "degraded",
                 "provider": self.server.provider.name,
-                "protocolVersion": 1,
-                "fps": 20,
-                "bufferFrames": 8,
+                "protocolVersion": PROTOCOL_VERSION,
+                "fps": FPS,
+                "bufferFrames": BATCH_FRAMES,
                 "facialControl": "excluded",
+                "coordinateSystem": COORDINATE_SYSTEM,
+                "source": source_descriptor(),
+                "motionCatalog": list(GENERATED_BEHAVIORS),
                 **self.server.provider.health,
             },
         )
 
     def do_POST(self) -> None:  # noqa: N802
-        if self.path != "/v1/poses":
+        if self.path != "/v2/poses":
             self._json(HTTPStatus.NOT_FOUND, {"error": "not_found"})
             return
         try:

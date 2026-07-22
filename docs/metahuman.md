@@ -1,5 +1,10 @@
 # MetaHuman plan
 
+The sealed v29 Ada/Aoi package is the live reference. The Core27 IK Retargeter,
+protocol-v2 body stream, full-body framing, and nine-motion catalog described
+below are v30 source candidates until a new package passes visual and reliability
+gates.
+
 ## Character cost
 
 A test character does not need to be purchased. MetaHuman is included in the
@@ -53,11 +58,12 @@ Use an included female preset with:
 - conservative texture sizes
 - face/body LODs enabled
 - simple included clothing
-- a neutral idle, with one clear body gesture to be added later
+- a neutral idle and one clear reviewed body gesture for initial validation
 - an unobstructed face for lip-sync evaluation
 
-The appearance remains independent of Fay. A different preset can be selected
-later without changing the backend protocol or bridge.
+The appearance remains independent of Fay. Another reviewed MetaHuman preset can
+be selected without changing the conversation bridge. A non-MetaHuman such as
+Casual Girl requires its own face, skeleton/retarget, and wardrobe adapters.
 
 ## Direct local facial path
 
@@ -85,9 +91,12 @@ solve-frame accounting while the window was minimized.
    if the learned solver is unavailable.
 2. **Learned face:** validate the direct StreamingADA controls on assembled Ada.
 3. **Presence:** tune idle, breathing, gaze, head turns, solver mood, and blinks.
-4. **Body language:** tune the mapped semantic behaviors such as `nod`,
-   `invite`, `think`, and `warn`, then optionally replace procedural fallbacks
-   with reviewed animations.
+4. **Live v29 body reference:** retain mapped semantic behaviors such as `nod`,
+   `invite`, `think`, and `warn` only as rollback evidence; do not extend its
+   unsupported late transform writer.
+5. **V30 body language:** build the reviewed Core27 source mesh, IK Rig/
+   Retargeter, target post-process AnimBP, and profile/binding, then validate all
+   nine catalog motions with full-body front and side views.
 
 Amplitude-driven jaw motion proves timing and transport but is not presented as
 final photorealistic speech. Realistic flesh deformation comes from the
@@ -97,16 +106,48 @@ learned facial layer and now does so in the verified native package.
 
 The source contains conservative raw-control head mappings for `nod`, `shake`,
 `think`, and `warn`, but they still need final visual tuning. No authored body
-animations or montages are required for `wave` or `invite`; the procedural
-fallbacks remain available. The real Horizon8 adapter drives nineteen reviewed
-body bones from pelvis through both leg/foot chains as well as the spine and
-arms, while face, neck, head, and sparse finger endpoints remain excluded.
-Private portrait media verifies procedural wave and generated upper-body
-`explain`, but the default camera crops the legs. Source now carries sealed
-per-character full-body presets, selected only by `-FayCameraFraming=FullBody`;
-a newly cooked package plus wide front/side capture is required before
-lower-body visual quality is considered proven. Receiving a Fay action event
-alone is never sufficient motion evidence.
+animations or montages are required for `wave` or `invite`; reviewed fallbacks
+remain available.
+
+The live v29 Horizon8 adapter drives nineteen body bones from pelvis through
+both leg/foot chains as well as the spine and arms. It does so by mutating
+finalized component-space transforms through unsupported access, using a first-
+sample baseline instead of a source-rest/target-rest retarget. Although its
+portrait captures show procedural wave and generated upper-body `explain`, the
+camera crops the legs and cannot prove correct palms, elbows, knees, feet, root,
+or ancestor isolation. V29 must not be described as a natural full-body result.
+
+## V30 retarget candidate
+
+The source-only replacement uses absolute Core27 local rotations and global
+joint positions to evaluate a hidden Core27 skeletal mesh. A reviewed Unreal IK
+Retargeter consumes that mesh through the target Body's post-process Animation
+Blueprint. The main Body animation class remains untouched, and the binding
+must prove that face, neck, and head are excluded and the existing detailed
+finger pose is preserved. Missing or changed assets disable generated motion
+and fall back; the legacy writer is not an acceptable fallback.
+
+Protocol v2 also supplies ordered left-heel, left-toe, right-heel, and right-toe
+contacts for foot planting, plus global hand/end/thumb positions for later IK
+polish. Source carries sealed per-character full-body presets selected only by
+`-FayCameraFraming=FullBody`. A new cook, wide front/side capture, speech overlap,
+provider-failure test, Ada/Aoi comparison, and soak are still required before
+any of this is called working on Spark. Receiving a Fay action or passing a
+source-contract test is never sufficient motion evidence.
+
+## Casual Girl boundary
+
+The selected free Fab Casual Girl is a separate modular UE character, not a
+MetaHuman and not yet installed. It declares an Epic-skeleton body and Apple
+ARKit facial morphs, so it needs a private UE 5.8/LinuxArm64 import audit, its
+own ARDY retarget profile, a 52-morph face adapter, reviewed garment/hair
+component mappings, and native performance/reliability gates.
+
+The public wardrobe profile contains only logical preset and slot IDs. Controls
+remain disabled while it is `pending_asset_audit`. Full undress is forbidden
+unless manual inspection confirms a complete body under every garment at every
+LOD; hiding a clothing component does not establish that geometry exists. Fab
+assets, private component paths, and cooked packages remain outside Git.
 
 ## Performance order
 

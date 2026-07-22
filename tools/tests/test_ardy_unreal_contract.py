@@ -25,11 +25,15 @@ class ArdyUnrealContractTests(unittest.TestCase):
 
     def test_production_health_identity_is_exact(self) -> None:
         for marker in (
-            'Object->Values.Num() == 9',
+            'Object->Values.Num() == 12',
+            'constexpr int32 ExpectedProtocolVersion = 2;',
+            'CoordinateSystem == ExpectedCoordinateSystem',
+            'ValidateSourceDescriptor(*Source)',
+            'ValidateMotionCatalog(*MotionCatalog, QualifiedCatalog)',
             'Provider == TEXT("ardy")',
             'FacialControl == TEXT("excluded")',
             'Checkpoint == TEXT("ARDY-Core-RP-20FPS-Horizon8")',
-            'EmbeddingCount == 3',
+            'EmbeddingCount == static_cast<double>(ExpectedMotionCatalog().Num())',
             'P95GenerationMilliseconds > 0.0',
             'P95GenerationMilliseconds < 400.0',
             'TEXT("FayAllowDiagnosticArdy=")',
@@ -39,9 +43,13 @@ class ArdyUnrealContractTests(unittest.TestCase):
 
     def test_pose_envelope_and_numeric_bounds_are_sealed(self) -> None:
         for marker in (
-            "Object->Values.Num() != 5",
-            "(*FrameObject)->Values.Num() != 4",
+            "Object->Values.Num() != 6",
+            "Source->Values.Num() != 8",
+            "(*FrameObject)->Values.Num() != 5",
             "Frames->Num() != TargetBufferFrames",
+            "Positions->Num() != ExpectedJointCount",
+            'TEXT("invalid global joint position")',
+            "MaximumJointPositionMetres",
             "SequenceNumber != FMath::FloorToDouble(SequenceNumber)",
             "SequenceNumber >= ExclusiveInt64UpperBound",
             "ExpectedFrameStepSeconds",
@@ -51,6 +59,21 @@ class ArdyUnrealContractTests(unittest.TestCase):
             "root translation changes too far between frames",
             "Contact < 0.0 || Contact > 1.0",
             "generated neck or head rotation is not excluded",
+            'RotationSpace != TEXT("local")',
+            'QuaternionOrder != TEXT("xyzw")',
+            'PositionSpace != TEXT("global")',
+        ):
+            self.assertIn(marker, self.source)
+
+    def test_root_and_core27_hips_are_the_same_transform(self) -> None:
+        for marker in (
+            "RootPositionConsistencyToleranceMetres = 1.0e-5",
+            "Frame.JointPositionsMetres[0]",
+            "root translation does not match global Hips position",
+            "RootRotationConsistencyDotThreshold = 1.0f - 1.0e-5f",
+            "FMath::Abs(",
+            "Frame.JointRotations[0]",
+            "root rotation does not match local Hips rotation",
         ):
             self.assertIn(marker, self.source)
 
@@ -118,7 +141,7 @@ class ArdyUnrealContractTests(unittest.TestCase):
     def test_http_response_origin_type_and_actual_size_are_sealed(self) -> None:
         for marker in (
             'Request->GetEffectiveURL() == BaseUrl + TEXT("/healthz")',
-            'Request->GetEffectiveURL() != BaseUrl + TEXT("/v1/poses")',
+            'Request->GetEffectiveURL() != BaseUrl + TEXT("/v2/poses")',
             "Response->GetContent().Num() <= MaximumResponseBytes",
             "Response->GetContent().Num() > MaximumResponseBytes",
             "ESearchCase::IgnoreCase",
@@ -133,8 +156,8 @@ class ArdyUnrealContractTests(unittest.TestCase):
             "double FramesPerSecond = 0.0;",
             "double BufferFrames = 0.0;",
             "double EmbeddingCount = 0.0;",
-            "Version == 1.0",
-            "EmbeddingCount == 3.0",
+            "Version == static_cast<double>(ExpectedProtocolVersion)",
+            "EmbeddingCount == static_cast<double>(ExpectedMotionCatalog().Num())",
         ):
             self.assertIn(marker, self.source)
         self.assertNotIn("int32 Version = 0;", self.source)

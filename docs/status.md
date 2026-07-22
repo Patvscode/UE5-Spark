@@ -4,7 +4,31 @@ This page separates measured results from planned work. The latest evidence was
 recorded on DGX Spark through 2026-07-22. The cooked package and all Epic-licensed
 content remain private and are not part of this repository.
 
-## Working end to end on DGX Spark
+## Current deployment boundary
+
+- **Live and qualified:** sealed native ARM64 v29, portrait/chest-up Ada and Aoi,
+  ARDY image `0.2.0` with protocol v1 and three cached motions, plus the deployed
+  three-action private controller. V28 remains the immediate and long-run
+  rollback baseline.
+- **Known v29 motion defect:** the legacy nineteen-bone adapter mutates finalized
+  component-space Body transforms through unsupported access. It does not use a
+  source-rest/target-rest IK retarget and portrait evidence cannot qualify lower
+  body, hand orientation, or ancestor isolation from the head/face.
+- **Source-only v30 candidate:** protocol v2, exact Core27 source identity,
+  global joint positions and contacts, quaternion continuity, a hidden Core27
+  source mesh, reviewed IK Retargeter/post-process contract, nine-motion shared
+  catalog, free-text movement director, and content-free wardrobe boundary.
+- **Not yet done:** no v2 container or nine-embedding cache has been qualified,
+  no v30 content assets/package have been cooked, no candidate code has replaced
+  the live v29 runtime, and no full-body visual/reliability gate has passed.
+- **Fab candidate:** Casual Girl is not present or imported in this workspace and
+  `pending_asset_audit`; wardrobe controls and full undress remain disabled.
+
+Source tests prove parsing and fail-closed contracts only. They do not prove a
+real ARDY v2 generation, Unreal asset binding, natural motion, correct retarget,
+or Spark runtime stability.
+
+## Working end to end on DGX Spark (live and retained evidence)
 
 - UE 5.8's x86-64 graphical Editor and commandlets run through a pinned,
   rootless FEX userspace. This is the cooker and MetaHuman assembly environment;
@@ -67,7 +91,8 @@ content remain private and are not part of this repository.
   eager Horizon40 model generated 40 frames in 1.682 seconds. Horizon8 then ran
   six steady eight-frame generations in 59-153 ms with 132 ms p95, passing the
   400 ms buffer target after warmup. No TensorRT was installed or used.
-- The strict mock pose service passed schema, sequence, allowlist, Core27,
+- The retained protocol-v1 strict mock pose service passed schema, sequence,
+  allowlist, Core27,
   neck/head-exclusion, and coordinate-mapping tests. Approved access to the
   gated encoder was then used once in isolation to seal the `idle`, `listen`,
   and `explain` embeddings. The real Horizon8 provider loads those three
@@ -235,6 +260,11 @@ content remain private and are not part of this repository.
 
 ## Current verified v29 result
 
+This section records valid v29 speech, recovery, process, and bounded portrait
+evidence. It does not certify the legacy body writer as a correct IK retarget or
+prove natural full-body motion. V29 remains live while the source-only v30
+replacement is built and gated.
+
 - The sealed dual-character v29 package has package-seal digest
   `592cd46a35a1a8708acaeb4cc072c772d031af9f0d34c4b1b8a3773156b4786a`
   and native AArch64 executable SHA-256
@@ -328,7 +358,7 @@ content remain private and are not part of this repository.
   process-identity checks; capture overhead is not part of the production or CSV
   results above.
 
-## Real ARDY qualification
+## Live protocol-v1 ARDY qualification
 
 - Exact access to ARDY's original Meta Llama 3 text encoder was used once in an
   isolated CPU-only generator. It emitted only the reviewed `idle`, `listen`,
@@ -353,6 +383,10 @@ content remain private and are not part of this repository.
   original PID/listeners, Voxtral restored, no Unreal process remained, and the
   v28 package seal still matched.
 
+These figures qualify image `0.2.0`, protocol v1, and the three-file schema-1
+cache. They are regression targets for v2, not evidence for image `0.3.0` or the
+nine-motion schema-2 cache.
+
 ## Important boundary
 
 The packaged application is native Linux ARM64. The full Editor is not a native
@@ -368,41 +402,48 @@ deployable application.
 
 ## Remaining work
 
-- Tune and visually validate the post-evaluation Core27 retarget adapter with
-  polished motion. Its character-neutral routing, eight-frame interpolating
-  buffer, baseline calibration, head/face mask, bounded root motion, blend-in,
-  cached-pose fade-out, and automatic service recovery now run natively on
-  Spark without replacing StreamingADA.
-- Further visually tune the compiled and packaged deterministic procedural gesture
-  fallback. It supplies character-neutral `wave`, `invite`, `think`, `warn`,
-  and conversational arm/wrist poses when no reviewed montage is configured;
-  compatible private montages retain precedence. `nod` and `shake` remain
-  owned by the face driver's bounded head curves.
-- The approved `idle`, `listen`, and `explain` embeddings are complete and
-  token-free at runtime. Any vocabulary expansion must use the isolated
-  credentialed cache path, pass review, and be hash-sealed before production.
-- Visually validate and tune the source-level semantic head-control mappings for
-  `nod`, `shake`, `think`, and `warn`.
-- Add optional reviewed MetaHuman-compatible body montages for more polished
-  action performances. No licensed body montage is published or required by
-  the procedural fallback.
-- Tune gaze, breathing, idle motion, emotional range, lighting, LODs, and scene
-  presentation for a polished long-running character experience.
-- Assemble and validate a second reviewed female preset. Aoi already proves the
-  no-character-specific-C++ portability requirement but is male in UE 5.8.
-- Run a rendered malformed-envelope and stale/out-of-order injection against a
-  future sealed package if additional live fault evidence is needed. Unit and
-  protocol tests already cover those inputs, and v29 has passed the separate
-  exact-container live outage/fallback/recovery diagnostic without interrupting
-  externally managed Fay.
-- Recook the sealed full-body camera framing presets, then retain wide
-  front/side motion review plus an updated Aoi comparison capture. CSV and
-  capture overhead remain diagnostic-only and cannot replace a production
-  endurance qualification.
-- Keep the free modular Casual Girl Fab character as a deferred private
-  compatibility target. Reliability, MCP control, deterministic motion, and
-  real ARDY activation take precedence; no Fab content belongs in this public
-  repository.
+- Back up the passing integrated source before syncing it to Spark. Preserve the
+  sealed v29 package, live ARDY `0.2.0` image and schema-1 cache, and v28 rollback.
+- Update the activation, recovery, package, and repository gates that still
+  encode protocol 1, `/v1/poses`, image `0.2.0`, or an embedding count of three.
+  Keep explicit v1 rollback checks rather than silently reinterpreting v1 as v2.
+- Build ARDY `0.3.0` in an isolated container, generate all nine reviewed
+  schema-2 embeddings through the credentialed one-shot path, remove the token/
+  encoder from normal runtime, and pass mock plus real 30-batch canaries at
+  `/v2/poses`. The current three-file cache must not be overwritten.
+- In the UE 5.8 Editor, create and inspect the Core27 source skeleton/mesh, source
+  and target IK Rigs, IK Retargeter, Ada/Aoi target post-process AnimBP, retarget
+  profile, and exactly one binding per reviewed character. Runtime must fail to
+  baked idle when any class, property, hierarchy, or asset identity differs.
+- Compile and package a new native ARM64 v30 candidate without the unsupported
+  finalized-transform writer. Deep-verify and seal it before testing against the
+  v2 canary; never point live v29 at the incompatible service.
+- Capture full-body front and side views for `idle`, `listen`, `explain`, `wave`,
+  `jog_in_place`, `run_in_place`, `jumping_jacks`, `stretch`, and
+  `dance_relaxed`. Reject swapped sides, palm inversion, rigid shoulders,
+  elbow/knee hyperextension, root jumps, foot sliding, finger collapse, face/
+  head displacement, or interrupted StreamingADA speech.
+- Run speech/motion overlap, malformed and stale pose batches, provider kill/
+  restart, baked fallback, recovery, Ada/Aoi portability, five-turn rendered
+  production, and 30-minute mixed-motion soak gates. Record memory, frame rate,
+  pose-buffer health, facial p95, process ownership, and clean teardown.
+- Deploy the free-text movement director only when each catalog item's
+  `rendererPackaged` flag matches the sealed v30 contents. Deterministic aliases
+  remain primary; optional Qwen classification can return only an advisory ID.
+  A staged response must never claim that movement occurred.
+- Keep the lightweight planner/chat resource profile separate from larger 9B or
+  35B experiments until measured unified-memory coexistence with Unreal, ARDY,
+  Fay, speech, and the preview path passes.
+- Acquire/import Casual Girl only through the user's Fab library into an
+  isolated private content root. Audit UE 5.8 and LinuxArm64 compatibility,
+  skeleton/physics/plugins, every body region and LOD beneath clothing, ARKit
+  morphs, and component identities before promoting its profile.
+- Build Casual Girl's separate Apple-ARKit face adapter, Epic-skeleton ARDY
+  retarget, and sealed wardrobe mapping. Keep wardrobe disabled and
+  `allowFullyUnclothed=false` unless a manual complete-body audit explicitly
+  passes. No Fab content or private asset paths belong in Git.
+- After body correctness is established, tune gaze, breathing, emotion,
+  detailed hand poses, lighting, LODs, clothing/hair physics, and presentation.
 
 ## Publication boundary
 

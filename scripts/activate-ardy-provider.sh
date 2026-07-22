@@ -49,7 +49,7 @@ fi
 
 readonly PRODUCTION_CONTAINER='ue5-spark-ardy'
 readonly CANARY_CONTAINER='ue5-spark-ardy-canary'
-readonly TARGET_IMAGE='ue5-spark-ardy:0.2.0'
+readonly TARGET_IMAGE='ue5-spark-ardy:0.3.0'
 readonly ROLLBACK_IMAGE='ue5-spark-ardy:0.1.0'
 readonly PRODUCTION_PORT=8777
 readonly CANARY_PORT=18777

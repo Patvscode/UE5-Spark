@@ -1,0 +1,50 @@
+{
+  "schema": 1,
+  "status": "pending_asset_audit",
+  "id": "casual-girl",
+  "sourceListing": "https://www.fab.com/listings/1da38c7b-c197-4cc4-a02f-9f63f480e300",
+  "adapter": "UE5EpicArkit",
+  "reviewedAssetRoot": "/Game/FayFab/CasualGirl",
+  "allowFullyUnclothed": false,
+  "slots": {
+    "top": [
+      "none",
+      "tank",
+      "sweater",
+      "off_shoulder",
+      "crop_hoodie"
+    ],
+    "bottom": [
+      "shorts",
+      "pants"
+    ],
+    "feet": [
+      "barefoot",
+      "shoes_socks"
+    ],
+    "hair": [
+      "style_1",
+      "style_2"
+    ]
+  },
+  "presets": {
+    "underwear": {
+      "top": "none",
+      "bottom": "shorts",
+      "feet": "barefoot",
+      "hair": "style_1"
+    },
+    "casual": {
+      "top": "tank",
+      "bottom": "pants",
+      "feet": "shoes_socks",
+      "hair": "style_1"
+    },
+    "hoodie": {
+      "top": "crop_hoodie",
+      "bottom": "shorts",
+      "feet": "shoes_socks",
+      "hair": "style_2"
+    }
+  }
+}

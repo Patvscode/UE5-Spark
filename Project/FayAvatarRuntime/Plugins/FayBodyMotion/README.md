@@ -1,52 +1,97 @@
 # Fay Body Motion
 
-This source-only runtime plugin separates avatar intent, motion generation, and
+This source-only runtime plugin separates avatar intent, ARDY transport, and
 character retargeting from Fay transport and StreamingADA facial animation.
 
-The current verified boundary provides:
+## Production safety boundary
 
-- a fixed behavior allowlist (`idle`, `listen`, `wave`, `invite`, `think`,
-  `warn`, `nod`, `shake`, and `explain`);
-- deterministic baked-montage precedence for timing-critical gestures;
-- character-neutral procedural arm/wrist fallbacks for `wave`, `invite`,
-  `think`, `warn`, and `explain` when no reviewed montage is configured;
-- automatic fallback to ordinary idle when a service, batch, adapter, or
-  unsupported clip is unavailable;
-- a strict loopback ARDY client for versioned 20 FPS Core27 batches;
-- an eight-frame/400 ms buffer with render-rate quaternion interpolation;
-- rejection of malformed, oversized, stale, out-of-order, non-finite, or
-  non-Core27 data, including non-unit rotations, time-step drift, out-of-range
-  contacts, excess root translation, or generated neck/head control; and
-- forced exclusion of facial, neck, and head ownership from generated motion.
+Generated motion no longer mutates `GetComponentSpaceTransforms()` after body
+evaluation. There is no `const_cast`, first-frame local-rotation calibration,
+or direct Core27-to-MetaHuman bone-axis guess in the production path.
 
-The ARDY client, provider, and guarded UE 5.8 post-evaluation retarget adapter
-compile for Linux ARM64. The adapter preserves Ada's proven StreamingADA Body
-`ULiveLinkInstance`, calibrates generated rotations against the first buffered
-pose, and directly excludes neck, head, and sparse hand endpoints. Missing
-bones, malformed data, a buffer underrun, or daemon loss returns control to the
-ordinary evaluated pose. The adapter is enabled only after the reviewed
-MetaHuman body mapping validates at runtime.
+The supported architecture is:
 
-Procedural gestures are deliberately applied after ordinary body evaluation,
-use the same reviewed MetaHuman bone map as generated motion, and never touch
-the face, neck, or head chain. `nod` and `shake` are accepted by this provider
-while their bounded head curves remain exclusively owned by
-`FayMetaHumanRuntime`. The procedural angles are a dependable source fallback;
-they still require rendered tuning on each new skeleton family, while a
-compatible private montage transparently takes precedence.
+1. A hidden skeletal mesh with the exact ordered nv-tlabs/ardy Core27 hierarchy.
+2. `UFayCore27SourceAnimInstance`, which evaluates the absolute Core27 local
+   pose through Unreal's normal animation pipeline.
+3. A reviewed character post-process Animation Blueprint containing **Retarget
+   Pose From Mesh** and a reviewed `UIKRetargeter`.
+4. A reviewed blend mask that keeps the ordinary input pose on the neck/head
+   branch and all fingers. StreamingADA therefore retains exclusive facial and
+   head ownership.
 
-Licensed character assets, animation montages, checkpoints, prompt embeddings,
-and cooked packages are not part of this repository.
+`UFayArdyRetargetBindingComponent` opts a character Blueprint into a reviewed
+`UFayArdyRetargetProfile`. Runtime validation requires exactly one binding, the
+exact 27-bone hierarchy, exact asset classes, the expected post-process class,
+and these fixed post-process AnimBP variables:
 
-Production health accepts only the real Horizon8 provider, three sealed
-embeddings, excluded facial control, and a positive finite p95 below the 400 ms
-buffer. The runtime rechecks that health every five seconds; a disconnect,
-identity change, or later slowdown clears generated poses and preserves the
-baked fallback.
-For bounded isolation testing, `-FayAllowDiagnosticArdy=1` permits the fixed
-loopback mock/fault provider without weakening the production default.
+- `FayArdyContractVersion` (`int32`, value `1`)
+- `FayArdyExcludesNeckAndHead` (`bool`, true)
+- `FayArdyPreservesFingerPose` (`bool`, true)
+- `FayArdySourceMeshComponent` (`USkeletalMeshComponent`)
+- `FayArdyBlendWeight` (`float`)
+- `FayProceduralBehavior` (`FName`)
+- `FayProceduralProgress` (`float`)
+- `FayProceduralIntensity` (`float`)
 
-For bounded isolation testing, `-FayDisableArdy=1` disables the loopback ARDY
-client before its first health probe and disables that component's tick. Baked
-and procedural fallbacks remain available. The default is unchanged and keeps
-ARDY enabled.
+If any part is absent or changes at runtime, ARDY and post-process procedural
+motion fail closed. The visible Body's main animation class and evaluated pose
+are not replaced or rewritten; a reviewed montage or ordinary idle remains.
+
+## Required Unreal Editor asset gate
+
+The runtime C++ is deliberately not allowed to invent retarget assets. Before a
+character can enable generated motion, an Unreal Editor build must:
+
+1. Import an exact Core27 source skeletal mesh from the pinned ARDY revision in
+   the converted Unreal basis; its 27 names and parent indices must match the
+   runtime contract exactly.
+2. Create the source/target IK Rigs and `UIKRetargeter`, align the reviewed ARDY
+   T-pose with the character's target pose, then review shoulder, elbow, palm,
+   knee, and foot chains from front and side views.
+3. Create a character post-process Animation Blueprint that retains its normal
+   input pose and correctives, evaluates **Retarget Pose From Mesh**, and blends
+   with a reviewed profile that excludes neck/head and all fingers. It must
+   expose the fixed variables listed above.
+4. Create a `UFayArdyRetargetProfile` Data Asset and attach exactly one
+   `UFayArdyRetargetBindingComponent` to each reviewed character Blueprint.
+5. Compile/cook the assets and pass front/side wave, jog, jumping-jacks, face
+   ownership, disconnect, and fallback validation.
+
+Until all five steps pass, generated retargeting remains disabled by design.
+
+## ARDY protocol
+
+The client accepts only protocol v2 from `127.0.0.1:8777` and
+`POST /v2/poses`. It validates:
+
+- the exact official ARDY source revision and Core27 joint hierarchy;
+- ARDY's right-handed +X-left/+Y-up/+Z-forward coordinate identity;
+- local XYZW rotations and 27 global posed-joint positions;
+- the exact contact order, 20 FPS timing, eight-frame batches, and monotonic
+  sequence/time cursor;
+- finite, normalized, hemisphere-stabilized quaternions and bounded roots;
+- identity neck/head rotations; and
+- the exact health motion catalog.
+
+Conversion happens exactly once at the hidden source-pose boundary:
+
+- position: `(z, -x, y)` metres to Unreal centimetres;
+- quaternion: `(-z, x, -y, w)`, followed by normalization.
+
+Root translation defaults to `LockedInPlace`. The only opt-in alternative is a
+per-action origin with a maximum 20 cm displacement; actor/world locomotion is
+not exposed by this profile.
+
+## Provider routing
+
+Reviewed timing-critical montages win when configured. Otherwise an action is
+sent to ARDY only if the last strictly qualified health response advertises the
+behavior. This lets real ARDY own `wave`, `jog_in_place`, `run_in_place`,
+`jumping_jacks`, `stretch`, and `dance_relaxed` once their sealed embeddings are
+present. If ARDY is unavailable, the reviewed post-process procedural input is
+used where supported, then ordinary idle.
+
+Licensed character assets, Animation Blueprints, IK Rigs/Retargeters, blend
+masks, montages, checkpoints, embeddings, and cooked packages are intentionally
+not part of this public repository.

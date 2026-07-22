@@ -1,0 +1,20 @@
+{
+  "FileVersion": 3,
+  "Version": 1,
+  "VersionName": "0.1.0",
+  "FriendlyName": "Fay Wardrobe",
+  "Description": "Fail-closed logical wardrobe profiles for modular Fay avatars.",
+  "Category": "AI",
+  "CreatedBy": "UE5-Spark contributors",
+  "CanContainContent": false,
+  "EnabledByDefault": false,
+  "IsBetaVersion": true,
+  "Installed": false,
+  "Modules": [
+    {
+      "Name": "FayWardrobe",
+      "Type": "Runtime",
+      "LoadingPhase": "Default"
+    }
+  ]
+}

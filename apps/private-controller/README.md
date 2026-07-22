@@ -9,6 +9,13 @@ The current prototype provides:
 - live, same-origin text conversation through Fay;
 - device speech recognition and speech synthesis when the browser supports it;
 - allowlisted `wave`, `explain`, and `listen` actions;
+- a separate free-text movement director backed by the shared reviewed catalog;
+- deterministic movement duration, intensity, root mode, and renderer routing even
+  when the optional local LLM supplies the catalog classification;
+- honest `staged` results for jumping jacks, jogging/running in place, stretching,
+  and relaxed dance until those ARDY motions are packaged in Unreal;
+- disabled Casual Girl outfit/garment controls using sealed IDs while the licensed
+  asset profile and complete base body remain unreviewed;
 - a private same-origin live-frame endpoint when the packaged renderer and
   guarded JPEG producer are both active;
 - verified private Ada and Aoi movement replays while Unreal is offline;
@@ -18,6 +25,17 @@ The current prototype provides:
 It never connects to Fay's avatar WebSocket as another `User`. All backend
 origins, usernames, actions, duration, intensity, media paths, and request sizes
 are fixed or bounded by `server/controller_server.py`.
+
+The movement classifier defaults to the existing `--llm-model`. A separate
+reviewed model can be A/B tested with `--motion-planner-model` without changing
+chat. Its output is advisory: the server accepts only one catalog ID from
+`config/motion-catalog.json` and never accepts model-provided timing, joints,
+paths, URLs, or root behavior.
+
+Wardrobe state is loaded fail-closed from
+`config/wardrobe-profiles/CasualGirl.pending.json`. The API exposes only the
+reviewed preset/slot IDs and audit state; the Fab URL and Unreal asset root are
+not returned to the browser.
 
 ## Local verification
 

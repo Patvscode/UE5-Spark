@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import re
 import signal
@@ -15,6 +16,15 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SCRIPT_PATH = REPO_ROOT / "scripts" / "run-spark-ardy-recovery-gate.sh"
 ACTIVATOR_PATH = REPO_ROOT / "scripts" / "activate-ardy-provider.sh"
+SERVICE_ROOT = REPO_ROOT / "services" / "ardy" / "service"
+sys.path.insert(0, str(SERVICE_ROOT))
+
+from motion_catalog import GENERATED_BEHAVIORS  # noqa: E402
+from pose_protocol import (  # noqa: E402
+    COORDINATE_SYSTEM,
+    PROTOCOL_VERSION,
+    source_descriptor,
+)
 
 
 def function_source(source: str, name: str, next_name: str) -> str:
@@ -144,13 +154,70 @@ class ArdyRecoveryGateStaticTests(unittest.TestCase):
             're.search(r"(?:^|[^A-Za-z0-9])hf_[A-Za-z0-9]{10,}"',
             'loopback_listener_owned_by_pid "$ARDY_PORT" "$ardy_pid"',
             'value.get("checkpoint") != "ARDY-Core-RP-20FPS-Horizon8"',
-            'value["embeddingCount"] != 3',
+            'value["embeddingCount"] != 9',
+            'value.get("coordinateSystem") != "ardy-rh-x-left-y-up-z-forward-meters"',
+            'value.get("source") != expected_source',
+            'value.get("motionCatalog") != expected_catalog',
             '${ardy_recovered[1]} != "${ardy_before[1]}"',
             '${ardy_recovered[4]} != "${ardy_before[4]}"',
             '${ardy_recovered[14]} != "${ardy_before[14]}"',
             'activation_target_records_match "${ardy_recovered[1]}"',
         ):
             self.assertIn(marker, self.source)
+
+    def test_real_health_parser_requires_protocol_v2_and_full_catalog(self) -> None:
+        prefix = 'printf \'%s\' "$body" | python3 -c \'\n'
+        start = self.source.index(prefix) + len(prefix)
+        end = self.source.index("\n'\n", start)
+        parser = self.source[start:end]
+        valid = {
+            "status": "ready",
+            "provider": "ardy",
+            "protocolVersion": PROTOCOL_VERSION,
+            "fps": 20,
+            "bufferFrames": 8,
+            "facialControl": "excluded",
+            "coordinateSystem": COORDINATE_SYSTEM,
+            "source": source_descriptor(),
+            "motionCatalog": list(GENERATED_BEHAVIORS),
+            "checkpoint": "ARDY-Core-RP-20FPS-Horizon8",
+            "embeddingCount": len(GENERATED_BEHAVIORS),
+            "p95GenerationMs": 212.343,
+        }
+
+        def parse(payload: object) -> subprocess.CompletedProcess[str]:
+            return subprocess.run(
+                (sys.executable, "-c", parser),
+                input=json.dumps(payload),
+                check=False,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+
+        accepted = parse(valid)
+        self.assertEqual(accepted.returncode, 0, accepted.stderr)
+        self.assertEqual(
+            accepted.stdout.splitlines(),
+            ["ardy", "ARDY-Core-RP-20FPS-Horizon8", "9", "212.343"],
+        )
+        invalid_cases = []
+        for key, value in (
+            ("protocolVersion", 1),
+            ("embeddingCount", len(GENERATED_BEHAVIORS) - 1),
+            ("coordinateSystem", "ardy-y-up-z-forward-meters"),
+            ("motionCatalog", list(reversed(GENERATED_BEHAVIORS))),
+        ):
+            changed = dict(valid)
+            changed[key] = value
+            invalid_cases.append(changed)
+        changed_source = dict(valid)
+        changed_source["source"] = dict(source_descriptor())
+        changed_source["source"]["positionSpace"] = "local"
+        invalid_cases.append(changed_source)
+        for payload in invalid_cases:
+            with self.subTest(payload=payload):
+                self.assertNotEqual(parse(payload).returncode, 0)
 
     def test_original_real_reconciliation_requires_stable_exact_identity(self) -> None:
         stable_capture = function_source(
@@ -519,7 +586,7 @@ class ArdyRecoveryGateDecisionTests(unittest.TestCase):
             "456",
             "ardy",
             "checkpoint",
-            "3",
+            "9",
             "1.0",
         )
         snapshot_words = " ".join(snapshot)
@@ -531,7 +598,7 @@ class ArdyRecoveryGateDecisionTests(unittest.TestCase):
         return textwrap.dedent(
             f"""\
             set -uo pipefail
-            ARDY_IMAGE=ue5-spark-ardy:0.2.0
+            ARDY_IMAGE=ue5-spark-ardy:0.3.0
             ARDY_ROLLBACK_IMAGE=ue5-spark-ardy:0.1.0
             ardy_expected_image_id=sha256:{'1' * 64}
             ardy_rollback_image_id=sha256:{'2' * 64}
@@ -722,7 +789,7 @@ class ArdyRecoveryGateDecisionTests(unittest.TestCase):
         return textwrap.dedent(
             f"""\
             set -euo pipefail
-            ARDY_IMAGE=ue5-spark-ardy:0.2.0
+            ARDY_IMAGE=ue5-spark-ardy:0.3.0
             ardy_expected_image_id=sha256:{'1' * 64}
             old_container_id={old_id}
             current_identity={identity}
@@ -1255,7 +1322,7 @@ class ArdyRecoveryGateDecisionTests(unittest.TestCase):
             source = textwrap.dedent(
                 f"""\
                 set -uo pipefail
-                ARDY_IMAGE=ue5-spark-ardy:0.2.0
+                ARDY_IMAGE=ue5-spark-ardy:0.3.0
                 ardy_expected_image_id=sha256:{'1' * 64}
                 old_container_id={old_id}
                 gate_root={root}

@@ -14,6 +14,7 @@
 #include "FayBodyMotionComponent.h"
 #include "FayGameUserSettings.h"
 #include "FayMetaHumanSpeechDriverComponent.h"
+#include "FayWardrobeComponent.h"
 #include "GameFramework/PlayerController.h"
 #include "HAL/PlatformProcess.h"
 #include "HAL/IConsoleManager.h"
@@ -124,6 +125,7 @@ AFayAvatarBootstrapGameMode::AFayAvatarBootstrapGameMode()
     ArdyPoseClient = CreateDefaultSubobject<UFayArdyPoseClientComponent>(TEXT("FayArdyPoseClient"));
     BodyMotion = CreateDefaultSubobject<UFayBodyMotionComponent>(TEXT("FayBodyMotion"));
     SpeechDriver = CreateDefaultSubobject<UFayMetaHumanSpeechDriverComponent>(TEXT("FayMetaHumanSpeechDriver"));
+    Wardrobe = CreateDefaultSubobject<UFayWardrobeComponent>(TEXT("FayWardrobe"));
     Dormancy->AddTickPrerequisiteComponent(SpeechDriver);
     Dormancy->AddTickPrerequisiteComponent(BodyMotion);
 

@@ -11,6 +11,7 @@ class UFayAvatarDormancyComponent;
 class UFayArdyPoseClientComponent;
 class UFayBodyMotionComponent;
 class UFayMetaHumanSpeechDriverComponent;
+class UFayWardrobeComponent;
 class UPointLightComponent;
 class USkeletalMeshComponent;
 enum class EFayMetaHumanLiveLinkFailure : uint8;
@@ -66,6 +67,10 @@ private:
 
     UPROPERTY(VisibleAnywhere, Category = "MetaHuman")
     TObjectPtr<UFayMetaHumanSpeechDriverComponent> SpeechDriver;
+
+    /** Content-free sealed wardrobe adapter; remains unconfigured for Ada/Aoi. */
+    UPROPERTY(VisibleAnywhere, Category = "Avatar|Wardrobe")
+    TObjectPtr<UFayWardrobeComponent> Wardrobe;
 
     UPROPERTY(VisibleAnywhere, Category = "MetaHuman|Lighting")
     TObjectPtr<UPointLightComponent> KeyLight;

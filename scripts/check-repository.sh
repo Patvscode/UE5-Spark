@@ -48,6 +48,7 @@ OWNED_PROJECT_PLUGINS = {
     "FayBodyMotion",
     "FayMetaHumanEditorTools",
     "FayMetaHumanRuntime",
+    "FayWardrobe",
 }
 
 FORBIDDEN_DIRECTORY_NAMES = {
@@ -377,18 +378,25 @@ python_sources = (
     Path("tools/tests/test_run_spark_avatar_gate.py"),
     Path("tools/tests/test_run_spark_ardy_recovery_gate.py"),
     Path("tools/tests/test_validate_ardy_service.py"),
+    Path("tools/tests/test_wardrobe_profiles.py"),
+    Path("tools/tests/test_wardrobe_unreal_contract.py"),
+    Path("scripts/audit-fab-casual-girl.py"),
     Path("scripts/character-profiles.py"),
     Path("scripts/cook-state.py"),
     Path("scripts/inspect-metahuman-runtime-contract.py"),
     Path("scripts/metahuman-preflight.py"),
+    Path("scripts/wardrobe-profiles.py"),
     Path("services/ardy/service/ardy_pose_service.py"),
     Path("services/ardy/service/cache_embeddings.py"),
     Path("services/ardy/service/download_checkpoint.py"),
     Path("services/ardy/service/embedding_contract.py"),
+    Path("services/ardy/service/motion_catalog.py"),
     Path("services/ardy/service/pose_protocol.py"),
     Path("services/ardy/service/providers.py"),
-    Path("services/ardy/tests/test_pose_protocol.py"),
     Path("services/ardy/tests/test_cache_embeddings.py"),
+    Path("services/ardy/tests/test_http_service.py"),
+    Path("services/ardy/tests/test_motion_catalog.py"),
+    Path("services/ardy/tests/test_pose_protocol.py"),
     Path(
         "Project/FayAvatarRuntime/Plugins/FayMetaHumanEditorTools/"
         "Scripts/build_ada.py"
@@ -415,9 +423,85 @@ json_sources = (
         "Project/FayAvatarRuntime/Plugins/FayMetaHumanRuntime/"
         "FayMetaHumanRuntime.uplugin"
     ),
+    Path(
+        "Project/FayAvatarRuntime/Plugins/FayWardrobe/"
+        "FayWardrobe.uplugin"
+    ),
+    Path("config/motion-catalog.json"),
+    Path("config/wardrobe-profiles/CasualGirl.pending.json"),
     Path("scripts/fex-vulkan-thunks.json"),
 )
 parsed_json = {source: json.loads(source.read_text()) for source in json_sources}
+
+motion_catalog_path = Path("config/motion-catalog.json")
+motion_catalog = parsed_json[motion_catalog_path]
+expected_motion_ids = (
+    "idle",
+    "listen",
+    "explain",
+    "wave",
+    "jog_in_place",
+    "run_in_place",
+    "jumping_jacks",
+    "stretch",
+    "dance_relaxed",
+)
+if (
+    set(motion_catalog) != {"schemaVersion", "catalogId", "items"}
+    or type(motion_catalog.get("schemaVersion")) is not int
+    or motion_catalog.get("schemaVersion") != 1
+    or motion_catalog.get("catalogId") != "ue5-spark-reviewed-motion-v1"
+    or not isinstance(motion_catalog.get("items"), dict)
+    or tuple(motion_catalog["items"]) != expected_motion_ids
+):
+    reject("motion-catalog.json must keep the reviewed schema-1 nine-item catalog")
+else:
+    for behavior, item in motion_catalog["items"].items():
+        if (
+            not isinstance(item, dict)
+            or item.get("routeBehavior") != behavior
+            or item.get("rootMode") != "locked"
+            or type(item.get("rendererPackaged")) is not bool
+        ):
+            reject(f"motion-catalog.json item {behavior} is not fail-closed")
+
+wardrobe_profile_path = Path("config/wardrobe-profiles/CasualGirl.pending.json")
+wardrobe_profile = parsed_json[wardrobe_profile_path]
+expected_wardrobe_fields = {
+    "schema",
+    "status",
+    "id",
+    "sourceListing",
+    "adapter",
+    "reviewedAssetRoot",
+    "allowFullyUnclothed",
+    "slots",
+    "presets",
+}
+expected_wardrobe_slots = {
+    "top": ["none", "tank", "sweater", "off_shoulder", "crop_hoodie"],
+    "bottom": ["shorts", "pants"],
+    "feet": ["barefoot", "shoes_socks"],
+    "hair": ["style_1", "style_2"],
+}
+if (
+    not isinstance(wardrobe_profile, dict)
+    or set(wardrobe_profile) != expected_wardrobe_fields
+    or type(wardrobe_profile.get("schema")) is not int
+    or wardrobe_profile.get("schema") != 1
+    or wardrobe_profile.get("status") != "pending_asset_audit"
+    or wardrobe_profile.get("id") != "casual-girl"
+    or wardrobe_profile.get("sourceListing")
+    != "https://www.fab.com/listings/1da38c7b-c197-4cc4-a02f-9f63f480e300"
+    or wardrobe_profile.get("adapter") != "UE5EpicArkit"
+    or wardrobe_profile.get("reviewedAssetRoot") != "/Game/FayFab/CasualGirl"
+    or wardrobe_profile.get("allowFullyUnclothed") is not False
+    or wardrobe_profile.get("slots") != expected_wardrobe_slots
+    or not isinstance(wardrobe_profile.get("presets"), dict)
+    or set(wardrobe_profile.get("presets", {}))
+    != {"underwear", "casual", "hoodie"}
+):
+    reject("CasualGirl.pending.json must remain the reviewed non-nude pending profile")
 
 project = parsed_json[Path("Project/FayAvatarRuntime/FayAvatarRuntime.uproject")]
 if project.get("DisableEnginePluginsByDefault") is not True:
@@ -431,14 +515,15 @@ expected_project_plugins = {
     "FayBodyMotion",
     "FayMetaHumanEditorTools",
     "FayMetaHumanRuntime",
+    "FayWardrobe",
     "InterchangeAssets",
     "MetaHumanCharacter",
 }
 if len(project.get("Plugins", [])) != len(plugins) or set(plugins) != expected_project_plugins:
     reject(
         "FayAvatarRuntime.uproject plugin list must contain only the reviewed bridge, "
-        "body-motion/runtime plugins, Editor helper, AnimationData, ControlRigSpline, "
-        "InterchangeAssets, and MetaHumanCharacter entries"
+        "body-motion/runtime/wardrobe plugins, Editor helper, AnimationData, "
+        "ControlRigSpline, InterchangeAssets, and MetaHumanCharacter entries"
     )
 
 for plugin_name in (
@@ -446,6 +531,7 @@ for plugin_name in (
     "FayAvatarBridge",
     "FayBodyMotion",
     "FayMetaHumanRuntime",
+    "FayWardrobe",
     "InterchangeAssets",
     "MetaHumanCharacter",
 ):
@@ -513,6 +599,18 @@ if set(body_motion_dependencies) != {"FayAvatarBridge"} or not body_motion_depen
 ].get("Enabled"):
     reject("FayBodyMotion must keep only its enabled FayAvatarBridge dependency")
 
+wardrobe_path = Path(
+    "Project/FayAvatarRuntime/Plugins/FayWardrobe/FayWardrobe.uplugin"
+)
+validate_contentless_plugin(
+    parsed_json[wardrobe_path],
+    wardrobe_path,
+    "FayWardrobe",
+    "Runtime",
+)
+if parsed_json[wardrobe_path].get("Plugins"):
+    reject("FayWardrobe must remain a contentless adapter without plugin dependencies")
+
 helper_path = Path(
     "Project/FayAvatarRuntime/Plugins/FayMetaHumanEditorTools/"
     "FayMetaHumanEditorTools.uplugin"
@@ -575,13 +673,25 @@ body_motion_build = Path(
     "Project/FayAvatarRuntime/Plugins/FayBodyMotion/Source/"
     "FayBodyMotion/FayBodyMotion.Build.cs"
 ).read_text()
+wardrobe_build = Path(
+    "Project/FayAvatarRuntime/Plugins/FayWardrobe/Source/"
+    "FayWardrobe/FayWardrobe.Build.cs"
+).read_text()
 if '"FayMetaHumanRuntime"' not in main_build:
     reject("the Game module must depend on FayMetaHumanRuntime")
 if '"FayBodyMotion"' not in main_build:
     reject("the Game module must depend on FayBodyMotion")
+if '"FayWardrobe"' not in main_build:
+    reject("the Game module must depend on FayWardrobe")
 for module_name in ("Core", "CoreUObject", "Engine", "FayAvatarBridge", "HTTP", "Json"):
     if f'"{module_name}"' not in body_motion_build:
         reject(f"FayBodyMotion.Build.cs is missing {module_name}")
+for module_name in ("Core", "CoreUObject", "Engine"):
+    if f'"{module_name}"' not in wardrobe_build:
+        reject(f"FayWardrobe.Build.cs is missing {module_name}")
+for forbidden_module in ("FayAvatarBridge", "HTTP", "Json", "JsonUtilities"):
+    if f'"{forbidden_module}"' in wardrobe_build:
+        reject(f"FayWardrobe.Build.cs must not depend on {forbidden_module}")
 for module_name in (
     "AudioPlatformConfiguration",
     "FayAvatarBridge",
@@ -747,9 +857,14 @@ for marker in (
     "other_owner=$(grep -oE 'pid=[0-9]+,'",
     "capture_ardy_snapshot ardy_after",
     "ardy_immutable_snapshot_is_equal ardy_before ardy_after",
+    "readonly ARDY_IMAGE='ue5-spark-ardy:0.3.0'",
     'value.get("provider") != "ardy"',
+    'value["protocolVersion"] != 2',
+    'value.get("coordinateSystem") != "ardy-rh-x-left-y-up-z-forward-meters"',
+    'value.get("source") != expected_source',
+    'value.get("motionCatalog") != expected_catalog',
     'value.get("checkpoint") != "ARDY-Core-RP-20FPS-Horizon8"',
-    'value["embeddingCount"] != 3',
+    'value["embeddingCount"] != 9',
     "not 0.0 < p95 < 400.0",
     "docker image inspect --format '{{.Id}}' \"$ARDY_IMAGE\"",
     "ardy_expected_image_id=$(resolve_fixed_ardy_image_id)",
@@ -865,6 +980,12 @@ for marker in (
     '"activation_started=$activation_started"',
     '"recovery_blocked=$recovery_blocked"',
     "new-real-healthy",
+    "readonly ARDY_IMAGE='ue5-spark-ardy:0.3.0'",
+    'value["protocolVersion"] != 2',
+    'value.get("coordinateSystem") != "ardy-rh-x-left-y-up-z-forward-meters"',
+    'value.get("source") != expected_source',
+    'value.get("motionCatalog") != expected_catalog',
+    'value["embeddingCount"] != 9',
 ):
     if marker not in ardy_recovery_gate:
         reject(f"the guarded ARDY recovery diagnostic is missing its safety contract: {marker}")
@@ -883,6 +1004,8 @@ if "timeout" in recovery_activation_body or "kill-after" in recovery_activation_
     reject("the recovery supervisor must not truncate the activator rollback lifecycle")
 for marker in (
     "inherited_lock_fd=${ARDY_ACTIVATION_LOCK_FD:-}",
+    "readonly TARGET_IMAGE='ue5-spark-ardy:0.3.0'",
+    "readonly ROLLBACK_IMAGE='ue5-spark-ardy:0.1.0'",
     '[[ -e /proc/self/fdinfo/$inherited_lock_fd ]]',
     'readlink -f "/proc/self/fd/$inherited_lock_fd"',
     '[[ $inherited_lock_path == "$lock_file" ]]',
@@ -1212,7 +1335,9 @@ if [[ -n $python_bin ]] && ! "$python_bin" -m unittest \
     tools.tests.test_package_manifest_compatibility \
     tools.tests.test_run_spark_avatar_gate \
     tools.tests.test_run_spark_ardy_recovery_gate \
-    tools.tests.test_validate_ardy_service; then
+    tools.tests.test_validate_ardy_service \
+    tools.tests.test_wardrobe_profiles \
+    tools.tests.test_wardrobe_unreal_contract; then
     fail 'guarded Spark ARDY and avatar gate tests failed'
 fi
 

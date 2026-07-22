@@ -13,6 +13,7 @@ public:
     virtual ~IFayBodyMotionProvider() = default;
     virtual EFayBodyMotionProvider GetKind() const = 0;
     virtual bool IsReady() const = 0;
+    virtual bool CanPerform(const FFayBodyMotionRequest& Request) const = 0;
     virtual bool Perform(const FFayBodyMotionRequest& Request) = 0;
     virtual void Stop(float BlendOutSeconds) = 0;
     virtual void Tick(float DeltaSeconds) = 0;

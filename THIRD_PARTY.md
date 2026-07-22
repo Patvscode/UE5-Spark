@@ -26,6 +26,13 @@ such a package to a public GitHub release.
 - [MetaHuman licensing](https://www.metahuman.com/license?lang=en-US)
 - [Getting started with MetaHuman Creator](https://dev.epicgames.com/documentation/en-us/metahuman/getting-started-with-metahuman-creator)
 
+The optional second female test character is the free Fab listing
+[Free Casual Girl Sample (Modular)](https://www.fab.com/listings/1da38c7b-c197-4cc4-a02f-9f63f480e300).
+It uses the Fab Standard License and carries Fab's `NoAI` tag. The asset is
+acquired into the user's private Epic library, is never committed here, and is
+not used as generative-model training or conditioning data. See
+[the isolated integration gate](docs/fab-casual-girl.md).
+
 ## Fay
 
 [Fay](https://github.com/xszyou/Fay) is a separate GPL-3.0 application. This

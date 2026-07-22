@@ -10,6 +10,7 @@ RUN git clone --filter=blob:none https://github.com/nv-tlabs/ardy.git /opt/ardy 
     && python -m pip install --no-cache-dir /opt/ardy
 
 COPY service /opt/ue5-spark-ardy
+COPY --from=motion_config motion-catalog.json /opt/ue5-spark-ardy/motion-catalog.json
 WORKDIR /opt/ue5-spark-ardy
 ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 HF_HOME=/tmp/huggingface \
     HOME=/tmp/home TRITON_CACHE_DIR=/tmp/triton

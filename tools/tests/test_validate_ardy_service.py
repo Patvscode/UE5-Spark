@@ -22,19 +22,22 @@ class ArdyServiceValidatorTests(unittest.TestCase):
         health = {
             "status": "ready",
             "provider": "ardy",
-            "protocolVersion": 1,
+            "protocolVersion": VALIDATOR.PROTOCOL_VERSION,
             "fps": 20,
             "bufferFrames": 8,
             "facialControl": "excluded",
+            "coordinateSystem": VALIDATOR.COORDINATE_SYSTEM,
+            "source": VALIDATOR.source_descriptor(),
+            "motionCatalog": list(VALIDATOR.GENERATED_BEHAVIORS),
             "checkpoint": "ARDY-Core-RP-20FPS-Horizon8",
-            "embeddingCount": 3,
+            "embeddingCount": len(VALIDATOR.GENERATED_BEHAVIORS),
             "p95GenerationMs": 212.343,
         }
         self.assertIs(VALIDATOR.validate_real_health(health, require_latency=True), health)
         for key, invalid in (
             ("provider", "mock"),
             ("checkpoint", "ARDY-Core-RP-20FPS-Horizon40"),
-            ("embeddingCount", 2),
+            ("embeddingCount", len(VALIDATOR.GENERATED_BEHAVIORS) - 1),
             ("p95GenerationMs", 400.0),
             ("p95GenerationMs", float("nan")),
         ):
@@ -47,7 +50,7 @@ class ArdyServiceValidatorTests(unittest.TestCase):
 
     def test_batch_requires_exact_frames_times_float_contacts_and_face_exclusion(self) -> None:
         batch = MockPoseProvider().generate(PoseRequest("idle", 0.5, 1.0, 0))
-        validated, sequence, final_time = VALIDATOR.validate_real_batch(
+        validated, sequence, final_time, quaternions = VALIDATOR.validate_real_batch(
             batch,
             after_sequence=0,
             previous_time=None,
@@ -55,6 +58,7 @@ class ArdyServiceValidatorTests(unittest.TestCase):
         self.assertIs(validated, batch)
         self.assertGreater(sequence, 0)
         self.assertTrue(math.isfinite(final_time))
+        self.assertEqual(len(quaternions[1]), 27)
 
         batch["frames"][0]["contacts"][0] = True
         with self.assertRaises(VALIDATOR.ValidationError):
@@ -73,6 +77,28 @@ class ArdyServiceValidatorTests(unittest.TestCase):
                 batch,
                 after_sequence=0,
                 previous_time=float(batch["frames"][0]["time"]),
+            )
+
+    def test_batch_rejects_cross_batch_hemisphere_flip(self) -> None:
+        provider = MockPoseProvider()
+        first = provider.generate(PoseRequest("idle", 0.5, 1.0, 0))
+        _, sequence, final_time, previous_quaternions = VALIDATOR.validate_real_batch(
+            first,
+            after_sequence=0,
+            previous_time=None,
+        )
+        second = provider.generate(PoseRequest("listen", 0.5, 1.0, sequence))
+        for frame in second["frames"]:
+            frame["root"][3:] = [-value for value in frame["root"][3:]]
+            frame["joints"] = [
+                [-value for value in rotation] for rotation in frame["joints"]
+            ]
+        with self.assertRaises(VALIDATOR.ValidationError):
+            VALIDATOR.validate_real_batch(
+                second,
+                after_sequence=sequence,
+                previous_time=final_time,
+                previous_quaternions=previous_quaternions,
             )
 
     def test_p95_uses_nearest_rank(self) -> None:

@@ -4,9 +4,12 @@ from __future__ import annotations
 
 import hashlib
 
+from motion_catalog import GENERATED_BEHAVIORS, REVIEWED_PROMPTS
+from pose_protocol import SOURCE_REVISION
 
-EMBEDDING_SCHEMA_VERSION = 1
-ARDY_SOURCE_COMMIT = "693f74d13b3d04a0a22ce127ee79c929dd89756b"
+
+EMBEDDING_SCHEMA_VERSION = 2
+ARDY_SOURCE_COMMIT = SOURCE_REVISION
 BASE_ENCODER_REPOSITORY = "McGill-NLP/LLM2Vec-Meta-Llama-3-8B-Instruct-mntp"
 SUPERVISED_ENCODER_REPOSITORY = (
     "McGill-NLP/LLM2Vec-Meta-Llama-3-8B-Instruct-mntp-supervised"
@@ -19,23 +22,11 @@ ENCODER_REVISIONS = {
 }
 EMBEDDING_WIDTH = 4096
 
-# These are deliberately physical, neutral descriptions. Arbitrary prompts never
-# cross the public Fay/Unreal boundary or enter the normal ARDY service.
-APPROVED_EMBEDDING_PROMPTS = {
-    "idle": (
-        "A person stands naturally with subtle breathing and small relaxed "
-        "weight shifts."
-    ),
-    "listen": (
-        "A person stands attentively and listens with calm, subtle "
-        "conversational body movement."
-    ),
-    "explain": (
-        "A person explains something naturally using relaxed conversational "
-        "hand and arm gestures."
-    ),
-}
-APPROVED_EMBEDDING_BEHAVIORS = tuple(sorted(APPROVED_EMBEDDING_PROMPTS))
+# These are deliberately physical, neutral descriptions from the shared,
+# reviewed catalog. Arbitrary prompts never cross the public Fay/Unreal
+# boundary or enter the normal ARDY service.
+APPROVED_EMBEDDING_PROMPTS = dict(REVIEWED_PROMPTS)
+APPROVED_EMBEDDING_BEHAVIORS = GENERATED_BEHAVIORS
 
 
 def prompt_sha256(behavior: str) -> str:

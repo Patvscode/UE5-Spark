@@ -1,14 +1,14 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   ArrowRight, ArrowsInSimple, Camera, ChatCircleDots, Check, CircleNotch,
-  Ear, HandWaving, Info, Microphone, Pause, Person, Play, SlidersHorizontal,
-  Sparkle, UserCircle, X,
+  CoatHanger, Ear, HandWaving, Info, Microphone, Pause, Person, PersonSimpleRun,
+  Play, SlidersHorizontal, Sparkle, UserCircle, X,
 } from "@phosphor-icons/react";
 
 const MOTIONS = [
-  { id: "wave", label: "Wave", Icon: HandWaving, duration: 2.4 },
-  { id: "explain", label: "Explain", Icon: Person, duration: 5 },
-  { id: "listen", label: "Listen", Icon: Ear, duration: 3 },
+  { id: "wave", label: "Wave", Icon: HandWaving },
+  { id: "explain", label: "Explain", Icon: Person },
+  { id: "listen", label: "Listen", Icon: Ear },
 ];
 
 const CHARACTERS = [
@@ -30,6 +30,29 @@ const MEDIA = {
   },
 };
 
+const MOTION_COMMAND_EXAMPLES = [
+  "Jumping jacks", "Jog in place", "Run in place", "Stretch", "Wave",
+];
+
+const PENDING_WARDROBE = {
+  profileId: "casual-girl",
+  displayName: "Casual Girl",
+  installed: false,
+  state: "asset-profile-pending",
+  presets: [
+    { id: "underwear", label: "Underwear", slots: { top: "none", bottom: "shorts", feet: "barefoot", hair: "style_1" } },
+    { id: "casual", label: "Casual", slots: { top: "tank", bottom: "pants", feet: "shoes_socks", hair: "style_1" } },
+    { id: "hoodie", label: "Hoodie", slots: { top: "crop_hoodie", bottom: "shorts", feet: "shoes_socks", hair: "style_2" } },
+  ],
+  slots: {
+    top: ["none", "tank", "sweater", "off_shoulder", "crop_hoodie"].map((id) => ({ id, label: id.replaceAll("_", " ") })),
+    bottom: ["shorts", "pants"].map((id) => ({ id, label: id })),
+    feet: ["barefoot", "shoes_socks"].map((id) => ({ id, label: id.replaceAll("_", " ") })),
+    hair: ["style_1", "style_2"].map((id) => ({ id, label: id.replaceAll("_", " ") })),
+  },
+  fullyUnclothed: { enabled: false, reason: "Complete base-body geometry has not been audited." },
+};
+
 export function App() {
   const [character, setCharacter] = useState("ada");
   const [motion, setMotion] = useState("explain");
@@ -44,6 +67,15 @@ export function App() {
   const [playing, setPlaying] = useState(true);
   const [deviceVoice, setDeviceVoice] = useState(true);
   const [activeSheet, setActiveSheet] = useState(null);
+  const [motionDraft, setMotionDraft] = useState("");
+  const [directingMotion, setDirectingMotion] = useState(false);
+  const [motionPlan, setMotionPlan] = useState(null);
+  const [wardrobe, setWardrobe] = useState(PENDING_WARDROBE);
+  const [wardrobeSelection, setWardrobeSelection] = useState({
+    preset: "casual",
+    slots: { top: "tank", bottom: "pants", feet: "shoes_socks", hair: "style_1" },
+  });
+  const [wardrobeNotice, setWardrobeNotice] = useState("Licensed asset profile not installed");
   const [notice, setNotice] = useState("Connecting to the live renderer…");
   const [health, setHealth] = useState({ fay: false, ardy: false, renderer: false, stream: false, checked: false });
   const [statusFresh, setStatusFresh] = useState(false);
@@ -51,6 +83,7 @@ export function App() {
   const [streamState, setStreamState] = useState("replay");
   const videoRef = useRef(null);
   const inputRef = useRef(null);
+  const motionInputRef = useRef(null);
   const recognitionRef = useRef(null);
   const statusStaleTimerRef = useRef(null);
   const media = MEDIA[character];
@@ -60,6 +93,12 @@ export function App() {
   const liveStage = streamRequested && streamState === "live" && Boolean(liveFrameUrl);
   const liveLabel = !health.checked ? "Checking" : liveStage ? "Stage live" : streamRequested && streamState === "error" ? "Replay fallback" : streamRequested ? "Stream connecting" : health.renderer ? "Renderer linked" : systemsReady ? "Systems ready" : "Limited preview";
   const stageModeLabel = liveStage ? "Live Unreal preview" : health.renderer && health.stream ? "Live preview connecting" : health.renderer ? "Renderer live · preview unavailable" : "Verified replay";
+  const characterName = character === "ada" ? "Ada" : "Aoi";
+  const sheetMeta = activeSheet === "conversation"
+    ? { eyebrow: "Live Fay conversation", title: `Talk with ${characterName}`, label: "Conversation" }
+    : activeSheet === "motion"
+      ? { eyebrow: "Sealed ARDY catalog", title: "Describe a move", label: "Movement director" }
+      : { eyebrow: "Stage setup", title: "Camera & character", label: "Camera, character, and wardrobe settings" };
 
   const refreshHealth = useCallback(async () => {
     try {
@@ -85,6 +124,20 @@ export function App() {
       window.clearTimeout(statusStaleTimerRef.current);
     };
   }, [refreshHealth]);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetch("/api/wardrobe", { cache: "no-store" })
+      .then((response) => {
+        if (!response.ok) throw new Error();
+        return response.json();
+      })
+      .then((payload) => {
+        if (!cancelled && payload?.profileId === "casual-girl") setWardrobe(payload);
+      })
+      .catch(() => { /* The sealed pending manifest remains visible in static preview. */ });
+    return () => { cancelled = true; };
+  }, []);
 
   useEffect(() => {
     const video = videoRef.current;
@@ -233,6 +286,8 @@ export function App() {
     window.addEventListener("keydown", closeOnEscape);
     if (activeSheet === "conversation") {
       window.setTimeout(() => inputRef.current?.focus(), 120);
+    } else if (activeSheet === "motion") {
+      window.setTimeout(() => motionInputRef.current?.focus(), 120);
     }
     return () => window.removeEventListener("keydown", closeOnEscape);
   }, [activeSheet]);
@@ -245,9 +300,9 @@ export function App() {
       ? `Sending ${selected?.label || "motion"} to the live renderer…`
       : `${selected?.label || "Motion"} · verified ${character === "ada" ? "Ada" : "Aoi"} replay`);
     try {
-      const response = await fetch("/api/action", {
+      const response = await fetch("/api/motion-command", {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ behavior: nextMotion, intensity: 0.65, duration: selected?.duration || 2 }),
+        body: JSON.stringify({ command: nextMotion }),
       });
       const payload = await response.json().catch(() => ({}));
       if (response.ok && payload.live) {
@@ -256,6 +311,65 @@ export function App() {
           : `${selected?.label || "Motion"} sent live · preview connecting`);
       }
     } catch { /* Replay remains available with Unreal offline. */ }
+  }
+
+  async function directMovement(event) {
+    event.preventDefault();
+    const command = motionDraft.trim();
+    if (!command || directingMotion) return;
+    setDirectingMotion(true);
+    setMotionPlan(null);
+    setNotice("Checking the reviewed movement catalog…");
+    try {
+      const response = await fetch("/api/motion-command", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ command }),
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(payload.detail || payload.error || "That movement is not available yet.");
+      setMotionPlan(payload);
+      if (payload.status === "staged") {
+        setNotice(`${payload.label} understood · renderer package still pending`);
+        return;
+      }
+      if (payload.behavior) {
+        setMotion(payload.behavior);
+        setPlaying(true);
+      }
+      setNotice(payload.live
+        ? `${payload.label} · moving live now`
+        : `${payload.label} · routed to the verified replay fallback`);
+    } catch (error) {
+      setMotionPlan({ error: error.message || "Movement director is unavailable." });
+      setNotice("Movement was not sent");
+    } finally {
+      setDirectingMotion(false);
+    }
+  }
+
+  async function applyWardrobe() {
+    if (!wardrobe.installed) {
+      setWardrobeNotice("Profile pending · nothing was changed");
+      return;
+    }
+    setWardrobeNotice("Applying reviewed wardrobe…");
+    try {
+      const response = await fetch("/api/wardrobe", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          profileId: wardrobe.profileId,
+          preset: wardrobeSelection.preset,
+          slots: wardrobeSelection.slots,
+        }),
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(payload.detail || "Wardrobe adapter is not ready.");
+      setWardrobeNotice("Wardrobe applied");
+    } catch (error) {
+      setWardrobeNotice(error.message || "Wardrobe was not changed");
+    }
   }
 
   function speak(text) {
@@ -375,6 +489,9 @@ export function App() {
                 <Icon size={20} weight="light" /><span>{label}</span>{motion === id && <Check className="motion-check" size={13} weight="bold" />}
               </button>
             ))}
+            <button className={`motion-button motion-direct ${activeSheet === "motion" ? "is-active" : ""}`} onClick={() => setActiveSheet("motion")} type="button" aria-expanded={activeSheet === "motion"}>
+              <PersonSimpleRun size={20} weight="light" /><span>Direct</span>
+            </button>
           </div>
         </section>
 
@@ -394,12 +511,12 @@ export function App() {
       {activeSheet && (
         <div className="sheet-layer">
           <button className="sheet-backdrop" onClick={() => setActiveSheet(null)} type="button" aria-label="Close panel" />
-          <aside className={`bottom-sheet ${activeSheet}-sheet`} role="dialog" aria-modal="true" aria-label={activeSheet === "conversation" ? "Conversation" : "Camera and character settings"}>
+          <aside className={`bottom-sheet ${activeSheet}-sheet`} role="dialog" aria-modal="true" aria-label={sheetMeta.label}>
             <div className="sheet-handle" aria-hidden="true" />
             <header className="sheet-header">
               <div>
-                <p className="eyebrow">{activeSheet === "conversation" ? "Live Fay conversation" : "Stage setup"}</p>
-                <h2>{activeSheet === "conversation" ? `Talk with ${character === "ada" ? "Ada" : "Aoi"}` : "Camera & character"}</h2>
+                <p className="eyebrow">{sheetMeta.eyebrow}</p>
+                <h2>{sheetMeta.title}</h2>
               </div>
               <button className="sheet-close" onClick={() => setActiveSheet(null)} type="button" aria-label="Close panel"><X size={20} /></button>
             </header>
@@ -421,6 +538,43 @@ export function App() {
                   </form>
                 </div>
               </>
+            ) : activeSheet === "motion" ? (
+              <div className="motion-director-content">
+                <div className="sheet-truth"><span className={`status-dot ${health.ardy ? "is-ready" : ""}`} />{health.ardy ? "ARDY online" : "Catalog preview"}<span aria-hidden="true">·</span><span>Fixed safe parameters</span></div>
+                <p className="motion-director-intro">Describe the body movement you want. The local planner may classify it, but only a reviewed catalog ID with fixed timing and root control can be used.</p>
+                <div className="motion-examples" aria-label="Movement examples">
+                  {MOTION_COMMAND_EXAMPLES.map((example) => (
+                    <button key={example} onClick={() => { setMotionDraft(example); motionInputRef.current?.focus(); }} type="button">{example}</button>
+                  ))}
+                </div>
+                <form className="motion-command-form" onSubmit={directMovement}>
+                  <label htmlFor="motion-command">Movement command</label>
+                  <div className="motion-command-input">
+                    <PersonSimpleRun size={21} />
+                    <input id="motion-command" ref={motionInputRef} value={motionDraft} onChange={(event) => setMotionDraft(event.target.value)} placeholder="Try: do jumping jacks" maxLength={160} autoComplete="off" />
+                    <button type="submit" disabled={!motionDraft.trim() || directingMotion} aria-label="Plan movement">{directingMotion ? <CircleNotch className="spin" size={18} /> : <ArrowRight size={18} weight="bold" />}</button>
+                  </div>
+                </form>
+                {motionPlan && (
+                  <div className={`motion-plan ${motionPlan.error ? "is-error" : motionPlan.status === "staged" ? "is-staged" : "is-routed"}`} aria-live="polite">
+                    {motionPlan.error ? (
+                      <><strong>Nothing was sent</strong><p>{motionPlan.error}</p></>
+                    ) : (
+                      <>
+                        <div className="motion-plan-heading"><strong>{motionPlan.label}</strong><span>{motionPlan.status === "staged" ? "Recognized · package pending" : motionPlan.live ? "Moving live" : "Routed"}</span></div>
+                        <dl>
+                          <div><dt>Catalog ID</dt><dd>{motionPlan.catalogId}</dd></div>
+                          <div><dt>Duration</dt><dd>{motionPlan.duration}s</dd></div>
+                          <div><dt>Intensity</dt><dd>{Math.round(motionPlan.intensity * 100)}%</dd></div>
+                          <div><dt>Root</dt><dd>{motionPlan.rootMode}</dd></div>
+                        </dl>
+                        <p>{motionPlan.detail || (motionPlan.live ? "The reviewed action was sent to Unreal." : "The reviewed replay fallback is active.")}</p>
+                      </>
+                    )}
+                  </div>
+                )}
+                <div className="prototype-note"><Info size={15} weight="fill" /><span>New full-body entries are staged honestly until their ARDY pose, retarget, and renderer package pass review. A recognized command does not mean the avatar moved.</span></div>
+              </div>
             ) : (
               <div className="settings-content">
                 <section className="sheet-section">
@@ -440,6 +594,32 @@ export function App() {
                       </button>
                     ))}
                   </div>
+                </section>
+                <section className="sheet-section wardrobe-section">
+                  <div className="panel-heading"><span>Casual Girl wardrobe</span><span className={`section-state ${wardrobe.installed ? "is-ready" : ""}`}>{wardrobe.installed ? "Installed" : "Profile pending"}</span></div>
+                  <div className="wardrobe-pending"><CoatHanger size={19} /><span><strong>Sealed controls are ready</strong><small>{wardrobeNotice}</small></span></div>
+                  <div className="wardrobe-group">
+                    <span className="wardrobe-label">Outfit preset</span>
+                    <div className="wardrobe-presets">
+                      {wardrobe.presets.map((preset) => (
+                        <button className={wardrobeSelection.preset === preset.id ? "is-selected" : ""} key={preset.id} onClick={() => setWardrobeSelection((current) => ({ preset: preset.id, slots: preset.slots || current.slots }))} type="button" disabled={!wardrobe.installed}>{preset.label}</button>
+                      ))}
+                    </div>
+                  </div>
+                  <div className="wardrobe-slots">
+                    {Object.entries(wardrobe.slots).map(([slot, values]) => (
+                      <div className="wardrobe-slot" key={slot}>
+                        <span>{slot}</span>
+                        <div>
+                          {values.map((value) => (
+                            <button className={wardrobeSelection.slots[slot] === value.id ? "is-selected" : ""} key={value.id} onClick={() => setWardrobeSelection((current) => ({ ...current, slots: { ...current.slots, [slot]: value.id } }))} type="button" disabled={!wardrobe.installed}>{value.label}</button>
+                          ))}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                  <button className="wardrobe-apply" onClick={applyWardrobe} type="button" disabled={!wardrobe.installed}>Apply reviewed outfit</button>
+                  <div className="wardrobe-audit-note"><Info size={15} weight="fill" /><span><strong>Full undress unavailable.</strong> {wardrobe.fullyUnclothed.reason} We will not claim a complete body mesh until the licensed asset is installed and inspected.</span></div>
                 </section>
                 <div className="prototype-note"><Info size={15} weight="fill" /><span>{liveStage ? "The visible stage is the live renderer stream." : "Conversation is live. The visible stage is using the measured private replay fallback."}</span></div>
               </div>

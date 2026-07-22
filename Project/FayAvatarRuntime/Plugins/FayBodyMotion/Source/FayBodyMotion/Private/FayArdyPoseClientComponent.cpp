@@ -2,6 +2,7 @@
 
 #include "Dom/JsonObject.h"
 #include "FayBodyMotionComponent.h"
+#include "FayCore27Skeleton.h"
 #include "HttpModule.h"
 #include "Interfaces/IHttpResponse.h"
 #include "Misc/CommandLine.h"
@@ -14,6 +15,7 @@ DEFINE_LOG_CATEGORY_STATIC(LogFayArdyPoseClient, Log, All);
 namespace
 {
 constexpr int32 ExpectedFramesPerSecond = 20;
+constexpr int32 ExpectedProtocolVersion = 2;
 constexpr int32 TargetBufferFrames = 8;
 constexpr int32 MaximumBufferFrames = 32;
 constexpr int32 ExpectedJointCount = 27;
@@ -26,8 +28,29 @@ constexpr double MaximumRootFrameStepMetres = 0.25;
 constexpr double MaximumActionTransitionGapSeconds = 0.5;
 constexpr double MaximumActionTransitionRootStepMetres = 1.0;
 constexpr double ExclusiveInt64UpperBound = 9223372036854775808.0;
+constexpr double RootPositionConsistencyToleranceMetres = 1.0e-5;
+constexpr float RootRotationConsistencyDotThreshold = 1.0f - 1.0e-5f;
 constexpr int32 NeckJointIndex = 5;
 constexpr int32 HeadJointIndex = 6;
+constexpr double MaximumJointPositionMetres = 10.0;
+constexpr TCHAR ExpectedCoordinateSystem[] =
+    TEXT("ardy-rh-x-left-y-up-z-forward-meters");
+
+const TArray<FString>& ExpectedContactOrder()
+{
+    static const TArray<FString> Contacts = {
+        TEXT("left_heel"), TEXT("left_toe"), TEXT("right_heel"), TEXT("right_toe")};
+    return Contacts;
+}
+
+const TArray<FName>& ExpectedMotionCatalog()
+{
+    static const TArray<FName> Catalog = {
+        TEXT("idle"), TEXT("listen"), TEXT("explain"), TEXT("wave"),
+        TEXT("jog_in_place"), TEXT("run_in_place"), TEXT("jumping_jacks"),
+        TEXT("stretch"), TEXT("dance_relaxed")};
+    return Catalog;
+}
 
 bool ReadFiniteNumber(const TArray<TSharedPtr<FJsonValue>>& Values, const int32 Index, double& Out)
 {
@@ -60,6 +83,135 @@ bool ReadQuaternion(const TArray<TSharedPtr<FJsonValue>>& Values, FQuat4f& Out)
     }
     Out.Normalize();
     return true;
+}
+
+void StabilizeQuaternionHemisphere(
+    const FQuat4f& Reference,
+    FQuat4f& Rotation)
+{
+    const float Dot = Reference.X * Rotation.X + Reference.Y * Rotation.Y +
+        Reference.Z * Rotation.Z + Reference.W * Rotation.W;
+    if (Dot < 0.0f)
+    {
+        Rotation.X = -Rotation.X;
+        Rotation.Y = -Rotation.Y;
+        Rotation.Z = -Rotation.Z;
+        Rotation.W = -Rotation.W;
+    }
+}
+
+bool ReadExactStringArray(
+    const TArray<TSharedPtr<FJsonValue>>& Values,
+    const TArray<FString>& Expected)
+{
+    if (Values.Num() != Expected.Num())
+    {
+        return false;
+    }
+    for (int32 Index = 0; Index < Expected.Num(); ++Index)
+    {
+        FString Value;
+        if (!Values[Index].IsValid() || !Values[Index]->TryGetString(Value) ||
+            Value != Expected[Index])
+        {
+            return false;
+        }
+    }
+    return true;
+}
+
+bool ValidateSourceDescriptor(const TSharedPtr<FJsonObject>& Source)
+{
+    if (!Source.IsValid() || Source->Values.Num() != 8)
+    {
+        return false;
+    }
+
+    FString System;
+    FString Revision;
+    FString Skeleton;
+    FString RotationSpace;
+    FString QuaternionOrder;
+    FString PositionSpace;
+    const TArray<TSharedPtr<FJsonValue>>* JointOrder = nullptr;
+    const TArray<TSharedPtr<FJsonValue>>* ContactOrder = nullptr;
+    if (!Source->TryGetStringField(TEXT("system"), System) ||
+        System != TEXT("nv-tlabs/ardy") ||
+        !Source->TryGetStringField(TEXT("revision"), Revision) ||
+        Revision != TEXT("693f74d13b3d04a0a22ce127ee79c929dd89756b") ||
+        !Source->TryGetStringField(TEXT("skeleton"), Skeleton) ||
+        Skeleton != TEXT("Core27") ||
+        !Source->TryGetStringField(TEXT("rotationSpace"), RotationSpace) ||
+        RotationSpace != TEXT("local") ||
+        !Source->TryGetStringField(TEXT("quaternionOrder"), QuaternionOrder) ||
+        QuaternionOrder != TEXT("xyzw") ||
+        !Source->TryGetStringField(TEXT("positionSpace"), PositionSpace) ||
+        PositionSpace != TEXT("global") ||
+        !Source->TryGetArrayField(TEXT("jointOrder"), JointOrder) ||
+        JointOrder == nullptr ||
+        !Source->TryGetArrayField(TEXT("contactOrder"), ContactOrder) ||
+        ContactOrder == nullptr)
+    {
+        return false;
+    }
+
+    const TArray<FFayCore27Bone>& Hierarchy = FayGetCore27Hierarchy();
+    if (JointOrder->Num() != Hierarchy.Num())
+    {
+        return false;
+    }
+    for (int32 Index = 0; Index < Hierarchy.Num(); ++Index)
+    {
+        FString Joint;
+        if (!(*JointOrder)[Index].IsValid() ||
+            !(*JointOrder)[Index]->TryGetString(Joint) ||
+            Joint != Hierarchy[Index].Name.ToString())
+        {
+            return false;
+        }
+    }
+    return ReadExactStringArray(*ContactOrder, ExpectedContactOrder());
+}
+
+bool ValidateMotionCatalog(
+    const TArray<TSharedPtr<FJsonValue>>& Values,
+    TSet<FName>& OutCatalog)
+{
+    OutCatalog.Reset();
+    const TArray<FName>& Expected = ExpectedMotionCatalog();
+    if (Values.Num() != Expected.Num())
+    {
+        return false;
+    }
+    for (int32 Index = 0; Index < Expected.Num(); ++Index)
+    {
+        FString Value;
+        if (!Values[Index].IsValid() || !Values[Index]->TryGetString(Value) ||
+            FName(*Value) != Expected[Index])
+        {
+            OutCatalog.Reset();
+            return false;
+        }
+        OutCatalog.Add(Expected[Index]);
+    }
+    return true;
+}
+
+void StabilizePoseHemisphere(
+    const FFayArdyPoseFrame& Reference,
+    FFayArdyPoseFrame& Pose)
+{
+    StabilizeQuaternionHemisphere(Reference.RootRotation, Pose.RootRotation);
+    if (Reference.JointRotations.Num() != Pose.JointRotations.Num())
+    {
+        return;
+    }
+    for (int32 Index = 0; Index < Pose.JointRotations.Num(); ++Index)
+    {
+        StabilizeQuaternionHemisphere(
+            Reference.JointRotations[Index],
+            Pose.JointRotations[Index]);
+    }
 }
 }
 
@@ -151,7 +303,8 @@ bool UFayArdyPoseClientComponent::StartBehavior(
     const float DurationSeconds)
 {
     if (!bClientEnabled || !bServiceReady ||
-        !UFayBodyMotionComponent::IsBehaviorAllowed(Behavior))
+        !UFayBodyMotionComponent::IsBehaviorAllowed(Behavior) ||
+        !SupportsBehavior(Behavior))
     {
         return false;
     }
@@ -167,6 +320,12 @@ bool UFayArdyPoseClientComponent::StartBehavior(
     bPlaybackStarted = false;
     RequestPoseBatch();
     return true;
+}
+
+bool UFayArdyPoseClientComponent::SupportsBehavior(const FName Behavior) const
+{
+    const FName Normalized(*Behavior.ToString().TrimStartAndEnd().ToLower());
+    return bServiceReady && SupportedBehaviors.Contains(Normalized);
 }
 
 void UFayArdyPoseClientComponent::StopBehavior()
@@ -211,11 +370,16 @@ bool UFayArdyPoseClientComponent::SamplePose(
     OutPose.RootTranslationMetres = FMath::Lerp(A.RootTranslationMetres, B.RootTranslationMetres, Alpha);
     OutPose.RootRotation = FQuat4f::Slerp(A.RootRotation, B.RootRotation, Alpha);
     OutPose.JointRotations.SetNum(ExpectedJointCount);
+    OutPose.JointPositionsMetres.SetNum(ExpectedJointCount);
     for (int32 Index = 0; Index < ExpectedJointCount; ++Index)
     {
         OutPose.JointRotations[Index] = FQuat4f::Slerp(
             A.JointRotations[Index],
             B.JointRotations[Index],
+            Alpha);
+        OutPose.JointPositionsMetres[Index] = FMath::Lerp(
+            A.JointPositionsMetres[Index],
+            B.JointPositionsMetres[Index],
             Alpha);
     }
     OutPose.Contacts.SetNum(4);
@@ -265,7 +429,7 @@ void UFayArdyPoseClientComponent::RequestPoseBatch()
         return;
     }
     PoseRequest = FHttpModule::Get().CreateRequest();
-    PoseRequest->SetURL(BaseUrl + TEXT("/v1/poses"));
+    PoseRequest->SetURL(BaseUrl + TEXT("/v2/poses"));
     PoseRequest->SetVerb(TEXT("POST"));
     PoseRequest->SetHeader(TEXT("Content-Type"), TEXT("application/json"));
     PoseRequest->SetContentAsString(Body);
@@ -311,6 +475,7 @@ void UFayArdyPoseClientComponent::HandleHealthResponse(
     }
     HealthRequest.Reset();
     bool bReady = false;
+    TSet<FName> QualifiedCatalog;
     if (bSucceeded && Response.IsValid() && Response->GetResponseCode() == 200 &&
         Request->GetEffectiveURL() == BaseUrl + TEXT("/healthz") &&
         Response->GetContent().Num() <= MaximumResponseBytes &&
@@ -325,39 +490,56 @@ void UFayArdyPoseClientComponent::HandleHealthResponse(
         double Version = 0.0;
         double FramesPerSecond = 0.0;
         double BufferFrames = 0.0;
+        double EmbeddingCount = 0.0;
+        double P95GenerationMilliseconds = 0.0;
+        FString Provider;
+        FString FacialControl;
+        FString CoordinateSystem;
+        FString Checkpoint;
+        const TSharedPtr<FJsonObject>* Source = nullptr;
+        const TArray<TSharedPtr<FJsonValue>>* MotionCatalog = nullptr;
         const bool bBaseHealthReady =
             FJsonSerializer::Deserialize(Reader, Object) && Object.IsValid() &&
+            Object->Values.Num() == 12 &&
             Object->TryGetStringField(TEXT("status"), Status) && Status == TEXT("ready") &&
-            Object->TryGetNumberField(TEXT("protocolVersion"), Version) && Version == 1.0 &&
+            Object->TryGetStringField(TEXT("provider"), Provider) &&
+            Object->TryGetNumberField(TEXT("protocolVersion"), Version) &&
+            Version == static_cast<double>(ExpectedProtocolVersion) &&
             Object->TryGetNumberField(TEXT("fps"), FramesPerSecond) &&
             FramesPerSecond == static_cast<double>(ExpectedFramesPerSecond) &&
             Object->TryGetNumberField(TEXT("bufferFrames"), BufferFrames) &&
-            BufferFrames == static_cast<double>(TargetBufferFrames);
+            BufferFrames == static_cast<double>(TargetBufferFrames) &&
+            Object->TryGetStringField(TEXT("facialControl"), FacialControl) &&
+            FacialControl == TEXT("excluded") &&
+            Object->TryGetStringField(TEXT("coordinateSystem"), CoordinateSystem) &&
+            CoordinateSystem == ExpectedCoordinateSystem &&
+            Object->TryGetObjectField(TEXT("source"), Source) && Source != nullptr &&
+            ValidateSourceDescriptor(*Source) &&
+            Object->TryGetArrayField(TEXT("motionCatalog"), MotionCatalog) &&
+            MotionCatalog != nullptr &&
+            ValidateMotionCatalog(*MotionCatalog, QualifiedCatalog) &&
+            Object->TryGetNumberField(TEXT("embeddingCount"), EmbeddingCount) &&
+            FMath::IsFinite(EmbeddingCount) &&
+            Object->TryGetNumberField(
+                TEXT("p95GenerationMs"), P95GenerationMilliseconds) &&
+            FMath::IsFinite(P95GenerationMilliseconds);
         if (bBaseHealthReady && bAllowDiagnosticProvider)
         {
             bReady = true;
         }
-        else if (bBaseHealthReady && Object->Values.Num() == 9)
+        else if (bBaseHealthReady)
         {
-            FString Provider;
-            FString FacialControl;
-            FString Checkpoint;
-            double EmbeddingCount = 0.0;
-            double P95GenerationMilliseconds = 0.0;
-            bReady = Object->TryGetStringField(TEXT("provider"), Provider) &&
-                Provider == TEXT("ardy") &&
-                Object->TryGetStringField(TEXT("facialControl"), FacialControl) &&
-                FacialControl == TEXT("excluded") &&
+            bReady = Provider == TEXT("ardy") &&
                 Object->TryGetStringField(TEXT("checkpoint"), Checkpoint) &&
                 Checkpoint == TEXT("ARDY-Core-RP-20FPS-Horizon8") &&
-                Object->TryGetNumberField(TEXT("embeddingCount"), EmbeddingCount) &&
-                EmbeddingCount == 3.0 &&
-                Object->TryGetNumberField(
-                    TEXT("p95GenerationMs"), P95GenerationMilliseconds) &&
-                FMath::IsFinite(P95GenerationMilliseconds) &&
+                EmbeddingCount == static_cast<double>(ExpectedMotionCatalog().Num()) &&
                 P95GenerationMilliseconds > 0.0 &&
                 P95GenerationMilliseconds < 400.0;
         }
+    }
+    if (bReady)
+    {
+        SupportedBehaviors = MoveTemp(QualifiedCatalog);
     }
     SetReady(bReady);
 }
@@ -374,7 +556,7 @@ void UFayArdyPoseClientComponent::HandlePoseResponse(
     }
     PoseRequest.Reset();
     if (!bSucceeded || !Response.IsValid() || Response->GetResponseCode() != 200 ||
-        Request->GetEffectiveURL() != BaseUrl + TEXT("/v1/poses") ||
+        Request->GetEffectiveURL() != BaseUrl + TEXT("/v2/poses") ||
         Response->GetContent().Num() > MaximumResponseBytes ||
         !Response->GetContentType().Equals(
             TEXT("application/json"),
@@ -456,6 +638,10 @@ void UFayArdyPoseClientComponent::HandlePoseResponse(
         }
         if (PoseBuffer.IsEmpty() || Frame.TimeSeconds > PoseBuffer.Last().TimeSeconds)
         {
+            if (!PoseBuffer.IsEmpty())
+            {
+                StabilizePoseHemisphere(PoseBuffer.Last(), Frame);
+            }
             PoseBuffer.Add(MoveTemp(Frame));
         }
     }
@@ -474,6 +660,7 @@ void UFayArdyPoseClientComponent::SetReady(const bool bReady)
         bAllowActionTransitionGap = false;
         PlaybackTimeSeconds = 0.0;
         bPlaybackStarted = false;
+        SupportedBehaviors.Reset();
     }
     if (!bChanged)
     {
@@ -504,9 +691,11 @@ bool UFayArdyPoseClientComponent::ParsePoseBatch(
     double FramesPerSecond = 0.0;
     double SequenceNumber = 0.0;
     FString CoordinateSystem;
+    const TSharedPtr<FJsonObject>* Source = nullptr;
     const TArray<TSharedPtr<FJsonValue>>* Frames = nullptr;
-    if (Object->Values.Num() != 5 ||
-        !Object->TryGetNumberField(TEXT("version"), Version) || Version != 1.0 ||
+    if (Object->Values.Num() != 6 ||
+        !Object->TryGetNumberField(TEXT("version"), Version) ||
+        Version != static_cast<double>(ExpectedProtocolVersion) ||
         !Object->TryGetNumberField(TEXT("sequence"), SequenceNumber) ||
         !FMath::IsFinite(SequenceNumber) || SequenceNumber < 1.0 ||
         SequenceNumber >= ExclusiveInt64UpperBound ||
@@ -514,7 +703,9 @@ bool UFayArdyPoseClientComponent::ParsePoseBatch(
         !Object->TryGetNumberField(TEXT("fps"), FramesPerSecond) ||
         FramesPerSecond != static_cast<double>(ExpectedFramesPerSecond) ||
         !Object->TryGetStringField(TEXT("coordinateSystem"), CoordinateSystem) ||
-        CoordinateSystem != TEXT("ardy-y-up-z-forward-meters") ||
+        CoordinateSystem != ExpectedCoordinateSystem ||
+        !Object->TryGetObjectField(TEXT("source"), Source) || Source == nullptr ||
+        !ValidateSourceDescriptor(*Source) ||
         !Object->TryGetArrayField(TEXT("frames"), Frames) || Frames == nullptr ||
         Frames->Num() != TargetBufferFrames)
     {
@@ -528,6 +719,9 @@ bool UFayArdyPoseClientComponent::ParsePoseBatch(
     double PreviousTime = -1.0;
     FVector3f PreviousRootTranslationMetres = FVector3f::ZeroVector;
     bool bHasPreviousRootTranslation = false;
+    FQuat4f PreviousRootRotation = FQuat4f::Identity;
+    TArray<FQuat4f> PreviousJointRotations;
+    bool bHasPreviousRotations = false;
     for (const TSharedPtr<FJsonValue>& FrameValue : *Frames)
     {
         const TSharedPtr<FJsonObject>* FrameObject = nullptr;
@@ -540,8 +734,9 @@ bool UFayArdyPoseClientComponent::ParsePoseBatch(
         FFayArdyPoseFrame Frame;
         const TArray<TSharedPtr<FJsonValue>>* Root = nullptr;
         const TArray<TSharedPtr<FJsonValue>>* Joints = nullptr;
+        const TArray<TSharedPtr<FJsonValue>>* Positions = nullptr;
         const TArray<TSharedPtr<FJsonValue>>* Contacts = nullptr;
-        if ((*FrameObject)->Values.Num() != 4 ||
+        if ((*FrameObject)->Values.Num() != 5 ||
             !(*FrameObject)->TryGetNumberField(TEXT("time"), Frame.TimeSeconds) ||
             !FMath::IsFinite(Frame.TimeSeconds) || Frame.TimeSeconds < 0.0 ||
             (PreviousTime >= 0.0 &&
@@ -553,6 +748,8 @@ bool UFayArdyPoseClientComponent::ParsePoseBatch(
             Root->Num() != 7 ||
             !(*FrameObject)->TryGetArrayField(TEXT("joints"), Joints) || Joints == nullptr ||
             Joints->Num() != ExpectedJointCount ||
+            !(*FrameObject)->TryGetArrayField(TEXT("positions"), Positions) ||
+            Positions == nullptr || Positions->Num() != ExpectedJointCount ||
             !(*FrameObject)->TryGetArrayField(TEXT("contacts"), Contacts) || Contacts == nullptr ||
             Contacts->Num() != 4)
         {
@@ -572,6 +769,10 @@ bool UFayArdyPoseClientComponent::ParsePoseBatch(
             OutError = TEXT("invalid root transform");
             return false;
         }
+        if (bHasPreviousRotations)
+        {
+            StabilizeQuaternionHemisphere(PreviousRootRotation, Frame.RootRotation);
+        }
         Frame.RootTranslationMetres = FVector3f(
             static_cast<float>(X), static_cast<float>(Y), static_cast<float>(Z));
         if (Frame.RootTranslationMetres.Size() > MaximumRootTranslationMetres)
@@ -588,8 +789,9 @@ bool UFayArdyPoseClientComponent::ParsePoseBatch(
         }
         PreviousRootTranslationMetres = Frame.RootTranslationMetres;
         bHasPreviousRootTranslation = true;
-        for (const TSharedPtr<FJsonValue>& JointValue : *Joints)
+        for (int32 JointIndex = 0; JointIndex < Joints->Num(); ++JointIndex)
         {
+            const TSharedPtr<FJsonValue>& JointValue = (*Joints)[JointIndex];
             const TArray<TSharedPtr<FJsonValue>>* Rotation = nullptr;
             FQuat4f Quaternion;
             if (!JointValue.IsValid() || !JointValue->TryGetArray(Rotation) ||
@@ -598,7 +800,62 @@ bool UFayArdyPoseClientComponent::ParsePoseBatch(
                 OutError = TEXT("invalid joint quaternion");
                 return false;
             }
+            if (bHasPreviousRotations)
+            {
+                StabilizeQuaternionHemisphere(
+                    PreviousJointRotations[JointIndex],
+                    Quaternion);
+            }
             Frame.JointRotations.Add(Quaternion);
+        }
+        for (const TSharedPtr<FJsonValue>& PositionValue : *Positions)
+        {
+            const TArray<TSharedPtr<FJsonValue>>* Position = nullptr;
+            double PositionX = 0.0;
+            double PositionY = 0.0;
+            double PositionZ = 0.0;
+            if (!PositionValue.IsValid() || !PositionValue->TryGetArray(Position) ||
+                Position == nullptr || Position->Num() != 3 ||
+                !ReadFiniteNumber(*Position, 0, PositionX) ||
+                !ReadFiniteNumber(*Position, 1, PositionY) ||
+                !ReadFiniteNumber(*Position, 2, PositionZ))
+            {
+                OutError = TEXT("invalid global joint position");
+                return false;
+            }
+            const FVector3f JointPosition(
+                static_cast<float>(PositionX),
+                static_cast<float>(PositionY),
+                static_cast<float>(PositionZ));
+            if (JointPosition.Size() > MaximumJointPositionMetres)
+            {
+                OutError = TEXT("global joint position exceeds the sealed bound");
+                return false;
+            }
+            Frame.JointPositionsMetres.Add(JointPosition);
+        }
+        const FVector3f& HipsPosition = Frame.JointPositionsMetres[0];
+        if (FMath::Abs(Frame.RootTranslationMetres.X - HipsPosition.X) >
+                RootPositionConsistencyToleranceMetres ||
+            FMath::Abs(Frame.RootTranslationMetres.Y - HipsPosition.Y) >
+                RootPositionConsistencyToleranceMetres ||
+            FMath::Abs(Frame.RootTranslationMetres.Z - HipsPosition.Z) >
+                RootPositionConsistencyToleranceMetres)
+        {
+            OutError = TEXT("root translation does not match global Hips position");
+            return false;
+        }
+        const FQuat4f& HipsRotation = Frame.JointRotations[0];
+        const float RootHipsRotationDot = FMath::Abs(
+            Frame.RootRotation.X * HipsRotation.X +
+            Frame.RootRotation.Y * HipsRotation.Y +
+            Frame.RootRotation.Z * HipsRotation.Z +
+            Frame.RootRotation.W * HipsRotation.W);
+        if (!FMath::IsFinite(RootHipsRotationDot) ||
+            RootHipsRotationDot < RootRotationConsistencyDotThreshold)
+        {
+            OutError = TEXT("root rotation does not match local Hips rotation");
+            return false;
         }
         for (int32 Index = 0; Index < 4; ++Index)
         {
@@ -611,6 +868,9 @@ bool UFayArdyPoseClientComponent::ParsePoseBatch(
             }
             Frame.Contacts.Add(static_cast<float>(Contact));
         }
+        PreviousRootRotation = Frame.RootRotation;
+        PreviousJointRotations = Frame.JointRotations;
+        bHasPreviousRotations = true;
         OutBatch.Frames.Add(MoveTemp(Frame));
     }
     const auto IsIdentityRotation = [](const FQuat4f& Rotation)

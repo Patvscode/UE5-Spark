@@ -11,6 +11,15 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SCRIPT_PATH = REPO_ROOT / "scripts" / "run-spark-avatar-gate.sh"
+SERVICE_ROOT = REPO_ROOT / "services" / "ardy" / "service"
+sys.path.insert(0, str(SERVICE_ROOT))
+
+from motion_catalog import GENERATED_BEHAVIORS  # noqa: E402
+from pose_protocol import (  # noqa: E402
+    COORDINATE_SYSTEM,
+    PROTOCOL_VERSION,
+    source_descriptor,
+)
 
 
 class SparkAvatarGateTests(unittest.TestCase):
@@ -135,7 +144,10 @@ wait "$runner_pid"
             "loopback_listener_owned_by_pid 8777",
             'value.get("provider") != "ardy"',
             'value.get("checkpoint") != "ARDY-Core-RP-20FPS-Horizon8"',
-            'value["embeddingCount"] != 3',
+            'value["embeddingCount"] != 9',
+            'value.get("coordinateSystem") != "ardy-rh-x-left-y-up-z-forward-meters"',
+            'value.get("source") != expected_source',
+            'value.get("motionCatalog") != expected_catalog',
             "not 0.0 < p95 < 400.0",
             "docker image inspect --format '{{.Id}}' \"$ARDY_IMAGE\"",
             "ardy_expected_image_id=$(resolve_fixed_ardy_image_id)",
@@ -156,7 +168,7 @@ wait "$runner_pid"
         def check(config_reference: str, runtime_image_id: str) -> bool:
             harness = f"""
 set -euo pipefail
-readonly ARDY_IMAGE='ue5-spark-ardy:0.2.0'
+readonly ARDY_IMAGE='ue5-spark-ardy:0.3.0'
 ardy_expected_image_id={expected_id!r}
 {reference_function}
 ardy_image_reference_is_expected {config_reference!r} {runtime_image_id!r}
@@ -171,10 +183,10 @@ ardy_image_reference_is_expected {config_reference!r} {runtime_image_id!r}
             )
             return result.returncode == 0
 
-        self.assertTrue(check("ue5-spark-ardy:0.2.0", expected_id))
+        self.assertTrue(check("ue5-spark-ardy:0.3.0", expected_id))
         self.assertTrue(check(expected_id, expected_id))
         self.assertFalse(check(foreign_id, expected_id))
-        self.assertFalse(check("ue5-spark-ardy:0.2.0", foreign_id))
+        self.assertFalse(check("ue5-spark-ardy:0.3.0", foreign_id))
 
     def test_ardy_tag_identity_is_rechecked_before_pause_and_on_exit(self) -> None:
         self.assertIn(
@@ -196,12 +208,15 @@ ardy_image_reference_is_expected {config_reference!r} {runtime_image_id!r}
         valid = {
             "status": "ready",
             "provider": "ardy",
-            "protocolVersion": 1,
+            "protocolVersion": PROTOCOL_VERSION,
             "fps": 20,
             "bufferFrames": 8,
             "facialControl": "excluded",
+            "coordinateSystem": COORDINATE_SYSTEM,
+            "source": source_descriptor(),
+            "motionCatalog": list(GENERATED_BEHAVIORS),
             "checkpoint": "ARDY-Core-RP-20FPS-Horizon8",
-            "embeddingCount": 3,
+            "embeddingCount": len(GENERATED_BEHAVIORS),
             "p95GenerationMs": 212.343,
         }
 
@@ -219,18 +234,20 @@ ardy_image_reference_is_expected {config_reference!r} {runtime_image_id!r}
         self.assertEqual(accepted.returncode, 0, accepted.stderr)
         self.assertEqual(
             accepted.stdout.splitlines(),
-            ["ardy", "ARDY-Core-RP-20FPS-Horizon8", "3", "212.343"],
+            ["ardy", "ARDY-Core-RP-20FPS-Horizon8", "9", "212.343"],
         )
         invalid_cases = []
         for key, value in (
             ("provider", "mock"),
             ("status", "degraded"),
             ("checkpoint", "ARDY-Core-RP-20FPS-Horizon40"),
-            ("embeddingCount", 2),
-            ("embeddingCount", 3.0),
+            ("embeddingCount", len(GENERATED_BEHAVIORS) - 1),
+            ("embeddingCount", float(len(GENERATED_BEHAVIORS))),
             ("p95GenerationMs", 0.0),
             ("p95GenerationMs", 400.0),
             ("protocolVersion", True),
+            ("coordinateSystem", "ardy-y-up-z-forward-meters"),
+            ("motionCatalog", list(reversed(GENERATED_BEHAVIORS))),
         ):
             changed = dict(valid)
             changed[key] = value
@@ -241,6 +258,10 @@ ardy_image_reference_is_expected {config_reference!r} {runtime_image_id!r}
         extra = dict(valid)
         extra["unexpected"] = True
         invalid_cases.append(extra)
+        changed_source = dict(valid)
+        changed_source["source"] = dict(source_descriptor())
+        changed_source["source"]["quaternionOrder"] = "wxyz"
+        invalid_cases.append(changed_source)
         for payload in invalid_cases:
             with self.subTest(payload=payload):
                 self.assertNotEqual(parse(payload).returncode, 0)

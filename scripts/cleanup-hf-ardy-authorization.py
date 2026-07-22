@@ -42,7 +42,18 @@ EXPECTED_ENCODER_CACHE_INVENTORY = frozenset(
     {"hub", "xet", ".agent_harnesses.json"}
 )
 EXPECTED_EMBEDDING_INVENTORY = frozenset(
-    {"manifest.json", "idle.npz", "listen.npz", "explain.npz"}
+    {
+        "manifest.json",
+        "idle.npz",
+        "listen.npz",
+        "explain.npz",
+        "wave.npz",
+        "jog_in_place.npz",
+        "run_in_place.npz",
+        "jumping_jacks.npz",
+        "stretch.npz",
+        "dance_relaxed.npz",
+    }
 )
 EXPECTED_CHECKPOINTS = (
     "ARDY-Core-RP-20FPS-Horizon8",
@@ -51,7 +62,7 @@ EXPECTED_CHECKPOINTS = (
 CHECKPOINT_MARKERS = ("config.yaml", "denoiser.safetensors", "tokenizer.safetensors")
 PRODUCTION_CONTAINER = "ue5-spark-ardy"
 CANARY_CONTAINER = "ue5-spark-ardy-auth-cleanup-canary"
-TARGET_IMAGE = "ue5-spark-ardy:0.2.0"
+TARGET_IMAGE = "ue5-spark-ardy:0.3.0"
 PRODUCTION_PORT = 8777
 CANARY_PORT = 18777
 VALIDATION_BATCHES = 30

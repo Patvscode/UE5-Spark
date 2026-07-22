@@ -14,7 +14,15 @@ from pathlib import Path
 SERVICE_ROOT = Path(__file__).resolve().parents[1] / "service"
 sys.path.insert(0, str(SERVICE_ROOT))
 
-from pose_protocol import PoseRequest  # noqa: E402
+from motion_catalog import GENERATED_BEHAVIORS  # noqa: E402
+from pose_protocol import (  # noqa: E402
+    BATCH_FRAMES,
+    COORDINATE_SYSTEM,
+    FPS,
+    PROTOCOL_VERSION,
+    PoseRequest,
+    source_descriptor,
+)
 from providers import MockPoseProvider  # noqa: E402
 
 
@@ -35,18 +43,23 @@ class FaultHandler(BaseHTTPRequestHandler):
             self._json(HTTPStatus.NOT_FOUND, {"error": "not_found"})
             return
         self._json(HTTPStatus.OK, {
-            "status": "ready", "provider": "fault-test", "protocolVersion": 1,
-            "fps": 20, "bufferFrames": 8, "facialControl": "excluded"
+            "status": "ready", "provider": "fault-test", "protocolVersion": PROTOCOL_VERSION,
+            "fps": FPS, "bufferFrames": BATCH_FRAMES, "facialControl": "excluded",
+            "coordinateSystem": COORDINATE_SYSTEM, "source": source_descriptor(),
+            "motionCatalog": list(GENERATED_BEHAVIORS),
         })
 
     def do_POST(self) -> None:  # noqa: N802
-        if self.path != "/v1/poses":
+        if self.path != "/v2/poses":
             self._json(HTTPStatus.NOT_FOUND, {"error": "not_found"})
             return
         length = int(self.headers.get("Content-Length", "0"))
         request = PoseRequest.from_json(json.loads(self.rfile.read(length)))
         if self.server.fault == "malformed":
-            self._json(HTTPStatus.OK, {"version": 1, "sequence": 1, "frames": "invalid"})
+            self._json(
+                HTTPStatus.OK,
+                {"version": PROTOCOL_VERSION, "sequence": 1, "frames": "invalid"},
+            )
             return
         batch = self.server.provider.generate(request)
         batch["sequence"] = 1
@@ -81,4 +94,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

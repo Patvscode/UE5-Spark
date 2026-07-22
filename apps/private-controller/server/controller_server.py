@@ -24,9 +24,10 @@ from typing import Any
 TAILSCALE_NET = ipaddress.ip_network("100.64.0.0/10")
 MAX_REQUEST_BYTES = 8 * 1024
 MAX_MESSAGE_CHARS = 2_000
+MAX_MOTION_COMMAND_CHARS = 160
 MAX_LIVE_FRAME_BYTES = 2 * 1024 * 1024
 MAX_LIVE_FRAME_AGE_SECONDS = 2.0
-SERVER_VERSION = "prototype-2"
+SERVER_VERSION = "prototype-3"
 THINK_BLOCK_PATTERN = re.compile(r"<think>.*?(?:</think>|$)", re.IGNORECASE | re.DOTALL)
 LLM_MODEL_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}")
 CHAT_SYSTEM_PROMPT = (
@@ -37,6 +38,184 @@ CHAT_SYSTEM_PROMPT = (
 ALLOWED_BEHAVIORS = frozenset({
     "idle", "listen", "wave", "invite", "think", "warn", "nod", "shake", "explain",
 })
+MOTION_CATALOG_PATH = Path(__file__).resolve().parents[3] / "config" / "motion-catalog.json"
+MOTION_CATALOG_IDS = frozenset({
+    "idle", "listen", "explain", "wave", "jog_in_place", "run_in_place",
+    "jumping_jacks", "stretch", "dance_relaxed",
+})
+MOTION_ITEM_FIELDS = frozenset({
+    "label", "aliases", "prompt", "duration", "intensity", "rootMode",
+    "routeBehavior", "rendererPackaged",
+})
+
+
+def load_motion_catalog(path: Path) -> dict[str, dict[str, object]]:
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise RuntimeError("reviewed motion catalog is unavailable") from exc
+    if (
+        not isinstance(payload, dict)
+        or set(payload) != {"schemaVersion", "catalogId", "items"}
+        or payload.get("schemaVersion") != 1
+        or payload.get("catalogId") != "ue5-spark-reviewed-motion-v1"
+        or not isinstance(payload.get("items"), dict)
+        or set(payload["items"]) != MOTION_CATALOG_IDS
+    ):
+        raise RuntimeError("reviewed motion catalog contract is invalid")
+
+    catalog: dict[str, dict[str, object]] = {}
+    for catalog_id, item in payload["items"].items():
+        if not isinstance(item, dict) or set(item) != MOTION_ITEM_FIELDS:
+            raise RuntimeError(f"reviewed motion item {catalog_id} is invalid")
+        label = item["label"]
+        aliases = item["aliases"]
+        prompt = item["prompt"]
+        duration = item["duration"]
+        intensity = item["intensity"]
+        root_mode = item["rootMode"]
+        route_behavior = item["routeBehavior"]
+        renderer_packaged = item["rendererPackaged"]
+        if not isinstance(label, str) or not 1 <= len(label) <= 48:
+            raise RuntimeError(f"reviewed motion label {catalog_id} is invalid")
+        if (
+            not isinstance(aliases, list) or not 1 <= len(aliases) <= 8
+            or any(not isinstance(alias, str) or not 1 <= len(alias) <= 64 for alias in aliases)
+            or len(set(aliases)) != len(aliases)
+        ):
+            raise RuntimeError(f"reviewed motion aliases {catalog_id} are invalid")
+        if not isinstance(prompt, str) or not 1 <= len(prompt) <= 300:
+            raise RuntimeError(f"reviewed motion prompt {catalog_id} is invalid")
+        if (
+            isinstance(duration, bool) or not isinstance(duration, (int, float))
+            or not 0.2 <= float(duration) <= 10.0
+            or isinstance(intensity, bool) or not isinstance(intensity, (int, float))
+            or not 0.0 <= float(intensity) <= 1.0
+        ):
+            raise RuntimeError(f"reviewed motion parameters {catalog_id} are invalid")
+        if root_mode != "locked":
+            raise RuntimeError(f"reviewed root mode {catalog_id} is invalid")
+        if (
+            not isinstance(route_behavior, str)
+            or not re.fullmatch(r"[a-z][a-z0-9_]{0,31}", route_behavior)
+            or not isinstance(renderer_packaged, bool)
+            or renderer_packaged and route_behavior not in ALLOWED_BEHAVIORS
+        ):
+            raise RuntimeError(f"reviewed route {catalog_id} is invalid")
+        catalog[catalog_id] = {
+            **item,
+            "aliases": tuple(aliases),
+            "duration": float(duration),
+            "intensity": float(intensity),
+        }
+    return catalog
+
+
+MOTION_CATALOG = load_motion_catalog(MOTION_CATALOG_PATH)
+MOTION_PLANNER_SYSTEM_PROMPT = (
+    f"Classify one movement request into this closed catalog: {', '.join(MOTION_CATALOG)}. "
+    "Return exactly one JSON object "
+    "with exactly one key: {\"catalogId\":\"one_allowed_id\"}. Use "
+    "{\"catalogId\":\"unknown\"} when none fits. Never return timing, intensity, root "
+    "motion, joints, paths, URLs, prose, Markdown, or instructions."
+)
+WARDROBE_PROFILE_PATH = (
+    Path(__file__).resolve().parents[3]
+    / "config" / "wardrobe-profiles" / "CasualGirl.pending.json"
+)
+EXPECTED_WARDROBE_SLOT_VALUES = {
+    "top": frozenset({"none", "tank", "sweater", "off_shoulder", "crop_hoodie"}),
+    "bottom": frozenset({"shorts", "pants"}),
+    "feet": frozenset({"barefoot", "shoes_socks"}),
+    "hair": frozenset({"style_1", "style_2"}),
+}
+EXPECTED_WARDROBE_PRESETS = frozenset({"underwear", "casual", "hoodie"})
+
+
+def load_wardrobe_profile(path: Path) -> tuple[dict[str, object], dict[str, frozenset[str]], frozenset[str]]:
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise RuntimeError("reviewed wardrobe profile is unavailable") from exc
+    if (
+        not isinstance(payload, dict)
+        or set(payload) != {
+            "schema", "status", "id", "sourceListing", "adapter", "reviewedAssetRoot",
+            "allowFullyUnclothed", "slots", "presets",
+        }
+        or payload.get("schema") != 1
+        or payload.get("id") != "casual-girl"
+        or payload.get("sourceListing") != "https://www.fab.com/listings/1da38c7b-c197-4cc4-a02f-9f63f480e300"
+        or payload.get("adapter") != "UE5EpicArkit"
+        or payload.get("reviewedAssetRoot") != "/Game/FayFab/CasualGirl"
+        or payload.get("status") not in {"pending_asset_audit", "installed"}
+        or not isinstance(payload.get("allowFullyUnclothed"), bool)
+        or not isinstance(payload.get("slots"), dict)
+        or not isinstance(payload.get("presets"), dict)
+    ):
+        raise RuntimeError("reviewed wardrobe profile contract is invalid")
+
+    slots = payload["slots"]
+    if set(slots) != set(EXPECTED_WARDROBE_SLOT_VALUES):
+        raise RuntimeError("reviewed wardrobe slots are invalid")
+    normalized_slots: dict[str, frozenset[str]] = {}
+    for slot, values in slots.items():
+        if (
+            not isinstance(values, list)
+            or any(not isinstance(value, str) for value in values)
+            or frozenset(values) != EXPECTED_WARDROBE_SLOT_VALUES[slot]
+            or len(values) != len(set(values))
+        ):
+            raise RuntimeError(f"reviewed wardrobe slot {slot} is invalid")
+        normalized_slots[slot] = frozenset(values)
+
+    presets = payload["presets"]
+    if set(presets) != EXPECTED_WARDROBE_PRESETS:
+        raise RuntimeError("reviewed wardrobe presets are invalid")
+    for preset_id, selection in presets.items():
+        if not isinstance(selection, dict) or set(selection) != set(normalized_slots):
+            raise RuntimeError(f"reviewed wardrobe preset {preset_id} is invalid")
+        if any(selection[slot] not in normalized_slots[slot] for slot in normalized_slots):
+            raise RuntimeError(f"reviewed wardrobe preset {preset_id} is invalid")
+    if payload["status"] != "installed" and payload["allowFullyUnclothed"]:
+        raise RuntimeError("pending wardrobe profile cannot allow full undress")
+
+    installed = payload["status"] == "installed"
+    public_profile = {
+        "profileId": payload["id"],
+        "displayName": "Casual Girl",
+        "installed": installed,
+        "state": payload["status"],
+        "presets": [
+            {
+                "id": preset_id,
+                "label": preset_id.replace("_", " ").title(),
+                "slots": dict(presets[preset_id]),
+            }
+            for preset_id in presets
+        ],
+        "slots": {
+            slot: [
+                {"id": value, "label": value.replace("_", " ").title()}
+                for value in values
+            ]
+            for slot, values in slots.items()
+        },
+        "fullyUnclothed": {
+            "enabled": installed and payload["allowFullyUnclothed"],
+            "reason": (
+                "Complete base-body audit approved."
+                if installed and payload["allowFullyUnclothed"] else
+                "Complete base-body geometry has not been audited."
+            ),
+        },
+    }
+    return public_profile, normalized_slots, frozenset(presets)
+
+
+WARDROBE_PROFILE, WARDROBE_SLOT_VALUES, WARDROBE_PRESETS = load_wardrobe_profile(
+    WARDROBE_PROFILE_PATH
+)
 MEDIA_MAP = {
     "ada-idle.mp4": "v21/ada-v21-idle-isolation-8s-20260721T131806Z.mp4",
     "ada-wave.mp4": "v28/ada-20260721T212709Z/ada-v28-speaking-wave-front-8s.mp4",
@@ -87,6 +266,94 @@ def normalize_action(payload: object) -> dict[str, object]:
     if not 0 <= intensity <= 1 or not 0.2 <= duration <= 10:
         raise ValueError("action values are outside the reviewed bounds")
     return {"behavior": behavior, "intensity": intensity, "duration": duration, "user": "User"}
+
+
+def normalize_motion_command(payload: object) -> str:
+    if not isinstance(payload, dict) or set(payload) != {"command"}:
+        raise ValueError("movement request must contain only command")
+    command = payload.get("command")
+    if not isinstance(command, str):
+        raise ValueError("movement command must be text")
+    command = re.sub(r"[ \t]+", " ", command).strip()
+    if not command or len(command) > MAX_MOTION_COMMAND_CHARS:
+        raise ValueError("movement command must contain 1 to 160 characters")
+    if any(ord(character) < 32 for character in command):
+        raise ValueError("movement command must be one line")
+    if "/" in command or "\\" in command or re.search(r"\b(?:https?|www)\s*[:.]", command, re.I):
+        raise ValueError("movement command must not contain a path or URL")
+    return command
+
+
+def direct_motion_catalog_id(command: str) -> str | None:
+    lowered = command.casefold()
+    matches: list[tuple[int, str]] = []
+    for catalog_id, item in MOTION_CATALOG.items():
+        for alias in item["aliases"]:
+            if re.search(rf"(?<!\w){re.escape(str(alias).casefold())}(?!\w)", lowered):
+                matches.append((len(str(alias)), catalog_id))
+    return max(matches)[1] if matches else None
+
+
+def parse_planner_catalog_id(value: object) -> str | None:
+    if not isinstance(value, str):
+        return None
+    try:
+        payload = json.loads(value.strip())
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(payload, dict) or set(payload) != {"catalogId"}:
+        return None
+    catalog_id = payload.get("catalogId")
+    if catalog_id == "unknown":
+        return None
+    return catalog_id if isinstance(catalog_id, str) and catalog_id in MOTION_CATALOG else None
+
+
+def resolve_motion_command(command: str, planner_catalog_id: str | None = None) -> dict[str, object] | None:
+    catalog_id = direct_motion_catalog_id(command)
+    if catalog_id is None and planner_catalog_id in MOTION_CATALOG:
+        catalog_id = planner_catalog_id
+    if catalog_id is None:
+        return None
+    item = MOTION_CATALOG[catalog_id]
+    return {
+        "catalogId": catalog_id,
+        "label": item["label"],
+        "duration": item["duration"],
+        "intensity": item["intensity"],
+        "rootMode": item["rootMode"],
+        "rendererPackaged": item["rendererPackaged"],
+        "routeBehavior": item["routeBehavior"],
+    }
+
+
+def normalize_wardrobe(payload: object) -> dict[str, object]:
+    if not isinstance(payload, dict):
+        raise ValueError("wardrobe request must be a small JSON object")
+    if not {"profileId"} <= set(payload) <= {"profileId", "preset", "slots"}:
+        raise ValueError("wardrobe request contains unsupported fields")
+    if payload.get("profileId") != WARDROBE_PROFILE["profileId"]:
+        raise ValueError("wardrobe profile is not reviewed")
+    if "preset" not in payload and "slots" not in payload:
+        raise ValueError("wardrobe request needs a preset or reviewed slots")
+
+    normalized: dict[str, object] = {"profileId": WARDROBE_PROFILE["profileId"]}
+    if "preset" in payload:
+        preset = payload.get("preset")
+        if not isinstance(preset, str) or preset not in WARDROBE_PRESETS:
+            raise ValueError("wardrobe preset is not reviewed")
+        normalized["preset"] = preset
+    if "slots" in payload:
+        slots = payload.get("slots")
+        if not isinstance(slots, dict) or not slots or not set(slots) <= set(WARDROBE_SLOT_VALUES):
+            raise ValueError("wardrobe slots are not reviewed")
+        reviewed_slots: dict[str, str] = {}
+        for slot, value in slots.items():
+            if not isinstance(value, str) or value not in WARDROBE_SLOT_VALUES[slot]:
+                raise ValueError(f"wardrobe value for {slot} is not reviewed")
+            reviewed_slots[slot] = value
+        normalized["slots"] = reviewed_slots
+    return normalized
 
 
 def normalize_message(payload: object) -> str:
@@ -176,7 +443,8 @@ class ControllerServer(ThreadingHTTPServer):
 
     def __init__(self, address: tuple[str, int], dist: Path, media_root: Path,
                  live_root: Path, fay_base: str, ardy_base: str,
-                 llm_base: str | None, llm_model: str | None):
+                 llm_base: str | None, llm_model: str | None,
+                 motion_planner_model: str | None):
         super().__init__(address, ControllerHandler)
         self.dist = dist
         self.media_root = media_root
@@ -185,6 +453,7 @@ class ControllerServer(ThreadingHTTPServer):
         self.ardy_base = ardy_base
         self.llm_base = llm_base
         self.llm_model = llm_model
+        self.motion_planner_model = motion_planner_model
 
 
 class ControllerHandler(BaseHTTPRequestHandler):
@@ -194,6 +463,8 @@ class ControllerHandler(BaseHTTPRequestHandler):
         path = urllib.parse.urlparse(self.path).path
         if path == "/api/status":
             self._status()
+        elif path == "/api/wardrobe":
+            self._json(HTTPStatus.OK, WARDROBE_PROFILE)
         elif path == "/live/frame.jpg":
             self._live_frame()
         elif path.startswith("/media/"):
@@ -222,6 +493,10 @@ class ControllerHandler(BaseHTTPRequestHandler):
                 self._chat(payload)
             elif path == "/api/action":
                 self._action(payload)
+            elif path == "/api/motion-command":
+                self._motion_command(payload)
+            elif path == "/api/wardrobe":
+                self._wardrobe(payload)
             else:
                 self._json(HTTPStatus.NOT_FOUND, {"error": "not_found"})
         except ValueError as exc:
@@ -339,25 +614,114 @@ class ControllerHandler(BaseHTTPRequestHandler):
 
     def _action(self, payload: object) -> None:
         action = normalize_action(payload)
+        status, response = self._dispatch_action(action)
+        self._json(status, response)
+
+    def _dispatch_action(self, action: dict[str, object]) -> tuple[HTTPStatus, dict[str, object]]:
         try:
             response = self._upstream_json(
                 f"{self.server.fay_base}/api/avatar/action", action, timeout=5,
             )
         except urllib.error.HTTPError as exc:
             if exc.code == HTTPStatus.SERVICE_UNAVAILABLE:
-                self._json(HTTPStatus.OK, {
+                return HTTPStatus.OK, {
                     "ok": True, "live": False, "replay": True,
                     "behavior": action["behavior"], "detail": "renderer_offline",
-                })
-                return
-            self._json(HTTPStatus.BAD_GATEWAY, {"error": "avatar action failed"})
-            return
+                }
+            return HTTPStatus.BAD_GATEWAY, {"error": "avatar action failed"}
         except (OSError, ValueError, urllib.error.URLError, socket.timeout):
-            self._json(HTTPStatus.BAD_GATEWAY, {"error": "avatar action service is unavailable"})
-            return
-        self._json(HTTPStatus.OK, {
+            return HTTPStatus.BAD_GATEWAY, {"error": "avatar action service is unavailable"}
+        return HTTPStatus.OK, {
             "ok": response.get("ok") is True, "live": response.get("ok") is True,
             "replay": False, "behavior": action["behavior"],
+        }
+
+    def _motion_command(self, payload: object) -> None:
+        command = normalize_motion_command(payload)
+        direct_catalog_id = direct_motion_catalog_id(command)
+        planner_catalog_id = (
+            None if direct_catalog_id is not None else self._motion_planner_suggestion(command)
+        )
+        plan = resolve_motion_command(command, planner_catalog_id)
+        if plan is None:
+            self._json(HTTPStatus.UNPROCESSABLE_ENTITY, {
+                "error": "movement_not_in_catalog",
+                "detail": (
+                    "Try wave, explain, listen, jumping jacks, jog in place, "
+                    "run in place, stretch, or a relaxed dance."
+                ),
+            })
+            return
+
+        public_plan = {
+            key: plan[key]
+            for key in ("catalogId", "label", "duration", "intensity", "rootMode", "rendererPackaged")
+        }
+        public_plan["plannerAdvisoryUsed"] = direct_catalog_id is None and planner_catalog_id is not None
+        if not plan["rendererPackaged"] or not plan["routeBehavior"]:
+            self._json(HTTPStatus.ACCEPTED, {
+                "ok": True,
+                "status": "staged",
+                "live": False,
+                "replay": False,
+                **public_plan,
+                "detail": (
+                    f"{plan['label']} is in the reviewed ARDY catalog, but that motion "
+                    "is not packaged in the current renderer. Nothing was sent to the avatar."
+                ),
+            })
+            return
+
+        action = normalize_action({
+            "behavior": plan["routeBehavior"],
+            "duration": plan["duration"],
+            "intensity": plan["intensity"],
+        })
+        status, response = self._dispatch_action(action)
+        if status != HTTPStatus.OK:
+            self._json(status, response)
+            return
+        self._json(HTTPStatus.OK, {"status": "routed", **response, **public_plan})
+
+    def _motion_planner_suggestion(self, command: str) -> str | None:
+        if not self.server.llm_base or not self.server.motion_planner_model:
+            return None
+        try:
+            response = self._upstream_json(
+                f"{self.server.llm_base}/v1/chat/completions",
+                {
+                    "model": self.server.motion_planner_model,
+                    "messages": [
+                        {"role": "system", "content": MOTION_PLANNER_SYSTEM_PROMPT},
+                        {"role": "user", "content": command},
+                    ],
+                    "chat_template_kwargs": {"enable_thinking": False},
+                    "max_tokens": 32,
+                    "temperature": 0.0,
+                },
+                timeout=30,
+            )
+            return parse_planner_catalog_id(response["choices"][0]["message"]["content"])
+        except (KeyError, IndexError, TypeError, ValueError, OSError, urllib.error.URLError, socket.timeout):
+            return None
+
+    def _wardrobe(self, payload: object) -> None:
+        selection = normalize_wardrobe(payload)
+        if not WARDROBE_PROFILE["installed"]:
+            self._json(HTTPStatus.CONFLICT, {
+                "ok": False,
+                "error": "wardrobe_profile_not_installed",
+                "profileId": selection["profileId"],
+                "detail": (
+                    "The sealed Casual Girl wardrobe controls are ready, but the licensed "
+                    "asset profile has not been installed or body-audited. Nothing changed."
+                ),
+            })
+            return
+        self._json(HTTPStatus.NOT_IMPLEMENTED, {
+            "ok": False,
+            "error": "wardrobe_renderer_adapter_pending",
+            "profileId": selection["profileId"],
         })
 
     def _renderer_online(self) -> bool:
@@ -492,6 +856,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--ardy-base", default="http://127.0.0.1:8777")
     parser.add_argument("--llm-base")
     parser.add_argument("--llm-model", type=checked_model_name)
+    parser.add_argument(
+        "--motion-planner-model",
+        type=checked_model_name,
+        help="optional reviewed catalog classifier; defaults to --llm-model",
+    )
     return parser
 
 
@@ -507,6 +876,8 @@ def main() -> int:
         ardy_base = checked_upstream(args.ardy_base, loopback_only=True)
         if bool(args.llm_base) != bool(args.llm_model):
             raise ValueError("llm-base and llm-model must be supplied together")
+        if args.motion_planner_model and not args.llm_base:
+            raise ValueError("motion-planner-model requires llm-base")
         llm_base = (
             checked_upstream(args.llm_base, loopback_only=True)
             if args.llm_base else None
@@ -518,7 +889,7 @@ def main() -> int:
         raise SystemExit(f"missing private media: {', '.join(missing)}")
     server = ControllerServer(
         (args.host, args.port), dist, media_root, live_root, fay_base, ardy_base,
-        llm_base, args.llm_model,
+        llm_base, args.llm_model, args.motion_planner_model or args.llm_model,
     )
     try:
         server.serve_forever(poll_interval=0.25)

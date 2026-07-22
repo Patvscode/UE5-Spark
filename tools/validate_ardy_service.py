@@ -19,20 +19,24 @@ sys.path.insert(0, str(SERVICE_ROOT))
 
 from pose_protocol import (  # noqa: E402
     BATCH_FRAMES,
+    COORDINATE_SYSTEM,
     CORE27_JOINTS,
     FPS,
+    PROTOCOL_VERSION,
     PoseRequest,
     ProtocolError,
+    source_descriptor,
     validate_batch,
 )
+from motion_catalog import GENERATED_BEHAVIORS  # noqa: E402
 
 
 ALLOWED_PORTS = frozenset({8777, 18777})
 EXPECTED_CHECKPOINT = "ARDY-Core-RP-20FPS-Horizon8"
-EXPECTED_EMBEDDING_COUNT = 3
+EXPECTED_EMBEDDING_COUNT = len(GENERATED_BEHAVIORS)
 EXPECTED_PROVIDER = "ardy"
 EXPECTED_FACIAL_CONTROL = "excluded"
-QUALIFICATION_BEHAVIORS = ("idle", "listen", "explain")
+QUALIFICATION_BEHAVIORS = GENERATED_BEHAVIORS
 MINIMUM_BATCHES = 30
 MAXIMUM_BATCHES = 100
 MAX_P95_GENERATION_MS = 400.0
@@ -65,10 +69,13 @@ def validate_real_health(value: object, *, require_latency: bool) -> dict[str, o
     expected = {
         "status": "ready",
         "provider": EXPECTED_PROVIDER,
-        "protocolVersion": 1,
+        "protocolVersion": PROTOCOL_VERSION,
         "fps": FPS,
         "bufferFrames": BATCH_FRAMES,
         "facialControl": EXPECTED_FACIAL_CONTROL,
+        "coordinateSystem": COORDINATE_SYSTEM,
+        "source": source_descriptor(),
+        "motionCatalog": list(GENERATED_BEHAVIORS),
         "checkpoint": EXPECTED_CHECKPOINT,
         "embeddingCount": EXPECTED_EMBEDDING_COUNT,
     }
@@ -94,12 +101,22 @@ def _validate_quaternion(value: object, label: str) -> None:
         raise ValidationError(f"{label} is not normalized")
 
 
+def _quaternion_dot(left: list[float], right: list[float]) -> float:
+    return sum(float(a) * float(b) for a, b in zip(left, right))
+
+
 def validate_real_batch(
     value: object,
     *,
     after_sequence: int,
     previous_time: float | None,
-) -> tuple[dict[str, object], int, float]:
+    previous_quaternions: tuple[list[float], list[list[float]]] | None = None,
+) -> tuple[
+    dict[str, object],
+    int,
+    float,
+    tuple[list[float], list[list[float]]],
+]:
     try:
         batch = validate_batch(value)
     except ProtocolError as error:
@@ -117,6 +134,15 @@ def validate_real_batch(
         first_time - previous_time, 1.0 / FPS, abs_tol=1e-5
     ):
         raise ValidationError("frame time did not advance by 50 ms across pose batches")
+    if previous_quaternions is not None:
+        previous_root, previous_joints = previous_quaternions
+        if _quaternion_dot(frames[0]["root"][3:], previous_root) < -1e-8:
+            raise ValidationError("root quaternion changed hemisphere across pose batches")
+        if any(
+            _quaternion_dot(current, previous) < -1e-8
+            for current, previous in zip(frames[0]["joints"], previous_joints)
+        ):
+            raise ValidationError("joint quaternion changed hemisphere across pose batches")
     for frame_index, frame in enumerate(frames):
         if frame_index > 0 and not math.isclose(
             float(frame["time"]) - float(frames[frame_index - 1]["time"]),
@@ -138,7 +164,23 @@ def validate_real_batch(
             raise ValidationError("contact flags must be serialized as protocol floats")
         if not all(0.0 <= contact <= 1.0 for contact in frame["contacts"]):
             raise ValidationError("contact confidence is outside the normalized range")
-    return batch, sequence, float(frames[-1]["time"])
+        if any(
+            not math.isclose(
+                float(root_component),
+                float(position_component),
+                abs_tol=1e-5,
+            )
+            for root_component, position_component in zip(
+                frame["root"][:3], frame["positions"][0]
+            )
+        ):
+            raise ValidationError("root translation does not match posed Hips position")
+    last_frame = frames[-1]
+    quaternion_state = (
+        [float(value) for value in last_frame["root"][3:]],
+        [[float(value) for value in rotation] for rotation in last_frame["joints"]],
+    )
+    return batch, sequence, float(last_frame["time"]), quaternion_state
 
 
 def _request_json(
@@ -198,6 +240,7 @@ def qualify_service(port: int, batches: int, startup_timeout: int) -> dict[str, 
     initial_health = wait_for_real_health(port, startup_timeout)
     after_sequence = 0
     previous_time: float | None = None
+    previous_quaternions: tuple[list[float], list[list[float]]] | None = None
     elapsed_ms: list[float] = []
     behavior_counts = {behavior: 0 for behavior in QUALIFICATION_BEHAVIORS}
     for batch_index in range(batches):
@@ -206,7 +249,7 @@ def qualify_service(port: int, batches: int, startup_timeout: int) -> dict[str, 
         started = time.perf_counter()
         response = _request_json(
             port,
-            "/v1/poses",
+            "/v2/poses",
             payload={
                 "behavior": request.behavior,
                 "intensity": request.intensity,
@@ -216,10 +259,11 @@ def qualify_service(port: int, batches: int, startup_timeout: int) -> dict[str, 
             timeout=30.0,
         )
         elapsed_ms.append((time.perf_counter() - started) * 1000.0)
-        _, after_sequence, previous_time = validate_real_batch(
+        _, after_sequence, previous_time, previous_quaternions = validate_real_batch(
             response,
             after_sequence=after_sequence,
             previous_time=previous_time,
+            previous_quaternions=previous_quaternions,
         )
         behavior_counts[behavior] += 1
     final_health = validate_real_health(
@@ -231,7 +275,7 @@ def qualify_service(port: int, batches: int, startup_timeout: int) -> dict[str, 
     if steady_p95 >= MAX_P95_GENERATION_MS:
         raise ValidationError("observed steady p95 request latency exceeds the 400 ms buffer")
     return {
-        "schemaVersion": 1,
+        "schemaVersion": 2,
         "status": "passed",
         "host": "127.0.0.1",
         "port": port,

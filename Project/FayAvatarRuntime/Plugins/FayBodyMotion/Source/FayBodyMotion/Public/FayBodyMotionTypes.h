@@ -38,7 +38,7 @@ struct FAYBODYMOTION_API FFayBodyMotionRequest
     int32 Priority = 0;
 };
 
-/** Normalized ARDY pose before conversion into Unreal coordinates. */
+/** Normalized ARDY pose before the one reviewed conversion into Unreal coordinates. */
 USTRUCT(BlueprintType)
 struct FAYBODYMOTION_API FFayArdyPoseFrame
 {
@@ -47,7 +47,7 @@ struct FAYBODYMOTION_API FFayArdyPoseFrame
     UPROPERTY(BlueprintReadOnly, Category = "Fay|Body Motion")
     double TimeSeconds = 0.0;
 
-    /** ARDY Y-up, +Z-forward root translation in metres and XYZW rotation. */
+    /** ARDY RH +X-left, +Y-up, +Z-forward root transform in metres/XYZW. */
     UPROPERTY(BlueprintReadOnly, Category = "Fay|Body Motion")
     FVector3f RootTranslationMetres = FVector3f::ZeroVector;
 
@@ -57,6 +57,10 @@ struct FAYBODYMOTION_API FFayArdyPoseFrame
     /** Core27 local joint rotations in XYZW order. */
     UPROPERTY(BlueprintReadOnly, Category = "Fay|Body Motion")
     TArray<FQuat4f> JointRotations;
+
+    /** Core27 global posed-joint positions in ARDY metres, exact joint order. */
+    UPROPERTY(BlueprintReadOnly, Category = "Fay|Body Motion")
+    TArray<FVector3f> JointPositionsMetres;
 
     UPROPERTY(BlueprintReadOnly, Category = "Fay|Body Motion")
     TArray<float> Contacts;
@@ -68,7 +72,7 @@ struct FAYBODYMOTION_API FFayBodyPoseBatch
     GENERATED_BODY()
 
     UPROPERTY(BlueprintReadOnly, Category = "Fay|Body Motion")
-    int32 Version = 1;
+    int32 Version = 2;
 
     UPROPERTY(BlueprintReadOnly, Category = "Fay|Body Motion")
     int64 Sequence = 0;
@@ -77,7 +81,8 @@ struct FAYBODYMOTION_API FFayBodyPoseBatch
     int32 FramesPerSecond = 20;
 
     UPROPERTY(BlueprintReadOnly, Category = "Fay|Body Motion")
-    FString CoordinateSystem = TEXT("ardy-y-up-z-forward-meters");
+    FString CoordinateSystem =
+        TEXT("ardy-rh-x-left-y-up-z-forward-meters");
 
     UPROPERTY(BlueprintReadOnly, Category = "Fay|Body Motion")
     TArray<FFayArdyPoseFrame> Frames;
