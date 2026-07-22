@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 import unittest
 
@@ -63,6 +64,39 @@ class FexFabStagingContractTests(unittest.TestCase):
         self.assertNotIn("| tee", source)
         self.assertIn('for forbidden in Source Plugins; do', source)
         self.assertIn('cmp -s "$project_template" "$project"', source)
+
+    def test_launch_wrapper_exposes_only_reviewed_listing_action(self) -> None:
+        source = (REPO_ROOT / "scripts/run-fex-fab-staging.sh").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("fab_action=${UE5_SPARK_FAB_ACTION:-none}", source)
+        self.assertIn("casual-girl)", source)
+        self.assertIn("fab_exec_command='Fab.OpenReviewedCasualGirl'", source)
+        self.assertIn('editor_args+=("-ExecCmds=$fab_exec_command")', source)
+        self.assertIn("must be none or casual-girl", source)
+        self.assertNotIn('editor_args+=("-ExecCmds=$UE5_SPARK_FAB_ACTION")', source)
+
+    def test_reviewed_listing_installer_is_fixed_reversible_and_isolated(self) -> None:
+        installer = REPO_ROOT / "scripts/install-fex-fab-reviewed-listing-command.sh"
+        source = installer.read_text(encoding="utf-8")
+        self.assertTrue(os.access(installer, os.X_OK))
+        for marker in (
+            "0b76f9e4abf8286daa87cd46d63529cacb168fb754c4a3db4e398c0bcb2aaeee",
+            "Fab.OpenReviewedCasualGirl",
+            "https://www.fab.com/plugins/ue5/listings/1da38c7b-c197-4cc4-a02f-9f63f480e300",
+            'FFabBrowser::OpenInNewTab(ListingUrl);',
+            'backup_root="$private_root/fab-listing-command-backup"',
+            'cp -p "$source_backup" "$source_file"',
+            'cp -p "$binary_backup" "$fab_binary"',
+            'cp -p "$modules_backup" "$fab_modules"',
+            'systemctl --user is-active ue5-spark-avatar-live.service',
+            '"$builder" "$workspace" "$engine_root" "$project"',
+            "verify_binary_literals",
+            '("utf-8", "utf-16-le", "utf-16-be", "utf-32-le", "utf-32-be")',
+        ):
+            self.assertIn(marker, source)
+        self.assertNotIn("FFabBrowser::GetUrl()", source)
+        self.assertNotIn("FConsoleCommandWithArgsDelegate", source)
 
     def test_build_wrapper_targets_generic_editor_not_live_project(self) -> None:
         source = (REPO_ROOT / "scripts/build-fex-fab-staging.sh").read_text(

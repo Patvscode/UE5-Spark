@@ -5,6 +5,7 @@ usage() {
     printf 'Usage: %s [--check] /path/to/cooker-workspace /path/to/isolated/UnrealEngine /path/to/FayFabAcquisition.uproject /path/to/private-baseline.json\n' \
         "${0##*/}" >&2
     printf 'Starts the isolated Fab acquisition Editor through rootless FEX.\n' >&2
+    printf 'Set UE5_SPARK_FAB_ACTION=casual-girl to open the one reviewed listing.\n' >&2
 }
 
 fail() {
@@ -96,6 +97,29 @@ engine_build_id=$(read_build_id "$engine_version")
     fail 'the Fab module manifest does not match the isolated Editor build ID'
 python3 "$manifest_tool" verify "$project_dir" "$manifest"
 
+fab_action=${UE5_SPARK_FAB_ACTION:-none}
+case "$fab_action" in
+    none)
+        fab_exec_command=
+        ;;
+    casual-girl)
+        fab_exec_command='Fab.OpenReviewedCasualGirl'
+        python3 - "$fab_binary" "$fab_exec_command" <<'PY'
+from pathlib import Path
+import sys
+
+data = Path(sys.argv[1]).read_bytes()
+value = sys.argv[2]
+encodings = ("utf-8", "utf-16-le", "utf-16-be", "utf-32-le", "utf-32-be")
+if not any(value.encode(encoding) in data for encoding in encodings):
+    raise SystemExit("error: the reviewed Casual Girl listing command is not installed in the Fab module")
+PY
+        ;;
+    *)
+        fail 'UE5_SPARK_FAB_ACTION must be none or casual-girl'
+        ;;
+esac
+
 if (( check_only == 1 )); then
     printf 'Fab staging launch preflight passed; the Editor was not started.\n'
     exit 0
@@ -153,6 +177,9 @@ editor_args=(
     -norhithread
     -nogpucrashdebugging
 )
+if [[ -n $fab_exec_command ]]; then
+    editor_args+=("-ExecCmds=$fab_exec_command")
+fi
 
 printf 'Starting isolated Fab staging Editor on display %s.\n' "$display"
 printf 'Complete account authentication only in the browser opened by the desktop portal.\n'
