@@ -9,6 +9,8 @@ The current prototype provides:
 - live, same-origin text conversation through Fay;
 - device speech recognition and speech synthesis when the browser supports it;
 - allowlisted `wave`, `explain`, and `listen` actions;
+- a default-on, bounded Alive loop that autonomously selects packaged behaviors
+  with varied timing and intensity while the live renderer is healthy;
 - a separate free-text movement director backed by the shared reviewed catalog;
 - deterministic movement duration, intensity, root mode, and renderer routing even
   when the optional local LLM supplies the catalog classification;
@@ -21,6 +23,8 @@ The current prototype provides:
 - verified private Ada and Aoi movement replays while Unreal is offline;
 - sanitized Fay/ARDY/renderer status; and
 - explicit `Portrait` versus pending `FullBody` camera state.
+- an explicit opt-in, browser-local front-camera preview that sends no frames to
+  Fay or Unreal until a reviewed gaze bridge exists.
 
 It never connects to Fay's avatar WebSocket as another `User`. All backend
 origins, usernames, actions, duration, intensity, media paths, and request sizes

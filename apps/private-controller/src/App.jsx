@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
-  ArrowRight, ArrowsInSimple, Camera, ChatCircleDots, Check, CircleNotch,
-  CoatHanger, Ear, HandWaving, Info, Microphone, Pause, Person, PersonSimpleRun,
-  Play, SlidersHorizontal, Sparkle, UserCircle, X,
+  ArrowRight, ArrowsInSimple, Camera, CaretDown, CaretUp, ChatCircleDots, Check,
+  CircleNotch, CoatHanger, Ear, HandWaving, Info, Microphone, Pause, Person,
+  PersonSimpleRun, Play, Sparkle, TextT, UserCircle, X,
 } from "@phosphor-icons/react";
 
 const MOTIONS = [
@@ -32,6 +32,12 @@ const MEDIA = {
 
 const MOTION_COMMAND_EXAMPLES = [
   "Jumping jacks", "Jog in place", "Run in place", "Stretch", "Wave",
+];
+
+const ALIVE_ACTIONS = [
+  { behavior: "idle", label: "relaxed weight shift", weight: 5, duration: [3.4, 5.2], intensity: [0.3, 0.46] },
+  { behavior: "listen", label: "attentive listening", weight: 3, duration: [2.8, 4.4], intensity: [0.34, 0.5] },
+  { behavior: "explain", label: "small conversational gesture", weight: 2, duration: [3.2, 4.8], intensity: [0.38, 0.56] },
 ];
 
 const PENDING_WARDROBE = {
@@ -67,6 +73,10 @@ export function App() {
   const [playing, setPlaying] = useState(true);
   const [deviceVoice, setDeviceVoice] = useState(true);
   const [activeSheet, setActiveSheet] = useState(null);
+  const [chromeHidden, setChromeHidden] = useState(false);
+  const [noticeVisible, setNoticeVisible] = useState(true);
+  const [aliveMode, setAliveMode] = useState(true);
+  const [visionState, setVisionState] = useState("off");
   const [motionDraft, setMotionDraft] = useState("");
   const [directingMotion, setDirectingMotion] = useState(false);
   const [motionPlan, setMotionPlan] = useState(null);
@@ -85,6 +95,8 @@ export function App() {
   const inputRef = useRef(null);
   const motionInputRef = useRef(null);
   const recognitionRef = useRef(null);
+  const cameraStreamRef = useRef(null);
+  const cameraPreviewRef = useRef(null);
   const statusStaleTimerRef = useRef(null);
   const media = MEDIA[character];
   const videoSource = media[motion] || media.idle;
@@ -92,7 +104,6 @@ export function App() {
   const streamRequested = health.renderer && health.stream && statusFresh;
   const liveStage = streamRequested && streamState === "live" && Boolean(liveFrameUrl);
   const liveLabel = !health.checked ? "Checking" : liveStage ? "Stage live" : streamRequested && streamState === "error" ? "Replay fallback" : streamRequested ? "Stream connecting" : health.renderer ? "Renderer linked" : systemsReady ? "Systems ready" : "Limited preview";
-  const stageModeLabel = liveStage ? "Live Unreal preview" : health.renderer && health.stream ? "Live preview connecting" : health.renderer ? "Renderer live · preview unavailable" : "Verified replay";
   const characterName = character === "ada" ? "Ada" : "Aoi";
   const sheetMeta = activeSheet === "conversation"
     ? { eyebrow: "Live Fay conversation", title: `Talk with ${characterName}`, label: "Conversation" }
@@ -273,9 +284,84 @@ export function App() {
     if (liveStage) setNotice("Live Unreal preview · real-time motion");
   }, [liveStage]);
 
+  useEffect(() => {
+    setNoticeVisible(true);
+    const timer = window.setTimeout(() => setNoticeVisible(false), 3800);
+    return () => window.clearTimeout(timer);
+  }, [notice]);
+
+  useEffect(() => {
+    if (!aliveMode || !health.renderer || !health.ardy || listening || sending) return undefined;
+    let cancelled = false;
+    let timer = null;
+    let controller = null;
+
+    const chooseAction = () => {
+      const total = ALIVE_ACTIONS.reduce((sum, item) => sum + item.weight, 0);
+      let choice = Math.random() * total;
+      for (const item of ALIVE_ACTIONS) {
+        choice -= item.weight;
+        if (choice <= 0) return item;
+      }
+      return ALIVE_ACTIONS[0];
+    };
+    const ranged = ([minimum, maximum]) => minimum + Math.random() * (maximum - minimum);
+    const schedule = (first = false) => {
+      if (cancelled) return;
+      const delay = first ? 2200 + Math.random() * 2200 : 6500 + Math.random() * 7500;
+      timer = window.setTimeout(run, delay);
+    };
+    async function run() {
+      if (cancelled) return;
+      if (document.hidden || activeSheet === "motion") {
+        schedule();
+        return;
+      }
+      const action = chooseAction();
+      controller = new AbortController();
+      try {
+        const response = await fetch("/api/action", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            behavior: action.behavior,
+            duration: Number(ranged(action.duration).toFixed(2)),
+            intensity: Number(ranged(action.intensity).toFixed(2)),
+          }),
+          signal: controller.signal,
+        });
+        const payload = await response.json().catch(() => ({}));
+        if (!cancelled && response.ok && payload.live) {
+          if (MOTIONS.some((item) => item.id === action.behavior)) setMotion(action.behavior);
+          setNotice(`Alive · ${action.label}`);
+        }
+      } catch (error) {
+        if (error?.name !== "AbortError") setNotice("Alive motion paused · renderer unavailable");
+      } finally {
+        controller = null;
+        schedule();
+      }
+    }
+
+    schedule(true);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+      controller?.abort();
+    };
+  }, [activeSheet, aliveMode, health.ardy, health.renderer, listening, sending]);
+
+  useEffect(() => {
+    if (cameraPreviewRef.current && cameraStreamRef.current) {
+      cameraPreviewRef.current.srcObject = cameraStreamRef.current;
+      cameraPreviewRef.current.play().catch(() => {});
+    }
+  }, [activeSheet, visionState]);
+
   useEffect(() => () => {
     recognitionRef.current?.abort?.();
     window.speechSynthesis?.cancel?.();
+    cameraStreamRef.current?.getTracks?.().forEach((track) => track.stop());
   }, []);
 
   useEffect(() => {
@@ -458,54 +544,107 @@ export function App() {
     setNotice("Stage recentered");
   }
 
+  async function toggleVisionPreview() {
+    if (cameraStreamRef.current) {
+      cameraStreamRef.current.getTracks().forEach((track) => track.stop());
+      cameraStreamRef.current = null;
+      if (cameraPreviewRef.current) cameraPreviewRef.current.srcObject = null;
+      setVisionState("off");
+      setNotice("Phone camera off");
+      return;
+    }
+    if (!navigator.mediaDevices?.getUserMedia) {
+      setVisionState("unsupported");
+      setNotice("Front-camera preview is unavailable in this browser");
+      return;
+    }
+    setVisionState("requesting");
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: false,
+        video: { facingMode: "user", width: { ideal: 640 }, height: { ideal: 480 } },
+      });
+      cameraStreamRef.current = stream;
+      if (cameraPreviewRef.current) {
+        cameraPreviewRef.current.srcObject = stream;
+        await cameraPreviewRef.current.play().catch(() => {});
+      }
+      setVisionState("local");
+      setNotice("Front camera on locally · gaze bridge not connected yet");
+    } catch {
+      setVisionState("denied");
+      setNotice("Camera permission was not granted");
+    }
+  }
+
   return (
     <main className="app-shell">
       <section className="avatar-stage" aria-label={`${character === "ada" ? "Ada" : "Aoi"} avatar stage`}>
-        <div className="stage-topbar">
-          <div className="stage-identity">
-            <span className="stage-name">{character === "ada" ? "Ada" : "Aoi"}</span>
-            <span className={`status-dot ${systemsReady ? "is-ready" : ""}`} aria-hidden="true" />
-            <span className="stage-status">{liveLabel}</span>
-          </div>
-          <div className="stage-actions">
-            <div className="stage-mode"><Sparkle size={14} weight="fill" /><span>{stageModeLabel}</span></div>
-            {!liveStage && <button className="icon-button" onClick={togglePlayback} type="button" aria-label={playing ? "Pause avatar replay" : "Play avatar replay"}>{playing ? <Pause size={17} weight="fill" /> : <Play size={17} weight="fill" />}</button>}
-          </div>
-        </div>
         <video ref={videoRef} className={`avatar-video ${liveStage ? "is-behind-live" : ""}`} key={videoSource} autoPlay muted loop playsInline poster={media.poster} aria-hidden={liveStage} onPlay={() => setPlaying(true)} onPause={() => setPlaying(false)}>
           <source src={videoSource} type="video/mp4" />
         </video>
         {liveStage && <img className="avatar-live-frame" src={liveFrameUrl} alt={`${character === "ada" ? "Ada" : "Aoi"} live renderer stream`} draggable="false" />}
-        <div className="stage-caption" aria-live="polite">
-          <span>{notice}</span>
-          <span className="camera-readout"><Camera size={13} />{camera === "full-body" ? "Full-body target" : "Portrait capture"}</span>
-        </div>
 
-        <section className="motion-shelf" aria-label="Motion controls">
-          <span className="motion-mode">{health.renderer ? "Real-time · ARDY + baked" : "Replay"}</span>
-          <div className="motion-list">
-            {MOTIONS.map(({ id, label, Icon }) => (
-              <button className={`motion-button ${motion === id ? "is-active" : ""}`} key={id} onClick={() => playMotion(id)} type="button" aria-pressed={motion === id}>
-                <Icon size={20} weight="light" /><span>{label}</span>{motion === id && <Check className="motion-check" size={13} weight="bold" />}
+        {!chromeHidden ? (
+          <>
+            <header className="companion-header">
+              <div className="companion-identity">
+                <span className="companion-name">{characterName}</span>
+                <span className="companion-presence">
+                  <span className={`status-dot ${systemsReady ? "is-ready" : ""}`} aria-hidden="true" />
+                  {liveLabel}
+                </span>
+              </div>
+            </header>
+
+            <nav className="companion-rail" aria-label="Stage shortcuts">
+              <button className={`rail-button alive-toggle ${aliveMode ? "is-alive" : ""}`} onClick={() => { setAliveMode((value) => !value); setNotice(aliveMode ? "Alive motion paused" : "Alive motion enabled"); }} type="button" aria-label={aliveMode ? "Pause autonomous movement" : "Enable autonomous movement"} aria-pressed={aliveMode}>
+                <Sparkle size={24} weight={aliveMode ? "fill" : "light"} />
               </button>
-            ))}
-            <button className={`motion-button motion-direct ${activeSheet === "motion" ? "is-active" : ""}`} onClick={() => setActiveSheet("motion")} type="button" aria-expanded={activeSheet === "motion"}>
-              <PersonSimpleRun size={20} weight="light" /><span>Direct</span>
-            </button>
-          </div>
-        </section>
+              <button className={`rail-button ${activeSheet === "motion" ? "is-active" : ""}`} onClick={() => setActiveSheet("motion")} type="button" aria-label="Open movement director" aria-expanded={activeSheet === "motion"}>
+                <PersonSimpleRun size={24} weight="light" />
+              </button>
+              <button className="rail-button" onClick={recenter} type="button" aria-label="Recenter avatar stage">
+                <ArrowsInSimple size={24} weight="light" />
+              </button>
+              <button className={`rail-button ${activeSheet === "settings" ? "is-active" : ""}`} onClick={() => setActiveSheet("settings")} type="button" aria-label="Open character and wardrobe settings" aria-expanded={activeSheet === "settings"}>
+                <CoatHanger size={24} weight="light" />
+              </button>
+              {!liveStage && (
+                <button className="rail-button" onClick={togglePlayback} type="button" aria-label={playing ? "Pause avatar replay" : "Play avatar replay"}>
+                  {playing ? <Pause size={22} weight="fill" /> : <Play size={22} weight="fill" />}
+                </button>
+              )}
+              <button className="rail-collapse" onClick={() => setChromeHidden(true)} type="button" aria-label="Hide companion controls">
+                <CaretDown size={25} weight="bold" />
+              </button>
+            </nav>
 
-        <nav className="stage-dock" aria-label="Avatar controls">
-          <button className={`dock-button ${activeSheet === "conversation" ? "is-active" : ""}`} onClick={() => setActiveSheet("conversation")} type="button" aria-label="Open conversation" aria-expanded={activeSheet === "conversation"}>
-            <ChatCircleDots size={23} weight="light" /><span>Chat</span>
+            <div className={`stage-toast ${noticeVisible ? "is-visible" : ""}`} aria-live="polite" aria-atomic="true">
+              <span>{notice}</span>
+            </div>
+
+            <nav className="companion-dock" aria-label="Companion controls">
+              <button className={`dock-round ${listening ? "is-listening" : ""}`} onClick={toggleListening} type="button" aria-label={listening ? "Stop listening" : `Talk to ${characterName}`}>
+                {listening ? <CircleNotch size={24} weight="bold" className="spin" /> : <Microphone size={24} weight="regular" />}
+              </button>
+              <button className={`dock-round ${activeSheet === "settings" ? "is-active" : ""}`} onClick={() => setActiveSheet("settings")} type="button" aria-label="Open camera settings" aria-expanded={activeSheet === "settings"}>
+                <Camera size={24} weight="regular" />
+              </button>
+              <button className={`dock-round ${activeSheet === "motion" ? "is-active" : ""}`} onClick={() => setActiveSheet("motion")} type="button" aria-label="Direct a body movement" aria-expanded={activeSheet === "motion"}>
+                <PersonSimpleRun size={24} weight="regular" />
+              </button>
+              <button className={`conversation-launch ${activeSheet === "conversation" ? "is-active" : ""}`} onClick={() => setActiveSheet("conversation")} type="button" aria-label={`Open text conversation with ${characterName}`} aria-expanded={activeSheet === "conversation"}>
+                <span className="conversation-placeholder">Ask {characterName} anything</span>
+                <span className="conversation-text-mode"><ChatCircleDots size={19} weight="regular" /><TextT size={18} weight="bold" /><span>Text</span></span>
+              </button>
+            </nav>
+          </>
+        ) : (
+          <button className="restore-chrome" onClick={() => setChromeHidden(false)} type="button" aria-label="Show companion controls">
+            <CaretUp size={24} weight="bold" />
           </button>
-          <button className={`talk-button ${listening ? "is-listening" : ""}`} onClick={toggleListening} type="button" aria-label={listening ? "Stop listening" : `Talk to ${character === "ada" ? "Ada" : "Aoi"}`}>
-            {listening ? <CircleNotch size={25} weight="bold" className="spin" /> : <Microphone size={25} weight="fill" />}<span>{listening ? "Listening" : "Talk"}</span>
-          </button>
-          <button className={`dock-button ${activeSheet === "settings" ? "is-active" : ""}`} onClick={() => setActiveSheet("settings")} type="button" aria-label="Open camera and character settings" aria-expanded={activeSheet === "settings"}>
-            <SlidersHorizontal size={23} weight="light" /><span>Setup</span>
-          </button>
-        </nav>
+        )}
       </section>
 
       {activeSheet && (
@@ -541,6 +680,13 @@ export function App() {
             ) : activeSheet === "motion" ? (
               <div className="motion-director-content">
                 <div className="sheet-truth"><span className={`status-dot ${health.ardy ? "is-ready" : ""}`} />{health.ardy ? "ARDY online" : "Catalog preview"}<span aria-hidden="true">·</span><span>Fixed safe parameters</span></div>
+                <div className="motion-quick-actions" aria-label="Quick movements">
+                  {MOTIONS.map(({ id, label, Icon }) => (
+                    <button className={motion === id ? "is-active" : ""} key={id} onClick={() => playMotion(id)} type="button" aria-pressed={motion === id}>
+                      <Icon size={22} weight="light" /><span>{label}</span>{motion === id && <Check size={13} weight="bold" />}
+                    </button>
+                  ))}
+                </div>
                 <p className="motion-director-intro">Describe the body movement you want. The local planner may classify it, but only a reviewed catalog ID with fixed timing and root control can be used.</p>
                 <div className="motion-examples" aria-label="Movement examples">
                   {MOTION_COMMAND_EXAMPLES.map((example) => (
@@ -583,6 +729,17 @@ export function App() {
                     <button className={camera === "full-body" ? "is-selected" : ""} onClick={() => { setCamera("full-body"); setNotice("Full-body framing selected · new runtime package in progress"); }} type="button"><Person size={21} /><span><strong>Full body</strong><small>Target framing</small></span></button>
                     <button className={camera === "portrait" ? "is-selected" : ""} onClick={() => { setCamera("portrait"); setNotice("Portrait · current verified capture"); }} type="button"><UserCircle size={21} /><span><strong>Portrait</strong><small>Available now</small></span></button>
                     <button onClick={recenter} type="button"><ArrowsInSimple size={21} /><span><strong>Recenter</strong><small>Restart replay</small></span></button>
+                  </div>
+                </section>
+                <section className="sheet-section vision-section">
+                  <div className="panel-heading"><span>Phone camera</span><span className={`section-state ${visionState === "local" ? "is-ready" : ""}`}>{visionState === "local" ? "Local preview on" : "Opt-in only"}</span></div>
+                  <div className="vision-layout">
+                    {visionState === "local" && <video ref={cameraPreviewRef} className="vision-preview" muted playsInline aria-label="Private front camera preview" />}
+                    <div className="vision-copy">
+                      <strong>{visionState === "local" ? "Your camera is active on this phone" : "Let Ada see your position later"}</strong>
+                      <small>This preview stays in your browser. No frames are sent to Fay or Unreal until the reviewed gaze bridge is built.</small>
+                      <button onClick={toggleVisionPreview} type="button" disabled={visionState === "requesting"}>{visionState === "requesting" ? "Requesting permission…" : visionState === "local" ? "Turn camera off" : "Enable local preview"}</button>
+                    </div>
                   </div>
                 </section>
                 <section className="sheet-section">
