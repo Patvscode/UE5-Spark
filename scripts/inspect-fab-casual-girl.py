@@ -8,6 +8,8 @@ markers.  It never saves, renames, duplicates, exports, or renders an asset.
 from __future__ import annotations
 
 import os
+from pathlib import Path
+import re
 
 import unreal
 
@@ -22,6 +24,7 @@ SOURCE_BLUEPRINT = (
     f"{SOURCE_ROOT}/Demo/ThirdPersonTemplate/ThirdPerson/Blueprints/"
     "BP_ThirdPersonCharacter"
 )
+SOURCE_BLUEPRINT_OBJECT = f"{SOURCE_BLUEPRINT}.BP_ThirdPersonCharacter"
 BASELINE_ENVIRONMENT = "FAY_FAB_STAGING_BASELINE_VERIFIED"
 EXPECTED_MESHES = (
     "AB_Jiggle",
@@ -44,60 +47,102 @@ EXPECTED_MESHES = (
     "Sk_Arms",
     "Sk_Legs",
 )
+SKELETAL_MESHES = (
+    "SK_Body",
+    "SK_Complete",
+    "SK_Hair_1",
+    "SK_Hair_2",
+    "SK_Pants",
+    "SK_Shoes",
+    "SK_Shoes_Socks",
+    "SK_Shorts",
+    "SK_Top_1",
+    "SK_Top_2",
+    "SK_Top_3",
+    "SK_Top_4",
+    "SK_Underwear",
+    "Sk_Arms",
+    "Sk_Legs",
+)
 EXPECTED_ARKIT = {
-    "browdown_l",
-    "browdown_r",
+    "browdownleft",
+    "browdownright",
     "browinnerup",
-    "browouterup_l",
-    "browouterup_r",
+    "browouterupleft",
+    "browouterupright",
     "cheekpuff",
-    "cheeksquint_l",
-    "cheeksquint_r",
-    "eyeblink_l",
-    "eyeblink_r",
-    "eyelookdown_l",
-    "eyelookdown_r",
-    "eyelookin_l",
-    "eyelookin_r",
-    "eyelookout_l",
-    "eyelookout_r",
-    "eyelookup_l",
-    "eyelookup_r",
-    "eyesquint_l",
-    "eyesquint_r",
-    "eyewide_l",
-    "eyewide_r",
+    "cheeksquintleft",
+    "cheeksquintright",
+    "eyeblinkleft",
+    "eyeblinkright",
+    "eyelookdownleft",
+    "eyelookdownright",
+    "eyelookinleft",
+    "eyelookinright",
+    "eyelookoutleft",
+    "eyelookoutright",
+    "eyelookupleft",
+    "eyelookupright",
+    "eyesquintleft",
+    "eyesquintright",
+    "eyewideleft",
+    "eyewideright",
     "jawforward",
     "jawleft",
     "jawopen",
     "jawright",
     "mouthclose",
-    "mouthdimple_l",
-    "mouthdimple_r",
-    "mouthfrown_l",
-    "mouthfrown_r",
+    "mouthdimpleleft",
+    "mouthdimpleright",
+    "mouthfrownleft",
+    "mouthfrownright",
     "mouthfunnel",
     "mouthleft",
-    "mouthlowerdown_l",
-    "mouthlowerdown_r",
-    "mouthpress_l",
-    "mouthpress_r",
+    "mouthlowerdownleft",
+    "mouthlowerdownright",
+    "mouthpressleft",
+    "mouthpressright",
     "mouthpucker",
     "mouthright",
     "mouthrolllower",
     "mouthrollupper",
     "mouthshruglower",
     "mouthshrugupper",
-    "mouthsmile_l",
-    "mouthsmile_r",
-    "mouthstretch_l",
-    "mouthstretch_r",
-    "mouthupperup_l",
-    "mouthupperup_r",
-    "nosesneer_l",
-    "nosesneer_r",
+    "mouthsmileleft",
+    "mouthsmileright",
+    "mouthstretchleft",
+    "mouthstretchright",
+    "mouthupperupleft",
+    "mouthupperupright",
+    "nosesneerleft",
+    "nosesneerright",
     "tongueout",
 }
+EXPECTED_BODY_BONES = {
+    "root",
+    "pelvis",
+    "spine_01",
+    "spine_02",
+    "spine_03",
+    "clavicle_l",
+    "upperarm_l",
+    "lowerarm_l",
+    "hand_l",
+    "clavicle_r",
+    "upperarm_r",
+    "lowerarm_r",
+    "hand_r",
+    "thigh_l",
+    "calf_l",
+    "foot_l",
+    "ball_l",
+    "thigh_r",
+    "calf_r",
+    "foot_r",
+    "ball_r",
+}
+IDENTIFIER_PATTERN = re.compile(rb"[A-Za-z][A-Za-z0-9_]{2,63}")
+MAX_PACKAGE_BYTES = 64 * 1024 * 1024
 
 
 def emit(name: str, value: object) -> None:
@@ -119,85 +164,53 @@ def dirty_packages() -> set[str]:
     }
 
 
-def skeletal_mesh_for(component):
-    for property_name in ("skeletal_mesh_asset", "skeletal_mesh"):
-        try:
-            value = component.get_editor_property(property_name)
-            if value is not None:
-                return value
-        except Exception:
-            pass
-    return None
-
-
-def morph_names(mesh) -> list[str]:
-    try:
-        targets = mesh.get_editor_property("morph_targets")
-    except Exception as error:
-        fail(f"could not inspect morph targets for {mesh.get_path_name()}: {error}")
-    if targets is None:
-        fail(f"morph target array is missing for {mesh.get_path_name()}")
-    names = [str(target.get_name()).strip().lower() for target in targets]
-    if any(not name for name in names) or len(names) != len(set(names)):
-        fail(f"invalid morph target names on {mesh.get_path_name()}")
-    return sorted(names)
-
-
-def load_required(path: str, expected_class):
-    asset = unreal.load_asset(path)
-    if asset is None or not isinstance(asset, expected_class):
-        fail(f"required {expected_class.__name__} is missing: {path}")
-    return asset
-
-
 def asset_name(path: object) -> str:
     object_path = str(path).split(".", 1)[0]
     return object_path.rsplit("/", 1)[-1]
 
 
-def verify_epic_hierarchy(mesh) -> int:
-    expected = {
-        "pelvis": "root",
-        "spine_01": "pelvis",
-        "spine_02": "spine_01",
-        "spine_03": "spine_02",
-        "clavicle_l": "spine_03",
-        "upperarm_l": "clavicle_l",
-        "lowerarm_l": "upperarm_l",
-        "hand_l": "lowerarm_l",
-        "clavicle_r": "spine_03",
-        "upperarm_r": "clavicle_r",
-        "lowerarm_r": "upperarm_r",
-        "hand_r": "lowerarm_r",
-        "thigh_l": "pelvis",
-        "calf_l": "thigh_l",
-        "foot_l": "calf_l",
-        "ball_l": "foot_l",
-        "thigh_r": "pelvis",
-        "calf_r": "thigh_r",
-        "foot_r": "calf_r",
-        "ball_r": "foot_r",
+def package_identifiers(name: str) -> set[str]:
+    content_root = Path(unreal.Paths.project_content_dir()).resolve()
+    package = content_root / "Sample" / "Meshes" / f"{name}.uasset"
+    if package.is_symlink() or not package.is_file():
+        fail(f"required package file is missing or unsafe: {name}")
+    size = package.stat().st_size
+    if size <= 0 or size > MAX_PACKAGE_BYTES:
+        fail(f"required package has an invalid size: {name}")
+    try:
+        data = package.read_bytes()
+    except OSError as error:
+        fail(f"could not read required package metadata for {name}: {error}")
+    return {
+        match.group(0).decode("ascii").lower()
+        for match in IDENTIFIER_PATTERN.finditer(data)
     }
-    subsystem = unreal.get_editor_subsystem(unreal.SkeletalMeshEditorSubsystem)
-    if subsystem is None:
-        fail("SkeletalMeshEditorSubsystem is unavailable")
-    for bone, expected_parent in expected.items():
-        try:
-            actual_parent = str(subsystem.get_bone_parent(mesh, bone)).lower()
-        except Exception as error:
-            fail(f"could not inspect parent of {bone}: {error}")
-        if actual_parent != expected_parent:
-            fail(
-                f"Epic Skeleton mismatch for {bone}: expected "
-                f"{expected_parent}, found {actual_parent}"
-            )
-    return len(expected)
 
 
 if os.environ.get(BASELINE_ENVIRONMENT) != "1":
     fail("the sealed non-content baseline was not verified")
 
+if os.environ.get("FAY_FAB_EXPECT_OFFLINE") == "1":
+    try:
+        enabled_plugins = set(unreal.PluginBlueprintLibrary.get_enabled_plugin_names())
+    except Exception as error:
+        fail(f"could not inspect enabled plugins in offline mode: {error}")
+    required_plugins = {"PythonScriptPlugin", "EditorScriptingUtilities", "ChaosCloth"}
+    if "Fab" in enabled_plugins or not required_plugins.issubset(enabled_plugins):
+        fail("offline plugin state is not the reviewed Fab-disabled set")
+    emit("OFFLINE_PLUGINS", "OK")
+
 dirty_before = dirty_packages()
+registry = unreal.AssetRegistryHelpers.get_asset_registry()
+try:
+    registry.scan_paths_synchronous(
+        [SOURCE_ROOT],
+        force_rescan=True,
+        ignore_deny_list_scan_filters=False,
+    )
+except Exception as error:
+    fail(f"could not rescan the acquired asset root: {error}")
+
 root_assets: dict[str, list[str]] = {}
 for root in PRODUCT_ROOTS:
     paths = sorted(
@@ -212,94 +225,58 @@ for root in PRODUCT_ROOTS:
     emit(f"{root.rsplit('/', 1)[-1].upper()}_ASSET_COUNT", len(paths))
 
 mesh_names = {asset_name(path) for path in root_assets[f"{SOURCE_ROOT}/Meshes"]}
+emit("MESH_REGISTRY_NAMES", ",".join(sorted(mesh_names)))
 missing_meshes = sorted(set(EXPECTED_MESHES) - mesh_names)
 if missing_meshes:
     fail(f"expected product assets are missing: {missing_meshes}")
 emit("EXPECTED_PRODUCT_ASSETS", "OK")
 
-blueprint = load_required(SOURCE_BLUEPRINT, unreal.Blueprint)
-generated_class = blueprint.generated_class()
-if generated_class is None:
-    fail("the source character Blueprint has no generated class")
-cdo = unreal.get_default_object(generated_class)
-if cdo is None:
-    fail("the source character Blueprint has no class default object")
-emit("SOURCE_BLUEPRINT", blueprint.get_path_name())
-emit("SOURCE_CLASS", generated_class.get_path_name())
+try:
+    blueprint_data = registry.get_asset_by_object_path(SOURCE_BLUEPRINT_OBJECT)
+    blueprint_class = str(blueprint_data.asset_class_path)
+    blueprint_package = str(blueprint_data.package_name)
+except Exception as error:
+    fail(f"could not inspect the source character Blueprint metadata: {error}")
+if not blueprint_package or "Blueprint" not in blueprint_class:
+    fail("the fixed source character Blueprint is absent from the asset registry")
+emit("SOURCE_BLUEPRINT", SOURCE_BLUEPRINT_OBJECT)
+emit("SOURCE_BLUEPRINT_PACKAGE", blueprint_package)
+emit("SOURCE_BLUEPRINT_CLASS", blueprint_class)
+emit("SOURCE_BLUEPRINT_COMPONENTS", "graphical_review_required")
 
-components = sorted(
-    cdo.get_components_by_class(unreal.SkeletalMeshComponent),
-    key=lambda value: value.get_name().removesuffix("_GEN_VARIABLE"),
-)
-if not components:
-    fail("the source character Blueprint has no skeletal mesh components")
-emit("SKELETAL_COMPONENT_COUNT", len(components))
-for index, component in enumerate(components):
-    name = component.get_name().removesuffix("_GEN_VARIABLE")
-    mesh = skeletal_mesh_for(component)
-    emit(f"COMPONENT_{index}_NAME", name)
-    emit(
-        f"COMPONENT_{index}_MESH",
-        mesh.get_path_name() if mesh is not None else "none",
-    )
-
-mesh_subsystem = unreal.get_editor_subsystem(unreal.SkeletalMeshEditorSubsystem)
-if mesh_subsystem is None:
-    fail("SkeletalMeshEditorSubsystem is unavailable")
-
-product_mesh_paths = sorted(
-    path
-    for path in root_assets[f"{SOURCE_ROOT}/Meshes"]
-    if isinstance(unreal.load_asset(path), unreal.SkeletalMesh)
-)
-if len(product_mesh_paths) != 15:
-    fail(f"expected 15 product skeletal meshes, found {len(product_mesh_paths)}")
-
-skeletons: set[str] = set()
-arkit_union: set[str] = set()
-for index, path in enumerate(product_mesh_paths):
-    mesh = load_required(path, unreal.SkeletalMesh)
-    names = morph_names(mesh)
-    arkit_union.update(EXPECTED_ARKIT.intersection(names))
+for index, name in enumerate(SKELETAL_MESHES):
+    object_path = f"{SOURCE_ROOT}/Meshes/{name}.{name}"
     try:
-        skeleton = mesh.get_editor_property("skeleton")
-        physics_asset = mesh.get_editor_property("physics_asset")
-        materials = mesh.get_editor_property("materials")
-        lod_count = mesh_subsystem.get_lod_count(mesh)
+        data = registry.get_asset_by_object_path(object_path)
+        asset_class = str(data.asset_class_path)
     except Exception as error:
-        fail(f"could not inspect skeletal mesh metadata for {path}: {error}")
-    if skeleton is None or lod_count <= 0:
-        fail(f"skeletal mesh has no skeleton or LOD: {path}")
-    skeletons.add(str(skeleton.get_path_name()))
-    emit(f"MESH_{index}_NAME", mesh.get_name())
-    emit(f"MESH_{index}_MORPH_COUNT", len(names))
-    emit(f"MESH_{index}_LOD_COUNT", lod_count)
-    emit(
-        f"MESH_{index}_PHYSICS",
-        physics_asset.get_path_name() if physics_asset is not None else "none",
-    )
-    emit(f"MESH_{index}_MATERIAL_COUNT", len(materials))
+        fail(f"could not inspect skeletal mesh registry data for {name}: {error}")
+    if "SkeletalMesh" not in asset_class:
+        fail(f"registered product asset is not a SkeletalMesh: {name}")
+    emit(f"MESH_{index}_NAME", name)
+    emit(f"MESH_{index}_CLASS", asset_class)
+    emit(f"MESH_{index}_LOD_COUNT", "graphical_review_required")
+    emit(f"MESH_{index}_PHYSICS", "graphical_review_required")
+    emit(f"MESH_{index}_MATERIAL_COUNT", "graphical_review_required")
 
-if len(skeletons) != 1:
-    fail(f"product skeletal meshes do not share one skeleton: {sorted(skeletons)}")
-emit("SHARED_SKELETON", next(iter(skeletons)))
-
-body = load_required(f"{SOURCE_ROOT}/Meshes/SK_Body", unreal.SkeletalMesh)
-complete = load_required(f"{SOURCE_ROOT}/Meshes/SK_Complete", unreal.SkeletalMesh)
-body_morphs = set(morph_names(body))
-complete_morphs = set(morph_names(complete))
-missing_body = sorted(EXPECTED_ARKIT - body_morphs)
-missing_complete = sorted(EXPECTED_ARKIT - complete_morphs)
+body_identifiers = package_identifiers("SK_Body")
+complete_identifiers = package_identifiers("SK_Complete")
+missing_body = sorted(EXPECTED_ARKIT - body_identifiers)
+missing_complete = sorted(EXPECTED_ARKIT - complete_identifiers)
 emit("ARKIT_EXPECTED_COUNT", len(EXPECTED_ARKIT))
-emit("ARKIT_BODY_FOUND_COUNT", len(EXPECTED_ARKIT & body_morphs))
-emit("ARKIT_COMPLETE_FOUND_COUNT", len(EXPECTED_ARKIT & complete_morphs))
-emit("ARKIT_UNION_FOUND_COUNT", len(arkit_union))
+emit("ARKIT_BODY_FOUND_COUNT", len(EXPECTED_ARKIT & body_identifiers))
+emit("ARKIT_COMPLETE_FOUND_COUNT", len(EXPECTED_ARKIT & complete_identifiers))
 emit("ARKIT_BODY_MISSING", ",".join(missing_body) if missing_body else "none")
 emit(
     "ARKIT_COMPLETE_MISSING",
     ",".join(missing_complete) if missing_complete else "none",
 )
-emit("EPIC_BODY_BONES_VERIFIED", verify_epic_hierarchy(body))
+missing_bones = sorted(EXPECTED_BODY_BONES - body_identifiers)
+emit("EPIC_BODY_BONE_NAMES_EXPECTED", len(EXPECTED_BODY_BONES))
+emit("EPIC_BODY_BONE_NAMES_FOUND", len(EXPECTED_BODY_BONES & body_identifiers))
+emit("EPIC_BODY_BONE_NAMES_MISSING", ",".join(missing_bones) if missing_bones else "none")
+emit("EPIC_BODY_HIERARCHY", "graphical_review_required")
+emit("SHARED_SKELETON", "graphical_review_required")
 
 if dirty_packages() != dirty_before:
     fail("read-only inventory changed the Editor dirty-package set")

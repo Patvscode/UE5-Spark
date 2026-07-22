@@ -105,10 +105,11 @@ class FexFabStagingContractTests(unittest.TestCase):
         for marker in (
             'python3 "$manifest_tool" verify',
             'cmp -s "$project_template" "$project"',
-            "-EnablePlugins=PythonScriptPlugin,EditorScriptingUtilities",
+            "-EnablePlugins=PythonScriptPlugin,EditorScriptingUtilities,ChaosCloth",
             "-DisablePlugins=Fab",
             "-run=pythonscript",
             'export FAY_FAB_STAGING_BASELINE_VERIFIED=1',
+            'private_state="$workspace/state/fab-review"',
             "FAY_FAB_INVENTORY_COMPLETE=OK",
             "systemctl --user is-active ue5-spark-avatar-live.service",
             '-nullrhi',
@@ -116,6 +117,7 @@ class FexFabStagingContractTests(unittest.TestCase):
         ):
             self.assertIn(marker, source)
         self.assertNotIn("UE5_SPARK_FAB_ACTION", source)
+        self.assertNotIn('private_state="$workspace/state/fab-acquisition"', source)
         self.assertNotIn("-ExecutePythonScript", source)
 
     def test_casual_girl_inventory_is_fixed_and_read_only(self) -> None:
@@ -125,6 +127,7 @@ class FexFabStagingContractTests(unittest.TestCase):
         for marker in (
             'SOURCE_ROOT = "/Game/Sample"',
             '"BP_ThirdPersonCharacter"',
+            'emit("SOURCE_BLUEPRINT_COMPONENTS", "graphical_review_required")',
             '"SK_Body"',
             '"SK_Complete"',
             '"SK_Underwear"',
@@ -134,6 +137,7 @@ class FexFabStagingContractTests(unittest.TestCase):
             'emit("NOAI_BOUNDARY", "deterministic_retarget_only")',
             'emit("COMPLETE", "OK")',
             "dirty_packages() != dirty_before",
+            "registry.scan_paths_synchronous(",
         ):
             self.assertIn(marker, source)
         for mutation in (
