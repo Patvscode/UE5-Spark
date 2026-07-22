@@ -367,6 +367,7 @@ python_sources = (
     Path("tools/tests/test_activate_ardy_provider.py"),
     Path("tools/tests/test_ardy_unreal_contract.py"),
     Path("tools/tests/test_run_spark_avatar_gate.py"),
+    Path("tools/tests/test_run_spark_ardy_recovery_gate.py"),
     Path("tools/tests/test_validate_ardy_service.py"),
     Path("scripts/character-profiles.py"),
     Path("scripts/cook-state.py"),
@@ -604,6 +605,8 @@ if re.search(r'(?m)^\s*exec\s+(?:--\s+)?["\']?\$launcher["\']?(?:\s|$)', runtime
 soak_wrapper = Path("scripts/run-spark-avatar-soak.sh").read_text()
 soak_harness = Path("scripts/soak-spark-avatar.sh").read_text()
 avatar_gate = Path("scripts/run-spark-avatar-gate.sh").read_text()
+ardy_recovery_gate = Path("scripts/run-spark-ardy-recovery-gate.sh").read_text()
+ardy_activator = Path("scripts/activate-ardy-provider.sh").read_text()
 csv_analyzer = Path("tools/analyze-unreal-csv.py").read_text()
 for marker in (
     "add_diagnostic_override extra-unreal-arguments",
@@ -793,6 +796,105 @@ gate_final_record = avatar_gate[
 ]
 if gate_final_record.count("voxtral_restore_verified=") != 1:
     reject("the guarded Spark avatar gate result must record Voxtral restoration exactly once")
+
+for marker in (
+    "if (( $# != 3 )); then",
+    "readonly RUN_DURATION_SECONDS=180",
+    "export FAY_SOAK_CHARACTER=Ada",
+    "export FAY_SOAK_EXPECTED_RES_X=1280",
+    "export FAY_SOAK_EXPECTED_RES_Y=720",
+    "scope=diagnostic-only-not-production-qualification",
+    'gate_lock_file="$private_root/.spark-avatar-gate.lock"',
+    'activation_lock_file="$activation_lock_parent/ue5-spark-ardy.activation.lock"',
+    "exec 8>&-",
+    "exec 9>&-",
+    "mkfifo -m 600",
+    'IFS= read -r observed_token <&7',
+    "abort_runner_start_barrier",
+    "release_runner_start_barrier",
+    "runner_release_in_progress=1",
+    "runner_start_released=1",
+    'docker_stop_exact_bounded "$old_container_id"',
+    'run_bounded_isolated 30 docker stop --time 20 "$container_id"',
+    "setsid --wait timeout --foreground",
+    "ardy_stop_in_progress=1",
+    "exact-original-real-stable",
+    "capture_exact_original_real_stably",
+    "capture_real_ardy ardy_pre_stop",
+    "ardy_immutable_snapshots_equal ardy_before ardy_pre_stop",
+    "/api/avatar/action",
+    "first_action_cursor",
+    "stop_cursor",
+    "activation_cursor",
+    "second_action_cursor",
+    "bounded_seconds=10.00",
+    "ARDY loopback service is unavailable; baked fallback remains active.",
+    "began a bounded fallback to baked idle",
+    "unavailable_line < facial_summary_line",
+    "unavailable_line < speech_finished_line",
+    "attempt_recovery",
+    "reconcile_recovery_endpoint",
+    "ensure_ardy_endpoint_on_exit",
+    "prepare_emergency_activation_attempt",
+    "ARDY_ACTIVATION_LOCK_FD=8",
+    "bounded_seconds=3.00",
+    "generated retarget=ready",
+    "Using ARDY generated motion provider for 'idle'",
+    "Using ARDY generated motion provider for 'listen'",
+    "Rejected ARDY pose batch",
+    "late_unavailable_count",
+    "late_generated_fallback_count",
+    "validate_post_recovery_log",
+    "outage_performed=1",
+    '"activation_started=$activation_started"',
+    '"recovery_blocked=$recovery_blocked"',
+    "new-real-healthy",
+):
+    if marker not in ardy_recovery_gate:
+        reject(f"the guarded ARDY recovery diagnostic is missing its safety contract: {marker}")
+if ardy_recovery_gate.count('docker stop --time 20 "$container_id"') != 1:
+    reject("the ARDY recovery diagnostic must have exactly one captured-ID stop site")
+if re.search(
+    r"\bdocker\s+(?:rm|kill|prune|restart|start|pause|unpause|update|exec)\b",
+    ardy_recovery_gate,
+):
+    reject("the ARDY recovery diagnostic contains a forbidden Docker mutation")
+recovery_activation_body = ardy_recovery_gate[
+    ardy_recovery_gate.find("attempt_recovery() {"):
+    ardy_recovery_gate.find("stop_exact_old_ardy() {")
+]
+if "timeout" in recovery_activation_body or "kill-after" in recovery_activation_body:
+    reject("the recovery supervisor must not truncate the activator rollback lifecycle")
+for marker in (
+    "inherited_lock_fd=${ARDY_ACTIVATION_LOCK_FD:-}",
+    '[[ -e /proc/self/fdinfo/$inherited_lock_fd ]]',
+    'readlink -f "/proc/self/fd/$inherited_lock_fd"',
+    '[[ $inherited_lock_path == "$lock_file" ]]',
+    'flock -n "$inherited_lock_fd"',
+    '"recovery_mode=$recovery_mode"',
+    "readonly RUN_LABEL_KEY='com.ue5-spark.ardy.activation-run'",
+    "readonly ROLE_LABEL_KEY='com.ue5-spark.ardy.activation-role'",
+    '--cidfile "$cidfile"',
+    '--label "$RUN_LABEL_KEY=$activation_run_id"',
+    '--label "$ROLE_LABEL_KEY=$role"',
+    "capture_owned_run_container",
+    "reconcile_pending_launch_bounded resolved_id",
+    "clear_stably_absent_auto_remove_launch",
+    "container ls --all --no-trunc",
+    "status=verified-stably-absent",
+    "lifecycle_action_from_cidfile=none",
+    "pending_launch_absence_verified=1",
+    "setsid --wait timeout --foreground",
+    "pending-launch-unresolved.txt",
+    "trap '' HUP INT TERM",
+    "timeout --foreground --signal=TERM --kill-after=5",
+):
+    if marker not in ardy_activator:
+        reject(f"the guarded ARDY activator is missing inherited-lock state: {marker}")
+if re.search(r"=\$\(launch_container\b", ardy_activator):
+    reject("the guarded ARDY activator must not derive ownership from docker-run stdout")
+if "resolved_id=$(reconcile_pending_launch)" in ardy_activator:
+    reject("the guarded ARDY activator must reconcile launch ownership in the current shell")
 
 media_capture = Path("scripts/capture-spark-avatar-window.sh").read_text()
 for marker in (
@@ -1062,6 +1164,7 @@ if [[ -n $python_bin ]] && ! "$python_bin" -m unittest \
     tools.tests.test_activate_ardy_provider \
     tools.tests.test_ardy_unreal_contract \
     tools.tests.test_run_spark_avatar_gate \
+    tools.tests.test_run_spark_ardy_recovery_gate \
     tools.tests.test_validate_ardy_service; then
     fail 'guarded Spark ARDY and avatar gate tests failed'
 fi

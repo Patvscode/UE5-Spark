@@ -13,7 +13,33 @@ fi
 [[ $(uname -s) == Linux && $(uname -m) == aarch64 ]] || \
     fail 'generate ARDY embeddings on the Linux ARM64 DGX Spark'
 (( ${EUID:-$(id -u)} != 0 )) || fail 'run as the normal workspace user'
-command -v docker >/dev/null 2>&1 || fail 'Docker is not available'
+for command_name in docker flock readlink stat; do
+    command -v "$command_name" >/dev/null 2>&1 || fail "missing command: $command_name"
+done
+
+umask 077
+auth_lock_parent="/run/user/$(id -u)"
+[[ -d $auth_lock_parent && -O $auth_lock_parent && ! -L $auth_lock_parent && \
+    $(stat -c '%a' "$auth_lock_parent") == 700 ]] || \
+    fail 'the fixed per-user runtime directory is missing or unsafe'
+auth_lock_parent=$(cd "$auth_lock_parent" && pwd -P)
+[[ $auth_lock_parent == "/run/user/$(id -u)" ]] || \
+    fail 'the fixed per-user runtime directory resolved unexpectedly'
+auth_lock_file="$auth_lock_parent/ue5-spark-hf-authorization-cleanup.lock"
+[[ ! -L $auth_lock_file ]] || fail 'the Hugging Face authorization lock is a symlink'
+if [[ -e $auth_lock_file ]]; then
+    [[ -f $auth_lock_file && -O $auth_lock_file && \
+        $(stat -c '%a' "$auth_lock_file") == 600 && \
+        $(stat -c '%h' "$auth_lock_file") == 1 ]] || \
+        fail 'the Hugging Face authorization lock is unsafe'
+fi
+exec 8>>"$auth_lock_file"
+[[ $(readlink -f /proc/self/fd/8) == "$auth_lock_file" && \
+    -f $auth_lock_file && -O $auth_lock_file && ! -L $auth_lock_file && \
+    $(stat -c '%a' "$auth_lock_file") == 600 && \
+    $(stat -c '%h' "$auth_lock_file") == 1 ]] || \
+    fail 'the Hugging Face authorization lock changed while opening it'
+flock -n 8 || fail 'Hugging Face authorization cleanup is already running'
 
 models_root=$(cd "$1" && pwd -P)
 token_file=$(cd "$(dirname "$2")" && pwd -P)/$(basename "$2")
