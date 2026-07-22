@@ -353,6 +353,14 @@ class ArdyRecoveryGateStaticTests(unittest.TestCase):
             "NR > after && NR < before",
             marker_count_function,
         )
+        for evidence in (
+            '"post_recovery_audit_end_line=$post_recovery_audit_end_line"',
+            '"post_recovery_rejected_pose_batches=$late_rejected_count"',
+            '"post_recovery_unavailable_transitions=$late_unavailable_count"',
+            '"post_recovery_generated_fallbacks=$late_generated_fallback_count"',
+            '"post_recovery_neutral_explain_fallbacks=$late_neutral_explain_count"',
+        ):
+            self.assertEqual(self.source.count(evidence), 2)
 
     def test_voxtral_fay_locks_and_signal_cleanup_are_fixed(self) -> None:
         for marker in (
@@ -1758,6 +1766,30 @@ class ArdyRecoveryGateDecisionTests(unittest.TestCase):
                 result = self.run_bash(source, root)
                 self.assertEqual(result.returncode, 0, result.stderr)
                 self.assertIn("status=1", result.stdout)
+
+    def test_missing_preexit_preserves_not_captured_evidence(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="ardy-missing-preexit-") as directory:
+            root = Path(directory)
+            log = root / "recovery.log"
+            log.write_text("recovered ready\nlisten complete\n", encoding="utf-8")
+            source = textwrap.dedent(
+                f"""\
+                set -euo pipefail
+                recovery_log={log}
+                post_recovery_audit_end_line=not-captured
+                refresh_recovery_log() {{ :; }}
+                {self.find_marker_function}
+                {self.marker_count_function}
+                {self.post_recovery_function}
+                status=0
+                validate_post_recovery_log 1 2 || status=$?
+                printf 'status=%s\\nend=%s\\n' "$status" "$post_recovery_audit_end_line"
+                """
+            )
+            result = self.run_bash(source, root)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn("status=1", result.stdout)
+            self.assertIn("end=not-captured", result.stdout)
 
     def test_post_recovery_audit_rejects_malformed_or_nonincreasing_bounds(self) -> None:
         with tempfile.TemporaryDirectory(prefix="ardy-invalid-bounds-") as directory:

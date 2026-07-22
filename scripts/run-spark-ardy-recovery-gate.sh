@@ -1178,13 +1178,14 @@ verify_old_ardy_absent_without_claimant() {
 }
 
 validate_post_recovery_log() {
-    local cursor=$1 last_runtime_line=$2
+    local cursor=$1 last_runtime_line=$2 pre_exit_line
     [[ $cursor =~ ^[0-9]+$ && $last_runtime_line =~ ^[0-9]+$ ]] || return 1
     (( cursor < last_runtime_line )) || return 1
     refresh_recovery_log || return 1
-    post_recovery_audit_end_line=$(find_marker_line_after \
+    pre_exit_line=$(find_marker_line_after \
         'LogInit: Display: PreExit Game.' "$cursor") || return 1
-    [[ $post_recovery_audit_end_line =~ ^[1-9][0-9]*$ ]] || return 1
+    [[ $pre_exit_line =~ ^[1-9][0-9]*$ ]] || return 1
+    post_recovery_audit_end_line=$pre_exit_line
     (( last_runtime_line < post_recovery_audit_end_line )) || return 1
     late_rejected_count=$(marker_count_between 'Rejected ARDY pose batch' \
         "$cursor" "$post_recovery_audit_end_line") || return 1
@@ -1987,10 +1988,10 @@ write_record "$gate_root/recovery-events.txt" \
     "listen_generated_line=$listen_generated_line" \
     "listen_complete_line=$listen_complete_line" \
     "post_recovery_audit_end_line=$post_recovery_audit_end_line" \
-    'post_recovery_rejected_pose_batches=0' \
-    'post_recovery_unavailable_transitions=0' \
-    'post_recovery_generated_fallbacks=0' \
-    'post_recovery_neutral_explain_fallbacks=0' \
+    "post_recovery_rejected_pose_batches=$late_rejected_count" \
+    "post_recovery_unavailable_transitions=$late_unavailable_count" \
+    "post_recovery_generated_fallbacks=$late_generated_fallback_count" \
+    "post_recovery_neutral_explain_fallbacks=$late_neutral_explain_count" \
     "old_ardy_container_id=${ardy_before[1]}" \
     "new_ardy_container_id=${ardy_recovered[1]}" \
     "new_ardy_pid=${ardy_recovered[4]}" \
