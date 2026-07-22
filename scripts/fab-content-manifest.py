@@ -12,7 +12,7 @@ import stat
 import tempfile
 
 
-SCHEMA = 1
+SCHEMA = 2
 ALLOWED_SUFFIXES = {".uasset", ".umap", ".ubulk", ".uexp", ".uptnl"}
 MAX_FILES = 100_000
 
@@ -42,6 +42,17 @@ def _sha256(path: Path) -> str:
         while block := stream.read(1024 * 1024):
             digest.update(block)
     return digest.hexdigest()
+
+
+def _root_digest(records: dict[str, dict[str, object]]) -> str:
+    """Return one deterministic digest for the complete Content file table."""
+    encoded = json.dumps(
+        records,
+        ensure_ascii=True,
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
 
 
 def _walk_error(error: OSError) -> None:
@@ -89,15 +100,26 @@ def snapshot(project_input: Path) -> dict[str, object]:
         "projectRootName": project.name,
         "contentDirectory": "Content",
         "allowedSuffixes": sorted(ALLOWED_SUFFIXES),
+        "rootDigestSha256": _root_digest(records),
         "files": records,
     }
 
 
-def _write_new_private(path: Path, payload: dict[str, object]) -> None:
-    if path.exists() or path.is_symlink():
-        raise ContentManifestError("manifest output already exists")
+def _safe_output(project: Path, path: Path) -> Path:
+    if path.is_symlink():
+        raise ContentManifestError("manifest output must not be a symlink")
     if not path.parent.is_dir() or path.parent.is_symlink():
         raise ContentManifestError("manifest parent must be one existing real directory")
+    parent = path.parent.resolve(strict=True)
+    output = parent / path.name
+    if output == project or output.is_relative_to(project):
+        raise ContentManifestError("manifest must remain outside the staged project")
+    if output.exists() and not output.is_file():
+        raise ContentManifestError("manifest output must be one regular file")
+    return output
+
+
+def _write_private_atomic(path: Path, payload: dict[str, object]) -> None:
     encoded = (json.dumps(payload, indent=2, sort_keys=True) + "\n").encode("utf-8")
     descriptor: int | None = None
     temporary: Path | None = None
@@ -110,12 +132,26 @@ def _write_new_private(path: Path, payload: dict[str, object]) -> None:
             stream.write(encoded)
             stream.flush()
             os.fsync(stream.fileno())
-        os.link(temporary, path)
+        os.replace(temporary, path)
+        temporary = None
+        directory_flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+        directory_descriptor = os.open(path.parent, directory_flags)
+        try:
+            os.fsync(directory_descriptor)
+        finally:
+            os.close(directory_descriptor)
     finally:
         if descriptor is not None:
             os.close(descriptor)
         if temporary is not None:
             temporary.unlink(missing_ok=True)
+
+
+def create(project_input: Path, manifest_input: Path) -> Path:
+    project, _ = _safe_project(project_input)
+    manifest = _safe_output(project, manifest_input)
+    _write_private_atomic(manifest, snapshot(project))
+    return manifest
 
 
 def _load(path: Path) -> dict[str, object]:
@@ -133,6 +169,7 @@ def _load(path: Path) -> dict[str, object]:
         "projectRootName",
         "contentDirectory",
         "allowedSuffixes",
+        "rootDigestSha256",
         "files",
     }
     if (
@@ -142,6 +179,7 @@ def _load(path: Path) -> dict[str, object]:
         or value.get("contentDirectory") != "Content"
         or value.get("allowedSuffixes") != sorted(ALLOWED_SUFFIXES)
         or not isinstance(value.get("files"), dict)
+        or value.get("rootDigestSha256") != _root_digest(value.get("files", {}))
     ):
         raise ContentManifestError("manifest envelope is unsupported")
     return value
@@ -185,8 +223,8 @@ def main() -> int:
     arguments = parse_arguments()
     try:
         if arguments.command == "create":
-            _write_new_private(arguments.manifest, snapshot(arguments.project))
-            print(f"Created private Content manifest: {arguments.manifest}")
+            manifest = create(arguments.project, arguments.manifest)
+            print(f"Created private Content manifest: {manifest}")
         else:
             verify(arguments.project, arguments.manifest)
             print("Staged Content matches its private manifest")

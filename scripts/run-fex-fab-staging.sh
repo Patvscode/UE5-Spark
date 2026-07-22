@@ -28,12 +28,23 @@ fi
 if (( ${EUID:-$(id -u)} == 0 )); then
     fail 'run the Fab staging launcher as the normal workspace owner, not root'
 fi
-for command_name in cmp file grep id mkdir mktemp nice python3 sed timeout; do
+for command_name in basename chmod cmp dirname file flock grep head id install mkdir \
+    mktemp nice ps readlink sed timeout; do
     command -v "$command_name" >/dev/null 2>&1 || \
         fail "required command is missing: $command_name"
 done
+host_python=/usr/bin/python3
+[[ -x $host_python ]] || fail "fixed host Python is unavailable: $host_python"
+
+script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)
+phase_lock="$script_dir/fab-phase-lock.sh"
+[[ -f $phase_lock && ! -L $phase_lock ]] || \
+    fail "shared Fab phase-lock helper is missing: $phase_lock"
+# shellcheck source=fab-phase-lock.sh
+source "$phase_lock"
 
 workspace=$(cd "$1" && pwd -P)
+fab_phase_lock_acquire "$workspace" || exit 1
 engine_root=$(cd "$2" && pwd -P)
 project_input=$3
 manifest_input=$4
@@ -61,7 +72,6 @@ for forbidden in Source Plugins; do
         fail "the content-only staging project must not contain $forbidden"
 done
 
-script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)
 runner="$script_dir/run-fex-rootless.sh"
 manifest_tool="$script_dir/fab-staging-manifest.py"
 project_template="$script_dir/../staging/fab-acquisition-template/FayFabAcquisition.uproject"
@@ -95,7 +105,11 @@ read_build_id() {
 engine_build_id=$(read_build_id "$engine_version")
 [[ -n $engine_build_id && $(read_build_id "$fab_modules") == "$engine_build_id" ]] || \
     fail 'the Fab module manifest does not match the isolated Editor build ID'
-python3 "$manifest_tool" verify "$project_dir" "$manifest"
+"$host_python" "$manifest_tool" verify "$project_dir" "$manifest"
+
+if ps -u "$(id -u)" -o args= | grep -F "$editor $project" | grep -v grep >/dev/null; then
+    fail 'the Fab staging Editor is already running'
+fi
 
 fab_action=${UE5_SPARK_FAB_ACTION:-none}
 case "$fab_action" in
@@ -104,7 +118,7 @@ case "$fab_action" in
         ;;
     casual-girl)
         fab_exec_command='Fab.OpenReviewedCasualGirl'
-        python3 - "$fab_binary" "$fab_exec_command" <<'PY'
+        "$host_python" - "$fab_binary" "$fab_exec_command" <<'PY'
 from pathlib import Path
 import sys
 
@@ -148,10 +162,13 @@ export FEX_SILENTLOG=${FEX_SILENTLOG:-1}
 
 private_state="$workspace/state/fab-acquisition"
 private_logs="$workspace/logs-private/fab-acquisition"
-mkdir -p "$private_state/home" "$private_state/config" "$private_state/cache" \
-    "$private_state/data" "$private_state/state" "$private_logs"
-chmod 0700 "$private_state" "$private_state/home" "$private_state/config" \
-    "$private_state/cache" "$private_state/data" "$private_state/state" "$private_logs"
+fab_owned_directory "$workspace/logs-private" shared || exit 1
+fab_owned_directory "$private_logs" private || exit 1
+fab_owned_directory "$workspace/state" shared || exit 1
+fab_owned_directory "$private_state" private || exit 1
+for private_directory in home config cache data state; do
+    fab_owned_directory "$private_state/$private_directory" private || exit 1
+done
 export HOME="$private_state/home"
 export XDG_CONFIG_HOME="$private_state/config"
 export XDG_CACHE_HOME="$private_state/cache"
@@ -186,18 +203,20 @@ printf 'Complete account authentication only in the browser opened by the deskto
 printf 'Editor output is restricted to a private mode-0600 log and is not echoed here.\n'
 set +e
 if [[ $session_limit == none ]]; then
-    nice -n 15 "$runner" "$workspace" -- "$editor" "${editor_args[@]}" \
-        >"$log" 2>&1
+    ( fab_phase_lock_exec_without_fd nice -n 15 \
+        "$runner" "$workspace" -- "$editor" "${editor_args[@]}" \
+    ) >"$log" 2>&1
     status=$?
 else
-    nice -n 15 timeout --signal=TERM --kill-after=20s "$session_limit" \
+    ( fab_phase_lock_exec_without_fd nice -n 15 \
+        timeout --signal=TERM --kill-after=20s "$session_limit" \
         "$runner" "$workspace" -- "$editor" "${editor_args[@]}" \
-        >"$log" 2>&1
+    ) >"$log" 2>&1
     status=$?
 fi
 set -e
 
-python3 "$manifest_tool" verify "$project_dir" "$manifest" || \
+"$host_python" "$manifest_tool" verify "$project_dir" "$manifest" || \
     fail 'Fab changed non-content staging state; preserve and review the private evidence'
 if (( status == 124 || status == 137 )); then
     fail "the Editor reached its $session_limit safety stop; inspect the private log"

@@ -22,11 +22,21 @@ fi
 if (( ${EUID:-$(id -u)} == 0 )); then
     fail 'run Fab phone authorization as the normal workspace owner, not root'
 fi
-for command_name in curl grep id install jq mkfifo mktemp nice openssl ps python3 rm \
-    sed ss systemctl tailscale timeout; do
+for command_name in basename chmod cmp curl dirname file flock grep head id install jq mkfifo \
+    mktemp nice openssl ps readlink rm sed sleep ss systemctl tailscale \
+    timeout; do
     command -v "$command_name" >/dev/null 2>&1 || \
         fail "required command is missing: $command_name"
 done
+host_python=/usr/bin/python3
+[[ -x $host_python ]] || fail "fixed host Python is unavailable: $host_python"
+
+script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)
+phase_lock="$script_dir/fab-phase-lock.sh"
+[[ -f $phase_lock && ! -L $phase_lock ]] || \
+    fail "shared Fab phase-lock helper is missing: $phase_lock"
+# shellcheck source=fab-phase-lock.sh
+source "$phase_lock"
 
 workspace=$(cd "$1" && pwd -P)
 engine_root=$(cd "$2" && pwd -P)
@@ -52,29 +62,72 @@ esac
 [[ ${project##*/} == FayFabAcquisition.uproject ]] || \
     fail 'the reviewed staging descriptor must be named FayFabAcquisition.uproject'
 
-script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)
 preflight="$script_dir/run-fex-fab-staging.sh"
 runner="$script_dir/run-fex-rootless.sh"
 relay="$script_dir/fab-auth-relay.py"
 manifest_tool="$script_dir/fab-staging-manifest.py"
+project_template="$script_dir/../staging/fab-acquisition-template/FayFabAcquisition.uproject"
 editor="$engine_root/Engine/Binaries/Linux/UnrealEditor"
+engine_version="$engine_root/Engine/Binaries/Linux/UnrealEditor.version"
+fab_binary="$engine_root/Engine/Plugins/Fab/Binaries/Linux/libUnrealEditor-Fab.so"
+fab_modules="$engine_root/Engine/Plugins/Fab/Binaries/Linux/UnrealEditor.modules"
+fab_downloader="$engine_root/Engine/Plugins/Fab/ThirdParty/libBuildPatchInstallerLib.so"
+epic_web_helper="$engine_root/Engine/Binaries/Linux/EpicWebHelper"
 guest_portal="$workspace/rootfs/ubuntu-24.04-x86_64/usr/bin/xdg-open"
 private_state="$workspace/state/fab-acquisition"
 private_logs="$workspace/logs-private/fab-acquisition"
 backend_port=18790
 tailnet_port=8474
 
-for required in "$preflight" "$runner" "$relay" "$manifest_tool" "$editor" \
-    "$guest_portal"; do
+for required in "$preflight" "$runner" "$relay" "$manifest_tool" "$project_template" \
+    "$editor" "$engine_version" "$fab_binary" "$fab_modules" "$fab_downloader" \
+    "$epic_web_helper" "$guest_portal"; do
     [[ -f $required && ! -L $required ]] || fail "required input is missing: $required"
 done
 [[ -x $preflight && -x $runner && -x $relay && -x $editor && -x $guest_portal ]] || \
     fail 'one or more reviewed launch inputs are not executable'
 grep -qx '# UE5-SPARK-FEX-XDG-OPEN-PORTAL-V3' "$guest_portal" || \
     fail 'the phone-capable guarded FEX portal adapter is missing'
+"$preflight" --check "$workspace" "$engine_root" "$project" "$manifest" >/dev/null
+fab_phase_lock_acquire "$workspace" || exit 1
+
+# The first check gives a useful standalone diagnostic. Repeat every mutable,
+# authoritative input check after owning the common phase lock so no other
+# cooperating Fab phase can change the project between preflight and launch.
+for required in "$preflight" "$runner" "$relay" "$manifest_tool" "$project_template" \
+    "$editor" "$engine_version" "$fab_binary" "$fab_modules" "$fab_downloader" \
+    "$epic_web_helper" "$guest_portal"; do
+    [[ -f $required && ! -L $required ]] || fail "required input changed after preflight: $required"
+done
+for forbidden in Source Plugins; do
+    [[ ! -e $project_dir/$forbidden && ! -L $project_dir/$forbidden ]] || \
+        fail "the content-only staging project must not contain $forbidden"
+done
+file "$editor" | grep -q 'x86-64' || fail 'the isolated Unreal Editor is not x86-64'
+file "$fab_binary" | grep -q 'x86-64' || fail 'the Fab Editor module is not x86-64'
+file "$fab_downloader" | grep -q 'x86-64' || fail 'the Fab downloader is not x86-64'
+file "$epic_web_helper" | grep -q 'x86-64' || fail 'EpicWebHelper is not x86-64'
+grep -qx '# UE5-SPARK-FEX-XDG-OPEN-PORTAL-V3' "$guest_portal" || \
+    fail 'the phone-capable guarded FEX portal adapter changed after preflight'
+cmp -s "$project_template" "$project" || \
+    fail 'the staging descriptor changed after preflight'
+read_build_id() {
+    sed -n 's/.*"BuildId"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$1" | head -1
+}
+engine_build_id=$(read_build_id "$engine_version")
+[[ -n $engine_build_id && $(read_build_id "$fab_modules") == "$engine_build_id" ]] || \
+    fail 'the Fab module manifest changed after preflight'
+"$host_python" "$manifest_tool" verify "$project_dir" "$manifest" >/dev/null || \
+    fail 'the staging baseline changed after preflight'
 systemctl --user is-active ue5-spark-avatar-live.service >/dev/null || \
     fail 'the live avatar service is not active; refusing to hide a pre-existing failure'
-"$preflight" --check "$workspace" "$engine_root" "$project" "$manifest" >/dev/null
+fab_owned_directory "$workspace/logs-private" shared || exit 1
+fab_owned_directory "$private_logs" private || exit 1
+fab_owned_directory "$workspace/state" shared || exit 1
+fab_owned_directory "$private_state" private || exit 1
+for private_directory in home config cache data state; do
+    fab_owned_directory "$private_state/$private_directory" private || exit 1
+done
 
 if ss -ltnH "sport = :$backend_port" | grep -q .; then
     fail "loopback relay port is already in use: $backend_port"
@@ -87,7 +140,6 @@ if ps -u "$(id -u)" -o args= | grep -F "$editor $project" | grep -v grep >/dev/n
     fail 'the Fab staging Editor is already running'
 fi
 
-install -d -m 0700 "$private_state" "$private_logs"
 session_dir=$(mktemp -d "$private_state/phone-auth.XXXXXX")
 chmod 0700 "$session_dir"
 fifo="$session_dir/activation.fifo"
@@ -140,7 +192,8 @@ cleanup() {
 }
 trap cleanup EXIT HUP INT TERM
 
-"$relay" --fifo "$fifo" --token-file "$token_file" --bind 127.0.0.1 \
+fab_phase_lock_exec_without_fd "$relay" \
+    --fifo "$fifo" --token-file "$token_file" --bind 127.0.0.1 \
     --port "$backend_port" >"$relay_log" 2>&1 &
 relay_pid=$!
 for _attempt in 1 2 3 4 5 6 7 8 9 10; do
@@ -179,7 +232,8 @@ export XDG_DATA_HOME="$private_state/data"
 export XDG_STATE_HOME="$private_state/state"
 export UE5_SPARK_FAB_AUTH_FIFO="$fifo"
 
-nice -n 15 timeout --signal=TERM --kill-after=20s 12m \
+fab_phase_lock_exec_without_fd nice -n 15 \
+    timeout --signal=TERM --kill-after=20s 12m \
     "$runner" "$workspace" -- "$editor" "$project" \
     -nullrhi -log -NoSplash -NoSound -NoSourceControl -NoCompile -NoCompileEditor \
     -corelimit=2 -onethread -norhithread -nogpucrashdebugging \
@@ -201,7 +255,7 @@ editor_status=$?
 set -e
 editor_pid=
 
-python3 "$manifest_tool" verify "$project_dir" "$manifest" >/dev/null || \
+"$host_python" "$manifest_tool" verify "$project_dir" "$manifest" >/dev/null || \
     fail 'Fab changed non-content staging state; preserve and review the private evidence'
 if (( auth_complete == 1 )); then
     printf 'FAB_AUTH_COMPLETE_OK\n'

@@ -283,5 +283,4 @@ if dirty_packages() != dirty_before:
 
 emit("BODY_COMPLETENESS", "manual_review_required")
 emit("FULLY_UNCLOTHED", "disabled")
-emit("NOAI_BOUNDARY", "deterministic_retarget_only")
 emit("COMPLETE", "OK")

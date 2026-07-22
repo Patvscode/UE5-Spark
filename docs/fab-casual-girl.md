@@ -12,15 +12,19 @@ It is a private deployment asset, not repository content.
 - The declared Engine range stops at UE 5.7 and Linux is not in the declared
   target-platform list. UE 5.8 and LinuxArm64 therefore require an isolated
   import, resave, and real cook rather than an assumption.
-- Fab's `NoAI` tag forbids use of the asset in generative-AI data collection.
-  This project must not train or condition ARDY, Qwen, or another model on its
-  meshes, textures, renders, or gallery images. Ordinary licensed rendering and
-  deterministic rig control remain separate from model training.
+- Fab currently displays a `NoAI` tag on the listing. This is recorded here as
+  information for the user to evaluate against the current listing terms and
+  EULA; the application does not interpret or enforce asset eligibility.
 
 The [Fab Standard License](https://www.fab.com/eula?lang=en) permits modifying
 and incorporating the asset into a project. It does not permit redistributing
 the asset by itself. Source assets and cooked packages remain private and are
 excluded by this repository's ignore rules.
+
+AI control is a local user choice, not a character-specific policy gate. The
+controller exposes `deterministic`, `ai_motion`, and `asset_aware_ai` modes.
+Asset-aware mode is off until the local user explicitly enables it, and the
+user remains responsible for deciding whether and how to use it with any asset.
 
 ## One user authorization required
 
