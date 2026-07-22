@@ -98,6 +98,55 @@ class FexFabStagingContractTests(unittest.TestCase):
         self.assertNotIn("FFabBrowser::GetUrl()", source)
         self.assertNotIn("FConsoleCommandWithArgsDelegate", source)
 
+    def test_read_only_review_wrapper_is_sealed_and_disables_fab(self) -> None:
+        wrapper = REPO_ROOT / "scripts/run-fex-fab-review.sh"
+        source = wrapper.read_text(encoding="utf-8")
+        self.assertTrue(os.access(wrapper, os.X_OK))
+        for marker in (
+            'python3 "$manifest_tool" verify',
+            'cmp -s "$project_template" "$project"',
+            "-EnablePlugins=PythonScriptPlugin,EditorScriptingUtilities",
+            "-DisablePlugins=Fab",
+            "-run=pythonscript",
+            'export FAY_FAB_STAGING_BASELINE_VERIFIED=1',
+            "FAY_FAB_INVENTORY_COMPLETE=OK",
+            "systemctl --user is-active ue5-spark-avatar-live.service",
+            '-nullrhi',
+            '>"$log" 2>&1',
+        ):
+            self.assertIn(marker, source)
+        self.assertNotIn("UE5_SPARK_FAB_ACTION", source)
+        self.assertNotIn("-ExecutePythonScript", source)
+
+    def test_casual_girl_inventory_is_fixed_and_read_only(self) -> None:
+        source = (REPO_ROOT / "scripts/inspect-fab-casual-girl.py").read_text(
+            encoding="utf-8"
+        )
+        for marker in (
+            'SOURCE_ROOT = "/Game/Sample"',
+            '"BP_ThirdPersonCharacter"',
+            '"SK_Body"',
+            '"SK_Complete"',
+            '"SK_Underwear"',
+            '"Sk_Arms"',
+            '"Sk_Legs"',
+            'emit("FULLY_UNCLOTHED", "disabled")',
+            'emit("NOAI_BOUNDARY", "deterministic_retarget_only")',
+            'emit("COMPLETE", "OK")',
+            "dirty_packages() != dirty_before",
+        ):
+            self.assertIn(marker, source)
+        for mutation in (
+            "save_asset(",
+            "save_directory(",
+            "rename_asset(",
+            "rename_directory(",
+            "duplicate_asset(",
+            "delete_asset(",
+            "export_assets(",
+        ):
+            self.assertNotIn(mutation, source)
+
     def test_build_wrapper_targets_generic_editor_not_live_project(self) -> None:
         source = (REPO_ROOT / "scripts/build-fex-fab-staging.sh").read_text(
             encoding="utf-8"
