@@ -32,11 +32,13 @@ FName NormalizeBehavior(const FName Behavior)
     return FName(*Behavior.ToString().TrimStartAndEnd().ToLower());
 }
 
-bool IsDeterministicBehavior(const FName Behavior)
+const TSet<FName>& ReviewedGeneratedBehaviors()
 {
-    return Behavior == TEXT("wave") || Behavior == TEXT("invite") ||
-        Behavior == TEXT("think") || Behavior == TEXT("warn") ||
-        Behavior == TEXT("nod") || Behavior == TEXT("shake");
+    static const TSet<FName> Behaviors = {
+        TEXT("idle"), TEXT("listen"), TEXT("explain"), TEXT("wave"),
+        TEXT("jog_in_place"), TEXT("run_in_place"),
+        TEXT("jumping_jacks"), TEXT("stretch"), TEXT("dance_relaxed")};
+    return Behaviors;
 }
 
 bool HasProceduralFallback(const FName Behavior)
@@ -50,7 +52,7 @@ bool HasProceduralFallback(const FName Behavior)
 constexpr int32 Core27JointCount = 27;
 constexpr float GeneratedBlendInSeconds = 0.25f;
 constexpr float GeneratedBlendOutMaximumSeconds = 0.50f;
-constexpr int32 RetargetContractVersion = 1;
+constexpr int32 RetargetContractVersion = 2;
 const FName ArdySourceInputProperty(TEXT("FayArdySourceMeshComponent"));
 const FName ArdyBlendWeightProperty(TEXT("FayArdyBlendWeight"));
 const FName ProceduralBehaviorProperty(TEXT("FayProceduralBehavior"));
@@ -59,6 +61,25 @@ const FName ProceduralIntensityProperty(TEXT("FayProceduralIntensity"));
 const FName ContractVersionProperty(TEXT("FayArdyContractVersion"));
 const FName ExcludesNeckHeadProperty(TEXT("FayArdyExcludesNeckAndHead"));
 const FName PreservesFingersProperty(TEXT("FayArdyPreservesFingerPose"));
+const FName UsesFootContactOffsetsProperty(TEXT("FayArdyUsesFootContactOffsets"));
+const FName ArdyLeftHeelOffsetProperty(TEXT("FayArdyLeftHeelOffset"));
+const FName ArdyLeftToeOffsetProperty(TEXT("FayArdyLeftToeOffset"));
+const FName ArdyRightHeelOffsetProperty(TEXT("FayArdyRightHeelOffset"));
+const FName ArdyRightToeOffsetProperty(TEXT("FayArdyRightToeOffset"));
+const FName ArdyLeftHeelContactProperty(TEXT("FayArdyLeftHeelContact"));
+const FName ArdyLeftToeContactProperty(TEXT("FayArdyLeftToeContact"));
+const FName ArdyRightHeelContactProperty(TEXT("FayArdyRightHeelContact"));
+const FName ArdyRightToeContactProperty(TEXT("FayArdyRightToeContact"));
+const FName ArdyFootOffsetProperties[FFayArdyFootContactOutput::ContactCount] = {
+    ArdyLeftHeelOffsetProperty,
+    ArdyLeftToeOffsetProperty,
+    ArdyRightHeelOffsetProperty,
+    ArdyRightToeOffsetProperty};
+const FName ArdyFootContactProperties[FFayArdyFootContactOutput::ContactCount] = {
+    ArdyLeftHeelContactProperty,
+    ArdyLeftToeContactProperty,
+    ArdyRightHeelContactProperty,
+    ArdyRightToeContactProperty};
 
 USkeletalMeshComponent* FindNamedBodyMesh(AActor* Avatar, const FName ComponentName)
 {
@@ -464,6 +485,8 @@ bool UFayBodyMotionComponent::ConfigureGeneratedRetarget()
         TargetPostProcessAnimation->GetClass(), ExcludesNeckHeadProperty);
     const FBoolProperty* FingersProperty = FindFProperty<FBoolProperty>(
         TargetPostProcessAnimation->GetClass(), PreservesFingersProperty);
+    const FBoolProperty* ContactUsageProperty = FindFProperty<FBoolProperty>(
+        TargetPostProcessAnimation->GetClass(), UsesFootContactOffsetsProperty);
     const FObjectPropertyBase* SourceInput = FindFProperty<FObjectPropertyBase>(
         TargetPostProcessAnimation->GetClass(), ArdySourceInputProperty);
     const FFloatProperty* WeightInput = FindFProperty<FFloatProperty>(
@@ -474,6 +497,22 @@ bool UFayBodyMotionComponent::ConfigureGeneratedRetarget()
         TargetPostProcessAnimation->GetClass(), ProceduralProgressProperty);
     const FFloatProperty* ProceduralIntensityInput = FindFProperty<FFloatProperty>(
         TargetPostProcessAnimation->GetClass(), ProceduralIntensityProperty);
+    bool bContactContractValid = true;
+    for (int32 ContactIndex = 0;
+         ContactIndex < FFayArdyFootContactOutput::ContactCount;
+         ++ContactIndex)
+    {
+        const FStructProperty* OffsetInput = FindFProperty<FStructProperty>(
+            TargetPostProcessAnimation->GetClass(),
+            ArdyFootOffsetProperties[ContactIndex]);
+        const FFloatProperty* ContactInput = FindFProperty<FFloatProperty>(
+            TargetPostProcessAnimation->GetClass(),
+            ArdyFootContactProperties[ContactIndex]);
+        bContactContractValid = bContactContractValid &&
+            OffsetInput != nullptr &&
+            OffsetInput->Struct == TBaseStructure<FVector>::Get() &&
+            ContactInput != nullptr;
+    }
     if (VersionProperty == nullptr ||
         VersionProperty->GetPropertyValue_InContainer(TargetPostProcessAnimation) !=
             RetargetContractVersion ||
@@ -481,13 +520,17 @@ bool UFayBodyMotionComponent::ConfigureGeneratedRetarget()
         !ExclusionProperty->GetPropertyValue_InContainer(TargetPostProcessAnimation) ||
         FingersProperty == nullptr ||
         !FingersProperty->GetPropertyValue_InContainer(TargetPostProcessAnimation) ||
+        ContactUsageProperty == nullptr ||
+        !ContactUsageProperty->GetPropertyValue_InContainer(
+            TargetPostProcessAnimation) ||
         SourceInput == nullptr ||
         !SourceInput->PropertyClass->IsChildOf(USkeletalMeshComponent::StaticClass()) ||
         WeightInput == nullptr || ProceduralNameInput == nullptr ||
-        ProceduralProgressInput == nullptr || ProceduralIntensityInput == nullptr)
+        ProceduralProgressInput == nullptr || ProceduralIntensityInput == nullptr ||
+        !bContactContractValid)
     {
         UE_LOG(LogFayBodyMotion, Warning,
-            TEXT("Generated retarget disabled: the target AnimBP failed the sealed v%d inputs/head-exclusion/finger-preservation contract."),
+            TEXT("Generated retarget disabled: the target AnimBP failed the sealed v%d inputs/head-exclusion/finger-preservation/contact-offset contract."),
             RetargetContractVersion);
         TearDownGeneratedRetarget();
         return false;
@@ -541,6 +584,7 @@ bool UFayBodyMotionComponent::ConfigureGeneratedRetarget()
         !SetTargetNameInput(ProceduralBehaviorProperty, NAME_None) ||
         !SetTargetFloatInput(ProceduralProgressProperty, 0.0f) ||
         !SetTargetFloatInput(ProceduralIntensityProperty, 0.0f) ||
+        !ApplyFootContactOutput(FFayArdyFootContactOutput()) ||
         BodyMesh->GetAnimClass() != OriginalBodyAnimClass)
     {
         UE_LOG(LogFayBodyMotion, Warning,
@@ -562,6 +606,7 @@ void UFayBodyMotionComponent::TearDownGeneratedRetarget()
     {
         SetTargetFloatInput(ArdyBlendWeightProperty, 0.0f);
         SetTargetNameInput(ProceduralBehaviorProperty, NAME_None);
+        ClearFootContactOutput();
         SetTargetObjectInput(ArdySourceInputProperty, nullptr);
     }
     if (IsValid(BodyMesh) && IsValid(ArdySourceMesh))
@@ -586,6 +631,7 @@ void UFayBodyMotionComponent::TearDownGeneratedRetarget()
     OriginalBodyAnimClass = nullptr;
     RetargetProfile = nullptr;
     RetargetBinding = nullptr;
+    ContactStabilizer.Reset();
     bGeneratedRetargetReady = false;
     bSafeProceduralReady = false;
 }
@@ -615,6 +661,8 @@ void UFayBodyMotionComponent::UpdateGeneratedRetarget(const float DeltaSeconds)
         bSafeProceduralReady = false;
         GeneratedBlendWeight = 0.0f;
         SetTargetFloatInput(ArdyBlendWeightProperty, 0.0f);
+        ContactStabilizer.Reset();
+        ClearFootContactOutput();
         return;
     }
     if (!IsValid(ArdyClient) || ActiveProvider != EFayBodyMotionProvider::Ardy)
@@ -625,9 +673,20 @@ void UFayBodyMotionComponent::UpdateGeneratedRetarget(const float DeltaSeconds)
     FFayArdyPoseFrame Pose;
     const bool bHasFreshPose = ArdyClient->SamplePose(DeltaSeconds, Pose) &&
         Pose.JointRotations.Num() == Core27JointCount &&
-        Pose.JointPositionsMetres.Num() == Core27JointCount;
+        Pose.JointPositionsMetres.Num() == Core27JointCount &&
+        Pose.Contacts.Num() == FFayArdyFootContactOutput::ContactCount;
+    FFayArdyFootContactOutput ContactOutput;
     if (!bHasFreshPose)
     {
+        ContactStabilizer.FadeOut(DeltaSeconds, ContactOutput);
+        if (!ApplyFootContactOutput(ContactOutput))
+        {
+            bGeneratedRetargetReady = false;
+            bSafeProceduralReady = false;
+            GeneratedBlendWeight = 0.0f;
+            SetTargetFloatInput(ArdyBlendWeightProperty, 0.0f);
+            return;
+        }
         GeneratedBlendWeight = FMath::Max(
             0.0f,
             GeneratedBlendWeight - DeltaSeconds / GeneratedBlendInSeconds);
@@ -640,6 +699,18 @@ void UFayBodyMotionComponent::UpdateGeneratedRetarget(const float DeltaSeconds)
     }
     else
     {
+        if (!ContactStabilizer.Update(Pose, DeltaSeconds, ContactOutput) ||
+            !ApplyFootContactOutput(ContactOutput))
+        {
+            bGeneratedRetargetReady = false;
+            bSafeProceduralReady = false;
+            GeneratedBlendWeight = 0.0f;
+            SetTargetFloatInput(ArdyBlendWeightProperty, 0.0f);
+            ClearFootContactOutput();
+            UE_LOG(LogFayBodyMotion, Error,
+                TEXT("Generated contact stabilizer rejected a pose; ARDY retarget failed closed."));
+            return;
+        }
         LastGeneratedPose = Pose;
         bHasLastGeneratedPose = true;
         GeneratedBlendWeight = FMath::Min(
@@ -653,6 +724,8 @@ void UFayBodyMotionComponent::UpdateGeneratedRetarget(const float DeltaSeconds)
         bGeneratedRetargetReady = false;
         bSafeProceduralReady = false;
         GeneratedBlendWeight = 0.0f;
+        ContactStabilizer.Reset();
+        ClearFootContactOutput();
     }
 }
 
@@ -674,12 +747,6 @@ FVector UFayBodyMotionComponent::ComputeBoundedRootOffset(
         Pose.RootTranslationMetres - GeneratedRootOriginMetres);
     return Offset.GetClampedToMaxSize(
         RetargetProfile->MaximumRootOffsetCentimetres);
-}
-
-bool UFayBodyMotionComponent::HasReviewedBakedMontage(const FName Behavior) const
-{
-    const TSoftObjectPtr<UAnimMontage>* Reference = BakedMontages.Find(Behavior);
-    return Reference != nullptr && !Reference->IsNull();
 }
 
 bool UFayBodyMotionComponent::SetTargetObjectInput(
@@ -740,6 +807,73 @@ bool UFayBodyMotionComponent::SetTargetNameInput(
     return Property->GetPropertyValue_InContainer(TargetPostProcessAnimation) == Value;
 }
 
+bool UFayBodyMotionComponent::SetTargetVectorInput(
+    const FName PropertyName,
+    const FVector& Value)
+{
+    if (!IsValid(TargetPostProcessAnimation) || Value.ContainsNaN())
+    {
+        return false;
+    }
+    FStructProperty* Property = FindFProperty<FStructProperty>(
+        TargetPostProcessAnimation->GetClass(), PropertyName);
+    if (Property == nullptr ||
+        Property->Struct != TBaseStructure<FVector>::Get())
+    {
+        return false;
+    }
+    FVector* Destination = Property->ContainerPtrToValuePtr<FVector>(
+        TargetPostProcessAnimation);
+    if (Destination == nullptr)
+    {
+        return false;
+    }
+    *Destination = Value;
+    return Destination->Equals(Value, KINDA_SMALL_NUMBER);
+}
+
+bool UFayBodyMotionComponent::ApplyFootContactOutput(
+    const FFayArdyFootContactOutput& Output)
+{
+    bool bAppliedAll = true;
+    for (int32 ContactIndex = 0;
+         ContactIndex < FFayArdyFootContactOutput::ContactCount;
+         ++ContactIndex)
+    {
+        const FVector& Offset = Output.OffsetsCentimetres[ContactIndex];
+        const float Weight = Output.Weights[ContactIndex];
+        if (Offset.ContainsNaN() || Offset.Size() > 6.001f ||
+            !FMath::IsFinite(Weight) || Weight < 0.0f || Weight > 1.0f ||
+            !SetTargetVectorInput(
+                ArdyFootOffsetProperties[ContactIndex], Offset) ||
+            !SetTargetFloatInput(
+                ArdyFootContactProperties[ContactIndex], Weight))
+        {
+            bAppliedAll = false;
+        }
+    }
+    if (!bAppliedAll)
+    {
+        ClearFootContactOutput();
+    }
+    return bAppliedAll;
+}
+
+void UFayBodyMotionComponent::ClearFootContactOutput()
+{
+    for (int32 ContactIndex = 0;
+         ContactIndex < FFayArdyFootContactOutput::ContactCount;
+         ++ContactIndex)
+    {
+        SetTargetVectorInput(
+            ArdyFootOffsetProperties[ContactIndex],
+            FVector::ZeroVector);
+        SetTargetFloatInput(
+            ArdyFootContactProperties[ContactIndex],
+            0.0f);
+    }
+}
+
 void UFayBodyMotionComponent::BeginProceduralGesture(
     const FFayBodyMotionRequest& Request)
 {
@@ -793,11 +927,13 @@ void UFayBodyMotionComponent::ResetGeneratedRetargetState()
     LastGeneratedPose = FFayArdyPoseFrame();
     GeneratedBlendWeight = 0.0f;
     bHasLastGeneratedPose = false;
+    ContactStabilizer.Reset();
     if (IsValid(ArdySourceAnimation))
     {
         ArdySourceAnimation->ResetPose();
     }
     SetTargetFloatInput(ArdyBlendWeightProperty, 0.0f);
+    ClearFootContactOutput();
 }
 
 void UFayBodyMotionComponent::StartGeneratedAction(
@@ -971,10 +1107,10 @@ bool UFayBodyMotionComponent::Dispatch(const FFayBodyMotionRequest& Request)
         return false;
     }
 
-    const bool bReviewedMontageWins = IsDeterministicBehavior(Request.Behavior) &&
-        HasReviewedBakedMontage(Request.Behavior);
+    const bool bReviewedGeneratedAction =
+        ReviewedGeneratedBehaviors().Contains(Request.Behavior);
     IFayBodyMotionProvider* Preferred = BakedProvider.Get();
-    if (!bReviewedMontageWins && ArdyProvider != nullptr &&
+    if (bReviewedGeneratedAction && ArdyProvider != nullptr &&
         ArdyProvider->CanPerform(Request))
     {
         Preferred = ArdyProvider.Get();
@@ -996,11 +1132,24 @@ bool UFayBodyMotionComponent::Dispatch(const FFayBodyMotionRequest& Request)
                 StopGeneratedActionImmediately();
             }
         }
+        const bool bUsedBakedFailureFallback =
+            bReviewedGeneratedAction && Preferred == BakedProvider.Get();
         SetState(
-            Request.Behavior == TEXT("idle")
-                ? EFayBodyMotionState::Idle
-                : EFayBodyMotionState::Performing,
+            bUsedBakedFailureFallback
+                ? EFayBodyMotionState::FallingBack
+                : (Request.Behavior == TEXT("idle")
+                    ? EFayBodyMotionState::Idle
+                    : EFayBodyMotionState::Performing),
             Preferred->GetKind());
+        if (bUsedBakedFailureFallback)
+        {
+            OnMotionFallback.Broadcast(
+                Request.Behavior,
+                TEXT("strict ARDY v2 or the reviewed retarget was unavailable"));
+            UE_LOG(LogFayBodyMotion, Warning,
+                TEXT("ARDY-first action '%s' used its reviewed baked/procedural failure fallback."),
+                *Request.Behavior.ToString());
+        }
         return true;
     }
 
@@ -1008,10 +1157,11 @@ bool UFayBodyMotionComponent::Dispatch(const FFayBodyMotionRequest& Request)
         ArdyProvider->CanPerform(Request) && ArdyProvider->Perform(Request))
     {
         StartGeneratedAction(Request);
-        SetState(EFayBodyMotionState::FallingBack, EFayBodyMotionProvider::Ardy);
-        OnMotionFallback.Broadcast(
-            Request.Behavior,
-            TEXT("reviewed deterministic clip was unavailable; using generated motion"));
+        SetState(
+            Request.Behavior == TEXT("idle")
+                ? EFayBodyMotionState::Idle
+                : EFayBodyMotionState::Performing,
+            EFayBodyMotionProvider::Ardy);
         return true;
     }
 

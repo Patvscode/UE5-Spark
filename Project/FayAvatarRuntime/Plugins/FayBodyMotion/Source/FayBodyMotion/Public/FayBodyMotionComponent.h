@@ -3,6 +3,7 @@
 #include "CoreMinimal.h"
 #include "Components/ActorComponent.h"
 #include "FayAvatarBridgeComponent.h"
+#include "FayArdyContactStabilizer.h"
 #include "FayArdyRetargetProfile.h"
 #include "FayBodyMotionTypes.h"
 #include "FayBodyMotionComponent.generated.h"
@@ -96,10 +97,12 @@ private:
     void UpdateGeneratedRetarget(float DeltaSeconds);
     bool IsGeneratedRetargetBindingIntact() const;
     FVector ComputeBoundedRootOffset(const FFayArdyPoseFrame& Pose);
-    bool HasReviewedBakedMontage(FName Behavior) const;
     bool SetTargetObjectInput(FName PropertyName, UObject* Value);
     bool SetTargetFloatInput(FName PropertyName, float Value);
     bool SetTargetNameInput(FName PropertyName, FName Value);
+    bool SetTargetVectorInput(FName PropertyName, const FVector& Value);
+    bool ApplyFootContactOutput(const FFayArdyFootContactOutput& Output);
+    void ClearFootContactOutput();
     void BeginProceduralGesture(const FFayBodyMotionRequest& Request);
     void StopProceduralGesture();
     void UpdateProceduralGestureBinding();
@@ -147,6 +150,7 @@ private:
     bool bHasGeneratedRootOrigin = false;
     FVector3f GeneratedRootOriginMetres = FVector3f::ZeroVector;
     FFayArdyPoseFrame LastGeneratedPose;
+    FFayArdyContactStabilizer ContactStabilizer;
     float GeneratedBlendWeight = 0.0f;
     bool bHasLastGeneratedPose = false;
     FName ProceduralBehavior = NAME_None;

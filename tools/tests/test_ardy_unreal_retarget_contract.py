@@ -21,6 +21,8 @@ class ArdyUnrealRetargetContractTests(unittest.TestCase):
         cls.coordinate = read(PRIVATE / "FayArdyCoordinateConversion.cpp")
         cls.source_anim = read(PRIVATE / "FayCore27SourceAnimInstance.cpp")
         cls.source_anim_header = read(PUBLIC / "FayCore27SourceAnimInstance.h")
+        cls.contact = read(PRIVATE / "FayArdyContactStabilizer.cpp")
+        cls.contact_header = read(PUBLIC / "FayArdyContactStabilizer.h")
         cls.skeleton = read(PRIVATE / "FayCore27Skeleton.cpp")
         cls.profile_header = read(PUBLIC / "FayArdyRetargetProfile.h")
         cls.profile_source = read(PRIVATE / "FayArdyRetargetProfile.cpp")
@@ -171,6 +173,9 @@ class ArdyUnrealRetargetContractTests(unittest.TestCase):
 
     def test_real_ardy_catalog_drives_wave_and_full_body_actions(self) -> None:
         for behavior in (
+            "idle",
+            "listen",
+            "explain",
             "wave",
             "jog_in_place",
             "run_in_place",
@@ -181,6 +186,64 @@ class ArdyUnrealRetargetContractTests(unittest.TestCase):
             self.assertIn(f'TEXT("{behavior}")', self.motion)
         self.assertIn("Client->SupportsBehavior(Request.Behavior)", self.motion)
         self.assertIn("ArdyProvider->CanPerform(Request)", self.motion)
+        dispatch = self.motion[self.motion.index("bool UFayBodyMotionComponent::Dispatch") :]
+        self.assertIn(
+            "ReviewedGeneratedBehaviors().Contains(Request.Behavior)",
+            dispatch,
+        )
+        self.assertIn(
+            "bReviewedGeneratedAction && ArdyProvider != nullptr &&",
+            dispatch,
+        )
+        self.assertNotIn("bReviewedMontageWins", dispatch)
+        self.assertIn("bUsedBakedFailureFallback", dispatch)
+        self.assertIn("strict ARDY v2 or the reviewed retarget was unavailable", dispatch)
+
+    def test_contact_stabilizer_is_bounded_and_fail_closed(self) -> None:
+        for marker in (
+            "constexpr int32 FayContactJointIndices[FayContactCount] = {25, 26, 21, 22};",
+            "constexpr float FayContactAcquireThreshold = 0.65f;",
+            "constexpr float FayContactReleaseThreshold = 0.35f;",
+            "constexpr float FayMaximumContactCorrectionCentimetres = 6.0f;",
+            "constexpr float FayMaximumContactAnchorDriftCentimetres = 18.0f;",
+            "State.bBlockedUntilRelease = true;",
+            "FayConvertArdyPositionToUnrealCentimetres(",
+            "(-DriftCentimetres).GetClampedToMaxSize(",
+            "FFayArdyContactStabilizer::FadeOut",
+        ):
+            self.assertIn(marker, self.contact)
+        for forbidden in ("RootOffset", "Neck", "Head", "Face", "Finger"):
+            self.assertNotIn(forbidden, self.contact)
+
+    def test_contact_postprocess_contract_is_exact(self) -> None:
+        self.assertIn("constexpr int32 RetargetContractVersion = 2;", self.motion)
+        for variable in (
+            "FayArdyUsesFootContactOffsets",
+            "FayArdyLeftHeelOffset",
+            "FayArdyLeftToeOffset",
+            "FayArdyRightHeelOffset",
+            "FayArdyRightToeOffset",
+            "FayArdyLeftHeelContact",
+            "FayArdyLeftToeContact",
+            "FayArdyRightHeelContact",
+            "FayArdyRightToeContact",
+        ):
+            self.assertIn(variable, self.motion)
+        for marker in (
+            "OffsetInput->Struct == TBaseStructure<FVector>::Get()",
+            "!ContactUsageProperty->GetPropertyValue_InContainer(",
+            "ContactStabilizer.Update(Pose, DeltaSeconds, ContactOutput)",
+            "ContactStabilizer.FadeOut(DeltaSeconds, ContactOutput)",
+            "ClearFootContactOutput();",
+        ):
+            self.assertIn(marker, self.motion)
+        self.assertIn("No root, neck, head, face, or finger transform", self.contact_header)
+        locked_root = self.motion[
+            self.motion.index("FVector UFayBodyMotionComponent::ComputeBoundedRootOffset") :
+            self.motion.index("bool UFayBodyMotionComponent::SetTargetObjectInput")
+        ]
+        self.assertIn("EFayArdyRootMotionPolicy::LockedInPlace", locked_root)
+        self.assertIn("return FVector::ZeroVector;", locked_root)
 
 
 if __name__ == "__main__":

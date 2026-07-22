@@ -25,11 +25,16 @@ The supported architecture is:
 exact 27-bone hierarchy, exact asset classes, the expected post-process class,
 and these fixed post-process AnimBP variables:
 
-- `FayArdyContractVersion` (`int32`, value `1`)
+- `FayArdyContractVersion` (`int32`, value `2`)
 - `FayArdyExcludesNeckAndHead` (`bool`, true)
 - `FayArdyPreservesFingerPose` (`bool`, true)
+- `FayArdyUsesFootContactOffsets` (`bool`, true)
 - `FayArdySourceMeshComponent` (`USkeletalMeshComponent`)
 - `FayArdyBlendWeight` (`float`)
+- `FayArdyLeftHeelOffset`, `FayArdyLeftToeOffset`,
+  `FayArdyRightHeelOffset`, `FayArdyRightToeOffset` (`FVector`)
+- `FayArdyLeftHeelContact`, `FayArdyLeftToeContact`,
+  `FayArdyRightHeelContact`, `FayArdyRightToeContact` (`float`)
 - `FayProceduralBehavior` (`FName`)
 - `FayProceduralProgress` (`float`)
 - `FayProceduralIntensity` (`float`)
@@ -52,7 +57,9 @@ character can enable generated motion, an Unreal Editor build must:
 3. Create a character post-process Animation Blueprint that retains its normal
    input pose and correctives, evaluates **Retarget Pose From Mesh**, and blends
    with a reviewed profile that excludes neck/head and all fingers. It must
-   expose the fixed variables listed above.
+   expose the fixed variables listed above. Its reviewed lower-body IK layer
+   adds the four bounded offsets to the already-retargeted heel/toe locations;
+   a zero contact weight disables that goal.
 4. Create a `UFayArdyRetargetProfile` Data Asset and attach exactly one
    `UFayArdyRetargetBindingComponent` to each reviewed character Blueprint.
 5. Compile/cook the assets and pass front/side wave, jog, jumping-jacks, face
@@ -83,14 +90,32 @@ Root translation defaults to `LockedInPlace`. The only opt-in alternative is a
 per-action origin with a maximum 20 cm displacement; actor/world locomotion is
 not exposed by this profile.
 
+### Bounded foot-contact stabilization
+
+Protocol-v2 global positions and ordered contact values now feed an
+action-scoped drift stabilizer. A heel or toe anchor is acquired at contact
+`>= 0.65` and released at `<= 0.35`. The stabilizer publishes only a counter-
+drift offset in Unreal's component basis, never an absolute cross-skeleton
+target. Each offset is clamped to 6 cm; an 18 cm source-joint discontinuity
+blocks that contact until a clean release. Weights are smoothed and decay on a
+buffer underrun. Invalid counts, non-finite values, missing AnimBP variables,
+or a changed contract clear all weights and disable ARDY.
+
+This layer does not change actor/root translation, including under
+`LockedInPlace`, and it never writes face, neck, head, or finger transforms.
+The fixed lower-body post-process graph remains a reviewed private asset, so a
+front/side foot-sliding gate is still required before deployment.
+
 ## Provider routing
 
-Reviewed timing-critical montages win when configured. Otherwise an action is
-sent to ARDY only if the last strictly qualified health response advertises the
-behavior. This lets real ARDY own `wave`, `jog_in_place`, `run_in_place`,
-`jumping_jacks`, `stretch`, and `dance_relaxed` once their sealed embeddings are
-present. If ARDY is unavailable, the reviewed post-process procedural input is
-used where supported, then ordinary idle.
+The nine sealed generated actions—`idle`, `listen`, `explain`, `wave`,
+`jog_in_place`, `run_in_place`, `jumping_jacks`, `stretch`, and
+`dance_relaxed`—are ARDY-first whenever both the strict protocol-v2 provider and
+the reviewed retarget contract are ready. A configured wave montage therefore
+cannot silently replace healthy ARDY. Baked montages and the post-process
+procedural gestures are failure fallbacks only; fallback state and reason are
+reported explicitly. Non-generated timing actions such as `invite`, `think`,
+`warn`, `nod`, and `shake` remain deterministic.
 
 Licensed character assets, Animation Blueprints, IK Rigs/Retargeters, blend
 masks, montages, checkpoints, embeddings, and cooked packages are intentionally
