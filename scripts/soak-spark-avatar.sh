@@ -119,8 +119,11 @@ fi
 if [[ -n $expected_fay_starttime && ! $expected_fay_starttime =~ ^[0-9]+$ ]]; then
     fail 'FAY_SOAK_EXPECTED_FAY_STARTTIME must be a Linux process starttime'
 fi
-[[ $expected_character == Ada || $expected_character == Aoi ]] || \
-    fail 'FAY_SOAK_EXPECTED_CHARACTER must name a reviewed packaged profile'
+case "$expected_character" in
+    Ada|Aoi) expected_adapter=UE58MetaHuman ;;
+    CasualGirl) expected_adapter=UE5EpicArkit ;;
+    *) fail 'FAY_SOAK_EXPECTED_CHARACTER must name a reviewed packaged profile' ;;
+esac
 [[ $expected_camera_framing == Portrait || $expected_camera_framing == FullBody ]] || \
     fail 'FAY_SOAK_EXPECTED_CAMERA_FRAMING must be Portrait or FullBody'
 if [[ -n $preflight_package_seal_sha256 &&
@@ -767,7 +770,7 @@ game_user_settings_policy_verified_count=$(grep -Fc \
     'Verified project-owned FayGameUserSettings runtime policy.' \
     "$runtime_new_log" || true)
 camera_framing_selected_count=$(grep -Fc \
-    "Selected reviewed character profile '$expected_character' (adapter=UE58MetaHuman, camera_framing=$expected_camera_framing)." \
+    "Selected reviewed character profile '$expected_character' (adapter=$expected_adapter, camera_framing=$expected_camera_framing)." \
     "$runtime_new_log" || true)
 frame_rate_policy_violation_count=$(grep -Ec \
     'Reviewed runtime frame cap policy drifted|Could not enforce the reviewed 30.00 FPS runtime frame cap|The packaged runtime is not using project-owned FayGameUserSettings' \

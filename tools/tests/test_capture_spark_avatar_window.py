@@ -46,7 +46,7 @@ class CaptureSparkAvatarWindowStaticTests(unittest.TestCase):
     def test_capture_readiness_requires_one_exact_camera_framing_marker(self) -> None:
         exact_marker = (
             'camera_framing_marker="Selected reviewed character profile '
-            "'$character' (adapter=UE58MetaHuman, "
+            "'$character' (adapter=$expected_adapter, "
             'camera_framing=$expected_camera_framing)."'
         )
         self.assertIn(exact_marker, self.source)

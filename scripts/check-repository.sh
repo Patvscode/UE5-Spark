@@ -44,6 +44,7 @@ PROJECT_ROOT = PurePosixPath("Project/FayAvatarRuntime")
 PROJECT_CONTENT_ROOT = PROJECT_ROOT / "Content"
 PROJECT_PLUGINS_ROOT = PROJECT_ROOT / "Plugins"
 OWNED_PROJECT_PLUGINS = {
+    "FayArkitRuntime",
     "FayAvatarBridge",
     "FayBodyMotion",
     "FayMetaHumanEditorTools",
@@ -372,15 +373,22 @@ python_sources = (
     Path("tools/validate_ardy_service.py"),
     Path("tools/tests/test_activate_ardy_provider.py"),
     Path("tools/tests/test_ardy_unreal_contract.py"),
+    Path("tools/tests/test_ardy_editor_asset_builder_contract.py"),
     Path("tools/tests/test_capture_spark_avatar_window.py"),
     Path("tools/tests/test_character_camera_framing.py"),
+    Path("tools/tests/test_fab_staging_manifest.py"),
     Path("tools/tests/test_package_manifest_compatibility.py"),
     Path("tools/tests/test_run_spark_avatar_gate.py"),
     Path("tools/tests/test_run_spark_ardy_recovery_gate.py"),
     Path("tools/tests/test_validate_ardy_service.py"),
     Path("tools/tests/test_wardrobe_profiles.py"),
     Path("tools/tests/test_wardrobe_unreal_contract.py"),
+    Path(
+        "Project/FayAvatarRuntime/Plugins/FayArkitRuntime/"
+        "Tests/test_arkit_runtime_contract.py"
+    ),
     Path("scripts/audit-fab-casual-girl.py"),
+    Path("scripts/fab-staging-manifest.py"),
     Path("scripts/character-profiles.py"),
     Path("scripts/cook-state.py"),
     Path("scripts/inspect-metahuman-runtime-contract.py"),
@@ -401,6 +409,10 @@ python_sources = (
         "Project/FayAvatarRuntime/Plugins/FayMetaHumanEditorTools/"
         "Scripts/build_ada.py"
     ),
+    Path(
+        "Project/FayAvatarRuntime/Plugins/FayMetaHumanEditorTools/"
+        "Scripts/build_ardy_v30_foundation.py"
+    ),
 )
 for source in python_sources:
     ast.parse(source.read_text(), filename=str(source))
@@ -414,6 +426,10 @@ json_sources = (
     Path(
         "Project/FayAvatarRuntime/Plugins/FayBodyMotion/"
         "FayBodyMotion.uplugin"
+    ),
+    Path(
+        "Project/FayAvatarRuntime/Plugins/FayArkitRuntime/"
+        "FayArkitRuntime.uplugin"
     ),
     Path(
         "Project/FayAvatarRuntime/Plugins/FayMetaHumanEditorTools/"
@@ -511,6 +527,7 @@ plugins = {entry["Name"]: entry for entry in project.get("Plugins", [])}
 expected_project_plugins = {
     "AnimationData",
     "ControlRigSpline",
+    "FayArkitRuntime",
     "FayAvatarBridge",
     "FayBodyMotion",
     "FayMetaHumanEditorTools",
@@ -528,6 +545,7 @@ if len(project.get("Plugins", [])) != len(plugins) or set(plugins) != expected_p
 
 for plugin_name in (
     "ControlRigSpline",
+    "FayArkitRuntime",
     "FayAvatarBridge",
     "FayBodyMotion",
     "FayMetaHumanRuntime",
@@ -581,6 +599,25 @@ validate_contentless_plugin(
     "Runtime",
 )
 
+arkit_runtime_path = Path(
+    "Project/FayAvatarRuntime/Plugins/FayArkitRuntime/FayArkitRuntime.uplugin"
+)
+validate_contentless_plugin(
+    parsed_json[arkit_runtime_path],
+    arkit_runtime_path,
+    "FayArkitRuntime",
+    "Runtime",
+)
+arkit_runtime_dependencies = {
+    entry.get("Name"): entry
+    for entry in parsed_json[arkit_runtime_path].get("Plugins", [])
+}
+if (
+    set(arkit_runtime_dependencies) != {"FayAvatarBridge"}
+    or not arkit_runtime_dependencies["FayAvatarBridge"].get("Enabled")
+):
+    reject("FayArkitRuntime must keep only its enabled FayAvatarBridge dependency")
+
 body_motion_path = Path(
     "Project/FayAvatarRuntime/Plugins/FayBodyMotion/FayBodyMotion.uplugin"
 )
@@ -625,12 +662,18 @@ validate_contentless_plugin(
 helper_dependencies = {entry.get("Name"): entry for entry in helper.get("Plugins", [])}
 if (
     len(helper.get("Plugins", [])) != len(helper_dependencies)
-    or set(helper_dependencies) != {"MetaHumanCharacter", "PythonScriptPlugin"}
+    or set(helper_dependencies)
+    != {"FayBodyMotion", "IKRig", "MetaHumanCharacter", "PythonScriptPlugin"}
 ):
-    reject("FayMetaHumanEditorTools must keep only its reviewed Editor dependencies")
-for dependency in helper.get("Plugins", []):
-    if not dependency.get("Enabled") or dependency.get("TargetAllowList") != ["Editor"]:
-        reject("FayMetaHumanEditorTools plugin dependencies must remain enabled and Editor-only")
+    reject("FayMetaHumanEditorTools must keep only its reviewed asset-builder dependencies")
+for dependency_name, dependency in helper_dependencies.items():
+    if not dependency.get("Enabled"):
+        reject("FayMetaHumanEditorTools plugin dependencies must remain enabled")
+    if dependency_name == "FayBodyMotion":
+        if "TargetAllowList" in dependency or "TargetDenyList" in dependency:
+            reject("the runtime FayBodyMotion dependency must remain available to Game targets")
+    elif dependency.get("TargetAllowList") != ["Editor"]:
+        reject("FayMetaHumanEditorTools' Engine plugin dependencies must remain Editor-only")
 
 runtime_path = Path(
     "Project/FayAvatarRuntime/Plugins/FayMetaHumanRuntime/"
@@ -669,6 +712,10 @@ runtime_build = Path(
     "Project/FayAvatarRuntime/Plugins/FayMetaHumanRuntime/Source/"
     "FayMetaHumanRuntime/FayMetaHumanRuntime.Build.cs"
 ).read_text()
+arkit_runtime_build = Path(
+    "Project/FayAvatarRuntime/Plugins/FayArkitRuntime/Source/"
+    "FayArkitRuntime/FayArkitRuntime.Build.cs"
+).read_text()
 body_motion_build = Path(
     "Project/FayAvatarRuntime/Plugins/FayBodyMotion/Source/"
     "FayBodyMotion/FayBodyMotion.Build.cs"
@@ -677,8 +724,14 @@ wardrobe_build = Path(
     "Project/FayAvatarRuntime/Plugins/FayWardrobe/Source/"
     "FayWardrobe/FayWardrobe.Build.cs"
 ).read_text()
+helper_build = Path(
+    "Project/FayAvatarRuntime/Plugins/FayMetaHumanEditorTools/Source/"
+    "FayMetaHumanEditorTools/FayMetaHumanEditorTools.Build.cs"
+).read_text()
 if '"FayMetaHumanRuntime"' not in main_build:
     reject("the Game module must depend on FayMetaHumanRuntime")
+if '"FayArkitRuntime"' not in main_build:
+    reject("the Game module must depend on FayArkitRuntime")
 if '"FayBodyMotion"' not in main_build:
     reject("the Game module must depend on FayBodyMotion")
 if '"FayWardrobe"' not in main_build:
@@ -689,6 +742,24 @@ for module_name in ("Core", "CoreUObject", "Engine", "FayAvatarBridge", "HTTP", 
 for module_name in ("Core", "CoreUObject", "Engine"):
     if f'"{module_name}"' not in wardrobe_build:
         reject(f"FayWardrobe.Build.cs is missing {module_name}")
+for module_name in ("Core", "CoreUObject", "Engine", "FayAvatarBridge"):
+    if f'"{module_name}"' not in arkit_runtime_build:
+        reject(f"FayArkitRuntime.Build.cs is missing {module_name}")
+for module_name in (
+    "BlueprintGraph",
+    "Core",
+    "CoreUObject",
+    "Engine",
+    "FayBodyMotion",
+    "IKRig",
+    "IKRigEditor",
+    "Kismet",
+    "MetaHumanCharacter",
+    "MetaHumanCharacterEditor",
+    "UnrealEd",
+):
+    if f'"{module_name}"' not in helper_build:
+        reject(f"FayMetaHumanEditorTools.Build.cs is missing {module_name}")
 for forbidden_module in ("FayAvatarBridge", "HTTP", "Json", "JsonUtilities"):
     if f'"{forbidden_module}"' in wardrobe_build:
         reject(f"FayWardrobe.Build.cs must not depend on {forbidden_module}")
@@ -703,7 +774,11 @@ for module_name in (
 ):
     if f'"{module_name}"' not in runtime_build:
         reject(f"FayMetaHumanRuntime.Build.cs is missing {module_name}")
-if "FayMetaHumanEditorTools" in main_build or "FayMetaHumanEditorTools" in runtime_build:
+if (
+    "FayMetaHumanEditorTools" in main_build
+    or "FayMetaHumanEditorTools" in runtime_build
+    or "FayMetaHumanEditorTools" in arkit_runtime_build
+):
     reject("Editor-only MetaHuman tools must not be a Game/runtime module dependency")
 
 runtime_launcher = Path("scripts/run-cooked-package.sh").read_text()
@@ -1005,7 +1080,17 @@ if "timeout" in recovery_activation_body or "kill-after" in recovery_activation_
 for marker in (
     "inherited_lock_fd=${ARDY_ACTIVATION_LOCK_FD:-}",
     "readonly TARGET_IMAGE='ue5-spark-ardy:0.3.0'",
-    "readonly ROLLBACK_IMAGE='ue5-spark-ardy:0.1.0'",
+    "readonly ROLLBACK_IMAGE='ue5-spark-ardy:0.2.0'",
+    "readonly ROLLBACK_PROVIDER='ardy'",
+    "qualify_v1_rollback",
+    '"protocolVersion": 1',
+    '"embeddingCount": 3',
+    "discover_readonly_models_root rollback_models_root",
+    "seal_models_tree rollback_models_seal",
+    '[[ $models_root != "$rollback_models_root" ]]',
+    "the v2 candidate models cannot be nested below the v1 rollback models",
+    '[[ $target_models_after == "$target_models_seal" ]]',
+    "production ARDY 0.2.0 is absent; no exact live rollback can be captured",
     '[[ -e /proc/self/fdinfo/$inherited_lock_fd ]]',
     'readlink -f "/proc/self/fd/$inherited_lock_fd"',
     '[[ $inherited_lock_path == "$lock_file" ]]',
@@ -1300,6 +1385,7 @@ if re.search(
 
 ignore_probes = (
     "Project/FayAvatarRuntime/Content/FayMetaHumans/Built/AdaFay/BP_AdaFay.uasset",
+    "Project/FayAvatarRuntime/Content/FayFab/CasualGirl/Runtime/BP_CasualGirlFay.uasset",
     "Project/FayAvatarRuntime/Content/AnyProjectAsset.uasset",
     "Project/FayAvatarRuntime/Plugins/FayMetaHumanRuntime/Content/Model.uasset",
     "secrets-private/hf-ardy-device/token",
@@ -1329,9 +1415,11 @@ fi
 
 if [[ -n $python_bin ]] && ! "$python_bin" -m unittest \
     tools.tests.test_activate_ardy_provider \
+    tools.tests.test_ardy_editor_asset_builder_contract \
     tools.tests.test_ardy_unreal_contract \
     tools.tests.test_capture_spark_avatar_window \
     tools.tests.test_character_camera_framing \
+    tools.tests.test_fab_staging_manifest \
     tools.tests.test_package_manifest_compatibility \
     tools.tests.test_run_spark_avatar_gate \
     tools.tests.test_run_spark_ardy_recovery_gate \

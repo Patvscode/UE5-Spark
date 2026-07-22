@@ -22,7 +22,11 @@ content remain private and are not part of this repository.
   no v30 content assets/package have been cooked, no candidate code has replaced
   the live v29 runtime, and no full-body visual/reliability gate has passed.
 - **Fab candidate:** Casual Girl is not present or imported in this workspace and
-  `pending_asset_audit`; wardrobe controls and full undress remain disabled.
+  remains `pending_asset_audit`. Source now contains its exact sealed character
+  profile, a separate direct ARKit morph driver, adapter-aware cook/package
+  verification, and Casual Girl capture/soak selection. Those contracts have
+  not been compiled against the vendor asset or cooked for LinuxArm64; wardrobe
+  controls and full undress remain disabled.
 
 Source tests prove parsing and fail-closed contracts only. They do not prove a
 real ARDY v2 generation, Unreal asset binding, natural motion, correct retarget,
@@ -404,9 +408,18 @@ deployable application.
 
 - Back up the passing integrated source before syncing it to Spark. Preserve the
   sealed v29 package, live ARDY `0.2.0` image and schema-1 cache, and v28 rollback.
-- Update the activation, recovery, package, and repository gates that still
-  encode protocol 1, `/v1/poses`, image `0.2.0`, or an embedding count of three.
-  Keep explicit v1 rollback checks rather than silently reinterpreting v1 as v2.
+- The guarded activator now implements a fail-closed `0.2.0` protocol-v1 to
+  `0.3.0` protocol-v2 migration. It requires the live real v1 provider, runs an
+  exact 30-batch v1 preflight, captures its immutable image and read-only model
+  mount, content-seals both the v1 rollback and isolated v2 candidate trees,
+  qualifies v2 on `127.0.0.1:18777`, then rechecks v1 before cutover. Any
+  post-cutover failure recreates the real v1 provider from its captured image ID
+  and model root and repeats the strict v1 qualification. It will not substitute
+  the old `0.1.0` mock and will not migrate when production is absent. This guard
+  is source-tested but has not been executed against the live Spark.
+- Update the recovery and package gates that still assume absent-service mock
+  recovery or protocol-v1 production. Keep explicit v1 rollback checks rather
+  than silently reinterpreting v1 as v2.
 - Build ARDY `0.3.0` in an isolated container, generate all nine reviewed
   schema-2 embeddings through the credentialed one-shot path, remove the token/
   encoder from normal runtime, and pass mock plus real 30-batch canaries at
@@ -438,8 +451,9 @@ deployable application.
   isolated private content root. Audit UE 5.8 and LinuxArm64 compatibility,
   skeleton/physics/plugins, every body region and LOD beneath clothing, ARKit
   morphs, and component identities before promoting its profile.
-- Build Casual Girl's separate Apple-ARKit face adapter, Epic-skeleton ARDY
-  retarget, and sealed wardrobe mapping. Keep wardrobe disabled and
+- Compile and tune the new Casual Girl Apple-ARKit source adapter against its
+  audited morph names, then build its Epic-skeleton ARDY retarget and sealed
+  wardrobe mapping. Keep wardrobe disabled and
   `allowFullyUnclothed=false` unless a manual complete-body audit explicitly
   passes. No Fab content or private asset paths belong in Git.
 - After body correctness is established, tune gaze, breathing, emotion,

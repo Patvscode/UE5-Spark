@@ -107,8 +107,11 @@ min_start_available_memory_gib=${UE5_SPARK_MIN_AVAILABLE_MEMORY_GIB:-48}
 max_start_gpu_utilization=${UE5_SPARK_MAX_START_GPU_UTILIZATION:-85}
 [[ $res_x =~ ^[1-9][0-9]*$ && $res_y =~ ^[1-9][0-9]*$ ]] || \
     fail 'FAY_SOAK_EXPECTED_RES_X/Y must be positive integers'
-[[ $character == Ada || $character == Aoi ]] || \
-    fail 'FAY_SOAK_CHARACTER must name a reviewed packaged profile'
+case "$character" in
+    Ada|Aoi) expected_adapter=UE58MetaHuman ;;
+    CasualGirl) expected_adapter=UE5EpicArkit ;;
+    *) fail 'FAY_SOAK_CHARACTER must name a reviewed packaged profile' ;;
+esac
 [[ $camera_framing == Portrait || $camera_framing == FullBody ]] || \
     fail 'FAY_SOAK_CAMERA_FRAMING must be Portrait or FullBody'
 [[ $scene_only =~ ^[01]$ ]] || fail 'FAY_SOAK_SCENE_ONLY must be 0 or 1'
@@ -1068,7 +1071,7 @@ for _ in $(seq 1 90); do
                 else
                     readiness_marker="Spawned character '$character'"
                 fi
-                camera_framing_marker="Selected reviewed character profile '$character' (adapter=UE58MetaHuman, camera_framing=$camera_framing)."
+                camera_framing_marker="Selected reviewed character profile '$character' (adapter=$expected_adapter, camera_framing=$camera_framing)."
                 dormancy_ready=1
                 if [[ $avatar_dormancy == 1 ]]; then
                     dormancy_marker="MetaHuman idle dormancy: enabled (delay=${avatar_dormancy_delay}.00 seconds, neutral_prepare_frames=2)."

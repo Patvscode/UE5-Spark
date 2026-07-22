@@ -43,6 +43,22 @@ def character(camera_framings: bool) -> dict[str, object]:
     return result
 
 
+def casual_girl() -> dict[str, object]:
+    return {
+        "id": "CasualGirl",
+        "adapter": "UE5EpicArkit",
+        "actorClass": (
+            "/Game/FayFab/CasualGirl/Runtime/"
+            "BP_CasualGirlFay.BP_CasualGirlFay_C"
+        ),
+        "packageAsset": (
+            "FayAvatarRuntime/Content/FayFab/CasualGirl/Runtime/"
+            "BP_CasualGirlFay.uasset"
+        ),
+        "cameraFramings": ["Portrait", "FullBody"],
+    }
+
+
 def manifest(schema: int) -> dict[str, object]:
     result: dict[str, object] = {
         "schema": schema,
@@ -100,7 +116,7 @@ class PackageManifestCompatibilityTests(unittest.TestCase):
         self.assertEqual(portrait.returncode, 0, portrait.stderr)
         self.assertEqual(
             portrait.stdout,
-            "Ada\tFayAvatarRuntime/Content/FayMetaHumans/Built/"
+            "Ada\tUE58MetaHuman\tFayAvatarRuntime/Content/FayMetaHumans/Built/"
             "AdaFay/BP_AdaFay.uasset\n",
         )
 
@@ -124,6 +140,102 @@ class PackageManifestCompatibilityTests(unittest.TestCase):
                     manifest(2), framing, allow_legacy_portrait=False
                 )
                 self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_schema_two_accepts_only_the_exact_reviewed_epic_arkit_profile(self) -> None:
+        payload = manifest(2)
+        payload["characters"] = [casual_girl()]
+        result = run_manifest_validator(
+            payload, "FullBody", allow_legacy_portrait=False
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(
+            result.stdout,
+            "CasualGirl\tUE5EpicArkit\t"
+            "FayAvatarRuntime/Content/FayFab/CasualGirl/Runtime/"
+            "BP_CasualGirlFay.uasset\n",
+        )
+
+    def test_epic_arkit_rejects_unreviewed_ids_and_cross_adapter_paths(self) -> None:
+        mutations = {
+            "unreviewed ID": ("id", "OtherGirl", "unreviewed UE5EpicArkit"),
+            "MetaHuman actor": (
+                "actorClass",
+                "/Game/FayMetaHumans/Built/AdaFay/"
+                "BP_AdaFay.BP_AdaFay_C",
+                "unsafe packaged UE5EpicArkit actor",
+            ),
+            "MetaHuman package": (
+                "packageAsset",
+                "FayAvatarRuntime/Content/FayMetaHumans/Built/"
+                "AdaFay/BP_AdaFay.uasset",
+                "unsafe packaged UE5EpicArkit character asset",
+            ),
+        }
+        for label, (key, value, error) in mutations.items():
+            with self.subTest(label=label):
+                payload = manifest(2)
+                profile = casual_girl()
+                profile[key] = value
+                payload["characters"] = [profile]
+                result = run_manifest_validator(
+                    payload, "Portrait", allow_legacy_portrait=False
+                )
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn(error, result.stderr)
+
+    def test_metahuman_rejects_mismatched_actor_and_package_paths(self) -> None:
+        payload = manifest(2)
+        payload["characters"][0]["packageAsset"] = (
+            "FayAvatarRuntime/Content/FayMetaHumans/Built/"
+            "AoiFay/BP_AoiFay.uasset"
+        )
+        result = run_manifest_validator(
+            payload, "Portrait", allow_legacy_portrait=False
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("mismatched MetaHuman asset paths", result.stderr)
+
+        cross_adapter = manifest(2)
+        cross_adapter["characters"][0]["actorClass"] = casual_girl()["actorClass"]
+        cross_adapter["characters"][0]["packageAsset"] = casual_girl()[
+            "packageAsset"
+        ]
+        result = run_manifest_validator(
+            cross_adapter, "Portrait", allow_legacy_portrait=False
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("unsafe packaged UE58MetaHuman actor class", result.stderr)
+
+    def test_unreviewed_adapter_is_rejected(self) -> None:
+        payload = manifest(2)
+        payload["characters"][0]["adapter"] = "UE5Other"
+        result = run_manifest_validator(
+            payload, "Portrait", allow_legacy_portrait=False
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("unsupported packaged character adapter", result.stderr)
+
+    def test_legacy_schema_cannot_claim_the_new_adapter(self) -> None:
+        payload = manifest(1)
+        profile = casual_girl()
+        del profile["cameraFramings"]
+        payload["characters"] = [profile]
+        result = run_manifest_validator(
+            payload, "Portrait", allow_legacy_portrait=True
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("legacy manifests support only UE58MetaHuman", result.stderr)
+
+    def test_deep_content_requirements_are_adapter_conditional(self) -> None:
+        source = PACKAGE_VERIFIER.read_text(encoding="utf-8")
+        for marker in (
+            "if (( requires_metahuman == 1 )); then",
+            "if (( requires_epic_arkit == 1 )); then",
+            "if (( requires_streaming_ada == 1 )); then",
+            "FayAvatarRuntime/Content/FayFab/CasualGirl/",
+            "current sealed UE5EpicArkit contract deliberately keeps",
+        ):
+            self.assertIn(marker, source)
 
     def test_each_schema_rejects_fields_from_the_other_contract(self) -> None:
         legacy_with_v2_fields = copy.deepcopy(manifest(1))

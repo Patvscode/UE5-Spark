@@ -94,7 +94,15 @@ than reusing the directory.
 ## Explicit ARDY recovery diagnostic
 
 `scripts/run-spark-ardy-recovery-gate.sh` is a separate diagnostic-only tool.
-Unlike the normal gate, it is allowed to stop one container, but only after it
+Its existing absent-service/mock-recovery flow predates the guarded v1-to-v2
+migration and must not be run during this transition. The migration activator
+now deliberately refuses to proceed without the live real `0.2.0` provider,
+because that provider's exact immutable image and read-only model mount are the
+rollback source. The recovery diagnostic must be revised and requalified for
+the v2 production contract before it is enabled again.
+
+Historically, the diagnostic behaved as follows. Unlike the normal gate, it is
+allowed to stop one container, but only after it
 has repeatedly captured and matched the exact fixed-name real ARDY container,
 immutable image ID, host PID/start time, isolation settings, model mount,
 loopback port, and sealed health response. There is no container-name, image,
@@ -104,9 +112,8 @@ The diagnostic starts a fixed Ada speech/action sequence, stops that one 64-hex
 container ID inside a bounded helper, verifies that both its name and port are
 unclaimed, and invokes the guarded activator while holding the project activation
 lock. An unknown name or port claimant is never stopped or replaced. Every exit
-path reconciles the fixed endpoint. Success requires the new real provider to
-pass main-path and cleanup validation; a failed activation may safely preserve
-only a verified sealed mock, in which case the diagnostic remains failed.
+path reconciles the fixed endpoint. Its old mock-restoration assumptions are why
+the diagnostic is currently disabled for the v1-to-v2 transition.
 
 Success requires this ordered runtime evidence:
 

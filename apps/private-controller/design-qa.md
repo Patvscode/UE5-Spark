@@ -2,9 +2,9 @@
 
 ## Evidence
 
-- User correction source: `/tmp/codex-remote-attachments/019f7b48-0d14-7751-87d2-08d1b4193263/B4B7BD6B-2CD5-4727-83F2-7C35CD962265/1-Photo-1.jpg`, 590 × 1280.
-- Browser-rendered mobile implementation: `/Users/patrickmello/UE5-Spark/apps/private-controller/qa-mobile-direct-controls.png`, 390 × 844 CSS pixels at 1×.
-- Combined comparison input: `/Users/patrickmello/UE5-Spark/apps/private-controller/qa-reference-comparison.png`, source and implementation side by side at 390 × 844 each.
+- User correction source: externally supplied mobile screenshot, 590 × 1280.
+- Browser-rendered mobile implementation: private ignored QA capture `apps/private-controller/qa-mobile-direct-controls.png`, 390 × 844 CSS pixels at 1×.
+- Combined comparison input: private ignored QA capture `apps/private-controller/qa-reference-comparison.png`, source and implementation side by side at 390 × 844 each.
 - Capture method: the in-app browser rendered the real Vite app in a same-origin 390 × 844 frame. Two viewport captures were stitched at the exact 720-pixel browser boundary.
 - State: Ada replay fallback, autonomous Alive mode on, zoom at Fit/1.0×, no modal open, persistent movement and message fields visible.
 

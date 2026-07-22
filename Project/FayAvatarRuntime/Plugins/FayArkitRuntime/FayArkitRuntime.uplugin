@@ -1,0 +1,25 @@
+{
+  "FileVersion": 3,
+  "Version": 1,
+  "VersionName": "0.1.0",
+  "FriendlyName": "Fay ARKit Runtime",
+  "Description": "Source-only Fay speech and expression adapter for reviewed Apple ARKit morph characters.",
+  "Category": "AI",
+  "CreatedBy": "UE5-Spark contributors",
+  "CanContainContent": false,
+  "IsBetaVersion": true,
+  "Installed": false,
+  "Modules": [
+    {
+      "Name": "FayArkitRuntime",
+      "Type": "Runtime",
+      "LoadingPhase": "Default"
+    }
+  ],
+  "Plugins": [
+    {
+      "Name": "FayAvatarBridge",
+      "Enabled": true
+    }
+  ]
+}

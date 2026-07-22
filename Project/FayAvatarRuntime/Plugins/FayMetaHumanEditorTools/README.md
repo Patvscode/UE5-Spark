@@ -5,6 +5,13 @@ needed to reproduce Epic's preset-to-assembly sequence from Python. It contains
 no MetaHuman assets, Engine source, credentials, or generated content. The
 project enables it only for Editor targets; packaged Game targets exclude it.
 
+The plugin also contains a sealed ARDY v30 retarget **foundation** builder.
+It creates and validates the exact Core27/source-target IK assets, a body-only
+mask, a fail-closed draft profile, and isolated Ada/Aoi Blueprint candidates.
+It deliberately does not invent or silently splice the MetaHuman post-process
+AnimGraph. See `docs/ardy-v30-editor-foundation.md` for its fixed paths,
+expected nonzero completion gate, v2 foot-contact inputs, and review boundary.
+
 The adapter reflects
 `UMetaHumanCharacterEditorSubsystem::InitializeFromPreset`, which is public C++
 in UE 5.8 but is not exposed directly to Blueprint or Python. The accompanying

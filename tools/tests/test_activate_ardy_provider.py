@@ -56,7 +56,7 @@ class ActivateArdyProviderTests(unittest.TestCase):
             "readonly PRODUCTION_CONTAINER='ue5-spark-ardy'",
             "readonly CANARY_CONTAINER='ue5-spark-ardy-canary'",
             "readonly TARGET_IMAGE='ue5-spark-ardy:0.3.0'",
-            "readonly ROLLBACK_IMAGE='ue5-spark-ardy:0.1.0'",
+            "readonly ROLLBACK_IMAGE='ue5-spark-ardy:0.2.0'",
             "readonly PRODUCTION_PORT=8777",
             "readonly CANARY_PORT=18777",
         ):
@@ -221,7 +221,7 @@ class ActivateArdyProviderOwnershipFunctionTests(unittest.TestCase):
             PRODUCTION_PORT=8777
             CANARY_PORT=18777
             TARGET_PROVIDER=ardy
-            ROLLBACK_PROVIDER=mock
+            ROLLBACK_PROVIDER=ardy
             RUN_LABEL_KEY=com.ue5-spark.ardy.activation-run
             ROLE_LABEL_KEY=com.ue5-spark.ardy.activation-role
             target_image_id={image}
@@ -229,6 +229,7 @@ class ActivateArdyProviderOwnershipFunctionTests(unittest.TestCase):
             activation_run_id={run_id}
             evidence_root={root}
             models_root={root / 'models'}
+            rollback_models_root={root / 'models'}
             pending_launch_active=0
             pending_launch_name=''
             pending_launch_image=''
@@ -492,17 +493,15 @@ class ActivateArdyProviderAdditionalStaticTests(unittest.TestCase):
     def setUpClass(cls) -> None:
         cls.source = SCRIPT_PATH.read_text(encoding="utf-8")
 
-    def test_absent_service_recovery_requires_an_unused_fixed_port(self) -> None:
+    def test_absent_service_fails_closed_without_touching_the_fixed_port(self) -> None:
         for marker in (
-            "recovery_mode=1",
             'loopback_port_is_unused "$PRODUCTION_PORT"',
             "production ARDY is absent but its fixed loopback port is unexpectedly owned",
-            "If the real canary or relaunch fails, restore the sealed mock endpoint.",
-            "the production container name was claimed during recovery qualification",
-            "the production loopback port was claimed during recovery qualification",
+            "production ARDY 0.2.0 is absent; no exact live rollback can be captured",
             '"recovery_mode=$recovery_mode"',
         ):
             self.assertIn(marker, self.source)
+        self.assertNotIn("recovery_mode=1", self.source)
         port_check = self.source[
             self.source.index("loopback_port_is_unused()") :
             self.source.index("capture_verified_container()")
@@ -583,12 +582,46 @@ class ActivateArdyProviderAdditionalStaticTests(unittest.TestCase):
             "--pids-limit 512",
             "--shm-size 4g",
             "--tmpfs /tmp:rw,noexec,nosuid,size=1g",
-            'type=bind,src=$models_root,dst=/models,readonly',
+            'type=bind,src=$launch_models_root,dst=/models,readonly',
             '"$validator" --port "$CANARY_PORT" --batches 30',
             '"$validator" --port "$PRODUCTION_PORT" --batches 30',
+            'qualify_v1_rollback "$PRODUCTION_PORT"',
+            '"embeddingCount": 3',
+            'urllib.request.ProxyHandler({})',
+            '"protocolVersion": 1',
+            '"treeSha256": aggregate.hexdigest()',
+            '"huggingface_token"',
+            '[[ $models_root != "$rollback_models_root" ]]',
+            'the v2 candidate models cannot be nested below the v1 rollback models',
+            'the v1 rollback models cannot be nested below the v2 candidate models',
             're.search(r"(?:TOKEN|PASSWORD|SECRET|CREDENTIAL|API_KEY)$"',
         ):
             self.assertIn(marker, self.source)
+
+    def test_real_v1_rollback_is_strictly_qualified_and_content_sealed(self) -> None:
+        for marker in (
+            "readonly ROLLBACK_IMAGE='ue5-spark-ardy:0.2.0'",
+            "readonly ROLLBACK_PROVIDER='ardy'",
+            'behaviors = ("idle", "listen", "explain")',
+            '"protocolVersion": 1',
+            '"embeddingCount": 3',
+            '"coordinateSystem", "frames"',
+            'len(batch["frames"]) != 8',
+            'len(joints) != 27',
+            'joints[5] != identity',
+            'joints[6] != identity',
+            'for index in range(30)',
+            'discover_readonly_models_root rollback_models_root',
+            'seal_models_tree rollback_models_seal',
+            '[[ $rollback_models_reverified == "$rollback_models_seal" ]]',
+            '[[ $restored_models_seal == "$rollback_models_seal" ]]',
+            '[[ $target_models_after == "$target_models_seal" ]]',
+            '"$rollback_models_root" rollback',
+            "production ARDY 0.2.0 is absent; no exact live rollback can be captured",
+        ):
+            self.assertIn(marker, self.source)
+        self.assertNotIn("readonly ROLLBACK_PROVIDER='mock'", self.source)
+        self.assertNotIn("readonly ROLLBACK_IMAGE='ue5-spark-ardy:0.1.0'", self.source)
 
 
 @unittest.skipUnless(
@@ -607,7 +640,8 @@ class ActivateArdyProviderStateMachineTests(unittest.TestCase):
         self.test_repo = self.root / "repo"
         self.script = self.test_repo / "scripts" / SCRIPT_PATH.name
         self.validator = self.test_repo / "tools" / "validate_ardy_service.py"
-        self.models = self.root / "models-private" / "ardy"
+        self.models = self.root / "models-private" / "ardy-v2-candidate"
+        self.rollback_models = self.root / "models-private" / "ardy-v1-rollback"
         self.logs = self.root / "logs-private"
         self.fake_bin = self.root / "fake-bin"
         self.state_file = self.root / "docker-state.json"
@@ -617,14 +651,26 @@ class ActivateArdyProviderStateMachineTests(unittest.TestCase):
         self.script.parent.mkdir(parents=True)
         self.validator.parent.mkdir(parents=True)
         (self.models / "embeddings").mkdir(parents=True)
+        (self.rollback_models / "embeddings").mkdir(parents=True)
+        (self.models / "embeddings" / "manifest.json").write_text(
+            '{"schema":2,"embeddingCount":9}', encoding="utf-8"
+        )
+        (self.rollback_models / "embeddings" / "manifest.json").write_text(
+            '{"schema":1,"embeddingCount":3}', encoding="utf-8"
+        )
         self.logs.mkdir()
         self.fake_bin.mkdir()
-        self.state_file.write_text("{}", encoding="utf-8")
+        self.state_file.write_text(
+            json.dumps(self._initial_v1_record()), encoding="utf-8"
+        )
         self.script.write_text(SCRIPT_PATH.read_text(encoding="utf-8"), encoding="utf-8")
         self.script.chmod(0o755)
         self._write_executable("docker", self._fake_docker_source())
         self._write_executable("ss", self._fake_ss_source())
         self._write_executable("curl", self._fake_curl_source())
+        (self.fake_bin / "sitecustomize.py").write_text(
+            self._fake_urllib_sitecustomize_source(), encoding="utf-8"
+        )
         self._write_executable(
             "sleep",
             "#!/usr/bin/env python3\n"
@@ -662,11 +708,68 @@ class ActivateArdyProviderStateMachineTests(unittest.TestCase):
                 "FAKE_DOCKER_LOG": str(self.command_log),
                 "FAKE_MODELS_ROOT": str(self.models.resolve()),
                 "FAKE_VALIDATOR_COUNT": str(self.validator_count),
+                "PYTHONPATH": str(self.fake_bin),
             }
         )
 
     def tearDown(self) -> None:
         self.temporary.cleanup()
+
+    def _initial_v1_record(self) -> dict[str, object]:
+        rollback_image_id = "sha256:" + "2" * 64
+        return {
+            "ue5-spark-ardy": {
+                "Id": "d" * 64,
+                "Name": "/ue5-spark-ardy",
+                "Image": rollback_image_id,
+                "RestartCount": 0,
+                "State": {
+                    "Running": True,
+                    "Dead": False,
+                    "OOMKilled": False,
+                    "Error": "",
+                    "Pid": 4100,
+                    "StartedAt": "2026-07-20T00:00:00Z",
+                },
+                "Config": {
+                    "Image": rollback_image_id,
+                    "User": f"{os.getuid()}:{os.getgid()}",
+                    "Cmd": [
+                        "--host", "127.0.0.1", "--port", "8777",
+                        "--provider", "ardy", "--models-root", "/models",
+                    ],
+                    "Env": [],
+                    "Labels": {},
+                },
+                "HostConfig": {
+                    "AutoRemove": True,
+                    "NetworkMode": "host",
+                    "ReadonlyRootfs": True,
+                    "CapDrop": ["ALL"],
+                    "SecurityOpt": ["no-new-privileges:true"],
+                    "PidsLimit": 512,
+                    "ShmSize": 4 * 1024**3,
+                    "Tmpfs": {"/tmp": "rw,noexec,nosuid,size=1g"},
+                    "DeviceRequests": [{
+                        "Driver": "",
+                        "Count": -1,
+                        "DeviceIDs": None,
+                        "Capabilities": [["gpu"]],
+                        "Options": {},
+                    }],
+                },
+                "Mounts": [{
+                    "Type": "bind",
+                    "Source": str(self.rollback_models.resolve()),
+                    "Destination": "/models",
+                    "RW": False,
+                    "Mode": "",
+                    "Propagation": "rprivate",
+                }],
+                "FakePort": "8777",
+                "FakeProvider": "ardy",
+            }
+        }
 
     def _write_executable(self, name: str, source: str) -> None:
         destination = self.fake_bin / name
@@ -708,7 +811,9 @@ class ActivateArdyProviderStateMachineTests(unittest.TestCase):
                 image = args[-1]
                 identifiers = {
                     "ue5-spark-ardy:0.3.0": target_image_id,
-                    "ue5-spark-ardy:0.1.0": rollback_image_id,
+                    "ue5-spark-ardy:0.2.0": rollback_image_id,
+                    target_image_id: target_image_id,
+                    rollback_image_id: rollback_image_id,
                 }
                 if image not in identifiers:
                     raise SystemExit(1)
@@ -782,7 +887,7 @@ class ActivateArdyProviderStateMachineTests(unittest.TestCase):
                     time.sleep(float(os.environ.get("FAKE_DOCKER_DELAY_SECONDS", "1")))
                 if name == "ue5-spark-ardy-canary":
                     container_id, pid = "c" * 64, 4101
-                elif provider == "ardy":
+                elif role == "target":
                     container_id, pid = "a" * 64, 4102
                 else:
                     container_id, pid = "b" * 64, 4103
@@ -822,7 +927,13 @@ class ActivateArdyProviderStateMachineTests(unittest.TestCase):
                         "PidsLimit": int(options["--pids-limit"]),
                         "ShmSize": 4 * 1024**3,
                         "Tmpfs": {"/tmp": "rw,noexec,nosuid,size=1g"},
-                        "DeviceRequests": [{"Capabilities": [["gpu"]]}],
+                        "DeviceRequests": [{
+                            "Driver": "",
+                            "Count": -1,
+                            "DeviceIDs": None,
+                            "Capabilities": [["gpu"]],
+                            "Options": {},
+                        }],
                     },
                     "Mounts": [{
                         "Type": "bind",
@@ -975,6 +1086,97 @@ class ActivateArdyProviderStateMachineTests(unittest.TestCase):
             """
         )
 
+    @staticmethod
+    def _fake_urllib_sitecustomize_source() -> str:
+        return textwrap.dedent(
+            """\
+            import io
+            import json
+            import os
+            import urllib.parse
+            import urllib.request
+            from email.message import Message
+            from pathlib import Path
+
+            _real_urlopen = urllib.request.urlopen
+
+            class FakeResponse:
+                def __init__(self, value):
+                    self.status = 200
+                    self._body = json.dumps(value, separators=(",", ":")).encode()
+                    self.headers = Message()
+                    self.headers["Content-Type"] = "application/json"
+
+                def __enter__(self):
+                    return self
+
+                def __exit__(self, *_args):
+                    return False
+
+                def read(self, amount=-1):
+                    return self._body if amount < 0 else self._body[:amount]
+
+            def fake_urlopen(request, *args, **kwargs):
+                url = request.full_url if hasattr(request, "full_url") else str(request)
+                parsed = urllib.parse.urlparse(url)
+                if parsed.hostname != "127.0.0.1" or parsed.port != 8777:
+                    return _real_urlopen(request, *args, **kwargs)
+                state = json.loads(Path(os.environ["FAKE_DOCKER_STATE"]).read_text(
+                    encoding="utf-8"
+                ))
+                record = state.get("ue5-spark-ardy")
+                rollback_image_id = "sha256:" + "2" * 64
+                if (
+                    record is None
+                    or record.get("Image") != rollback_image_id
+                    or record.get("FakeProvider") != "ardy"
+                    or record.get("FakePort") != "8777"
+                    or record.get("State", {}).get("Running") is not True
+                ):
+                    raise OSError("sealed v1 endpoint is unavailable")
+                if parsed.path == "/healthz":
+                    return FakeResponse({
+                        "status": "ready",
+                        "provider": "ardy",
+                        "protocolVersion": 1,
+                        "fps": 20,
+                        "bufferFrames": 8,
+                        "facialControl": "excluded",
+                        "checkpoint": "ARDY-Core-RP-20FPS-Horizon8",
+                        "embeddingCount": 3,
+                        "p95GenerationMs": 130.0,
+                    })
+                if parsed.path != "/v1/poses":
+                    raise OSError("unsupported fake v1 path")
+                payload = json.loads((request.data or b"{}").decode())
+                sequence = int(payload.get("afterSequence", 0)) + 1
+                identity = [0.0, 0.0, 0.0, 1.0]
+                first_time = (sequence - 1) * 0.4
+                frames = []
+                for index in range(8):
+                    frames.append({
+                        "time": first_time + index * 0.05,
+                        "root": [0.0, 0.0, 0.0, *identity],
+                        "joints": [identity[:] for _ in range(27)],
+                        "contacts": [0.0, 0.0, 0.0, 0.0],
+                    })
+                return FakeResponse({
+                    "version": 1,
+                    "sequence": sequence,
+                    "fps": 20,
+                    "coordinateSystem": "ardy-y-up-z-forward-meters",
+                    "frames": frames,
+                })
+
+            class FakeOpener:
+                def open(self, request, *args, **kwargs):
+                    return fake_urlopen(request, *args, **kwargs)
+
+            urllib.request.urlopen = fake_urlopen
+            urllib.request.build_opener = lambda *_handlers: FakeOpener()
+            """
+        )
+
     def _run(
         self,
         name: str,
@@ -1021,30 +1223,35 @@ class ActivateArdyProviderStateMachineTests(unittest.TestCase):
             "ss-failure", "0", ss_failure=True
         )
         self.assertNotEqual(result.returncode, 0)
-        self.assertEqual(state, {})
+        self.assertEqual(set(state), {"ue5-spark-ardy"})
+        self.assertEqual(
+            state["ue5-spark-ardy"]["Config"]["Image"], self.rollback_image_id
+        )
         self.assertFalse(any(command and command[0] == "run" for command in commands))
         record = self._result_record(evidence)
         self.assertEqual(record["status"], "failed")
         self.assertEqual(record["rollback_attempted"], "0")
 
-    def test_canary_failure_restores_and_verifies_mock(self) -> None:
+    def test_canary_failure_leaves_the_exact_live_v1_provider_untouched(self) -> None:
         result, evidence, state, _commands = self._run("canary-failure", "1")
         self.assertNotEqual(result.returncode, 0)
         self.assertEqual(set(state), {"ue5-spark-ardy"})
         production = state["ue5-spark-ardy"]
-        self.assertEqual(production["FakeProvider"], "mock")
+        self.assertEqual(production["FakeProvider"], "ardy")
         self.assertEqual(production["Config"]["Image"], self.rollback_image_id)
         record = self._result_record(evidence)
-        self.assertEqual(record["rollback_attempted"], "1")
-        self.assertEqual(record["rollback_verified"], "1")
-        self.assertEqual(record["rollback_status"], "verified")
+        self.assertEqual(record["rollback_attempted"], "0")
+        self.assertEqual(record["rollback_verified"], "0")
+        self.assertEqual(record["rollback_status"], "not-required")
         self.assertEqual(record["cleanup_status"], "verified")
 
-    def test_target_failure_stops_exact_target_then_restores_mock(self) -> None:
+    def test_target_failure_stops_exact_target_then_restores_real_v1(self) -> None:
         result, evidence, state, commands = self._run("target-failure", "0,1")
         self.assertNotEqual(result.returncode, 0)
         self.assertEqual(set(state), {"ue5-spark-ardy"})
-        self.assertEqual(state["ue5-spark-ardy"]["FakeProvider"], "mock")
+        self.assertEqual(
+            state["ue5-spark-ardy"]["Config"]["Image"], self.rollback_image_id
+        )
         stopped_ids = [
             command[-1] for command in commands if command and command[0] == "stop"
         ]
@@ -1052,7 +1259,7 @@ class ActivateArdyProviderStateMachineTests(unittest.TestCase):
         record = self._result_record(evidence)
         self.assertEqual(record["rollback_status"], "verified")
 
-    def test_rapid_auto_removed_target_restores_mock_without_cid_lifecycle(self) -> None:
+    def test_rapid_auto_removed_target_restores_v1_without_cid_lifecycle(self) -> None:
         result, evidence, state, commands = self._run(
             "target-auto-removed-before-inspect",
             "0",
@@ -1062,7 +1269,9 @@ class ActivateArdyProviderStateMachineTests(unittest.TestCase):
         )
         self.assertNotEqual(result.returncode, 0)
         self.assertEqual(set(state), {"ue5-spark-ardy"})
-        self.assertEqual(state["ue5-spark-ardy"]["FakeProvider"], "mock")
+        self.assertEqual(
+            state["ue5-spark-ardy"]["Config"]["Image"], self.rollback_image_id
+        )
         lifecycle_ids = [
             command[-1]
             for command in commands
@@ -1080,8 +1289,8 @@ class ActivateArdyProviderStateMachineTests(unittest.TestCase):
             absence.read_text(encoding="utf-8"),
         )
 
-    def test_successful_absent_recovery_leaves_only_real_provider(self) -> None:
-        result, evidence, state, commands = self._run("recovery-success", "0,0")
+    def test_successful_v1_migration_leaves_only_v2_provider(self) -> None:
+        result, evidence, state, commands = self._run("migration-success", "0,0")
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(set(state), {"ue5-spark-ardy"})
         production = state["ue5-spark-ardy"]
@@ -1097,6 +1306,7 @@ class ActivateArdyProviderStateMachineTests(unittest.TestCase):
         self.assertEqual(record["status"], "passed")
         self.assertEqual(record["activation_complete"], "1")
         self.assertEqual(record["rollback_attempted"], "0")
+        self.assertEqual(record["recovery_mode"], "0")
 
     def test_daemon_created_canary_with_lost_cli_output_is_adopted(self) -> None:
         result, evidence, state, _commands = self._run(
@@ -1148,7 +1358,9 @@ class ActivateArdyProviderStateMachineTests(unittest.TestCase):
             extra_environment={"FAKE_DOCKER_MALFORMED_OUTPUT_ROLE": "target"},
         )
         self.assertNotEqual(result.returncode, 0)
-        self.assertEqual(state["ue5-spark-ardy"]["FakeProvider"], "mock")
+        self.assertEqual(
+            state["ue5-spark-ardy"]["Config"]["Image"], self.rollback_image_id
+        )
         lifecycle = [
             command[-1]
             for command in commands
@@ -1184,7 +1396,9 @@ class ActivateArdyProviderStateMachineTests(unittest.TestCase):
         )
         self.assertNotEqual(result.returncode, 0)
         self.assertEqual(set(state), {"ue5-spark-ardy"})
-        self.assertEqual(state["ue5-spark-ardy"]["FakeProvider"], "mock")
+        self.assertEqual(
+            state["ue5-spark-ardy"]["Config"]["Image"], self.rollback_image_id
+        )
         record = self._result_record(evidence)
         self.assertEqual(record["rollback_status"], "verified")
         self.assertEqual(record["rollback_verified"], "1")
@@ -1219,7 +1433,9 @@ class ActivateArdyProviderStateMachineTests(unittest.TestCase):
         self.assertNotEqual(process.returncode, 0, stdout + stderr)
         state = json.loads(self.state_file.read_text(encoding="utf-8"))
         self.assertEqual(set(state), {"ue5-spark-ardy"})
-        self.assertEqual(state["ue5-spark-ardy"]["FakeProvider"], "mock")
+        self.assertEqual(
+            state["ue5-spark-ardy"]["Config"]["Image"], self.rollback_image_id
+        )
         record = self._result_record(evidence)
         self.assertEqual(record["rollback_status"], "verified")
         self.assertEqual(record["exit_cleanup_signals_masked"], "1")
@@ -1279,7 +1495,7 @@ class ActivateArdyProviderStateMachineTests(unittest.TestCase):
             self.assertEqual(inherited.returncode, 0, inherited.stderr)
             record = self._result_record(inherited_evidence)
             self.assertEqual(record["status"], "passed")
-            self.assertEqual(record["recovery_mode"], "1")
+            self.assertEqual(record["recovery_mode"], "0")
         finally:
             fcntl.flock(lock_fd, fcntl.LOCK_UN)
             os.close(lock_fd)

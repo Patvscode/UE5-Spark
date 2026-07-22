@@ -14,6 +14,9 @@ MetaHuman assets, and captured media are intentionally not stored in Git.
 - Current package: sealed v29 native Linux ARM64, Ada and Aoi included; latest
   Ada production-qualified package, portrait/chest-up camera
 - Current production character: Ada
+- Replacement source candidate: exact `CasualGirl` / `UE5EpicArkit` profile,
+  direct ARKit morph driver, package/cook guards, and capture/soak selection;
+  vendor content is not acquired and no replacement binary exists yet
 - Current motion service: real ARDY Horizon8 image `0.2.0`, protocol v1,
   three approved cached embeddings (`idle`, `listen`, `explain`)
 - Current private controller: immersive live Unreal preview plus narrow chat and
@@ -51,7 +54,8 @@ packaged, copied to Spark, activated, or visually qualified. The candidate adds:
 - a fail-closed free-text movement director that may use a local Qwen model only
   to suggest one catalog ID; deterministic code owns duration, intensity, root
   mode, and whether the current renderer may receive it; and
-- content-free wardrobe/profile boundaries for the pending Fab Casual Girl.
+- content-free wardrobe/profile boundaries plus a separate fail-closed ARKit
+  facial adapter for the pending Fab Casual Girl.
 
 Source tests establish contract behavior only. They are not evidence of a v30
 binary, real nine-embedding ARDY run, correct IK assets, natural full-body
@@ -230,8 +234,9 @@ image and remains untouched for rollback.
   enter Unreal.
 - Detailed fingers need reviewed hand poses or another compatible provider.
 - Head/neck behavior and emotional/gaze polish still need visual tuning.
-- Aoi proves portability but is male in the installed UE 5.8 preset set. A
-  second reviewed female character remains pending.
+- Aoi proves portability but is male in the installed UE 5.8 preset set. The
+  second female source profile/face adapter is ready, but its licensed model,
+  retarget assets, and Spark package remain pending.
 - The free Fab Casual Girl is not installed. The source profile remains
   `pending_asset_audit`; its wardrobe controls are disabled, and full undress is
   prohibited until every hidden body region, material, and LOD is manually
@@ -272,8 +277,9 @@ image and remains untouched for rollback.
    measuring whether it can coexist with the full-body package.
 12. Acquire Casual Girl through the user's Fab library, import it only into an
     isolated private project root, run the asset and complete-body/LOD audits,
-    build its separate Apple-ARKit face and Epic-skeleton retarget adapters, and
-    enable wardrobe controls only after native LinuxArm64 qualification.
+    compile/tune the existing Apple-ARKit adapter, build its Epic-skeleton
+    retarget assets, and enable wardrobe controls only after native LinuxArm64
+    qualification.
 
 ## Resume checklist
 

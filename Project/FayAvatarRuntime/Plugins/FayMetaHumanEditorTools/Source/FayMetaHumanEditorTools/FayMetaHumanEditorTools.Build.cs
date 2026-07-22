@@ -17,8 +17,14 @@ public class FayMetaHumanEditorTools : ModuleRules
         PrivateDependencyModuleNames.AddRange(
             new string[]
             {
+                "BlueprintGraph",
+                "FayBodyMotion",
+                "IKRig",
+                "IKRigEditor",
+                "Kismet",
                 "MetaHumanCharacter",
-                "MetaHumanCharacterEditor"
+                "MetaHumanCharacterEditor",
+                "UnrealEd"
             });
     }
 }

@@ -3,7 +3,7 @@
 
 The same fail-closed configuration drives runtime selection, cooking, and
 package verification.  This helper deliberately supports only the virtual
-content roots used by the reviewed UE 5.8 MetaHuman pipeline.
+content roots used by reviewed character adapters.
 """
 
 from __future__ import annotations
@@ -31,13 +31,27 @@ UNREAL_VECTOR_PATTERN = re.compile(
 UNREAL_ROTATOR_PATTERN = re.compile(
     rf"P=({UNREAL_DECIMAL}) Y=({UNREAL_DECIMAL}) R=({UNREAL_DECIMAL})"
 )
-ACTOR_PATTERN = re.compile(
+METAHUMAN_ACTOR_PATTERN = re.compile(
     r"^/Game/FayMetaHumans/Built/[A-Za-z][A-Za-z0-9_-]{0,63}/"
     r"BP_[A-Za-z][A-Za-z0-9_-]{0,63}\.BP_[A-Za-z][A-Za-z0-9_-]{0,63}_C$"
 )
-PACKAGE_ASSET_PATTERN = re.compile(
+METAHUMAN_PACKAGE_ASSET_PATTERN = re.compile(
     r"^FayAvatarRuntime/Content/FayMetaHumans/Built/"
     r"[A-Za-z][A-Za-z0-9_-]{0,63}/BP_[A-Za-z][A-Za-z0-9_-]{0,63}\.uasset$"
+)
+METAHUMAN_ADAPTER = "UE58MetaHuman"
+EPIC_ARKIT_ADAPTER = "UE5EpicArkit"
+EPIC_ARKIT_ACTOR_CLASS = (
+    "/Game/FayFab/CasualGirl/Runtime/"
+    "BP_CasualGirlFay.BP_CasualGirlFay_C"
+)
+EPIC_ARKIT_COOK_ROOT = "/Game/FayFab/CasualGirl"
+EPIC_ARKIT_PROJECT_ASSET = (
+    "Content/FayFab/CasualGirl/Runtime/BP_CasualGirlFay.uasset"
+)
+EPIC_ARKIT_PACKAGE_ASSET = (
+    "FayAvatarRuntime/Content/FayFab/CasualGirl/Runtime/"
+    "BP_CasualGirlFay.uasset"
 )
 
 
@@ -152,17 +166,24 @@ def load_profiles(config_path: Path) -> tuple[str, dict[str, CharacterProfile], 
                 raise ProfileError(f"[{section}] is missing {key}")
             return value
 
-        actor_class = required("ActorClass")
-        if not ACTOR_PATTERN.fullmatch(actor_class):
-            raise ProfileError(f"[{section}] ActorClass is outside the reviewed asset root")
         adapter = required("Adapter")
-        if adapter != "UE58MetaHuman":
+        if adapter not in (METAHUMAN_ADAPTER, EPIC_ARKIT_ADAPTER):
             raise ProfileError(f"[{section}] uses unsupported adapter {adapter!r}")
+        actor_class = required("ActorClass")
+        if adapter == METAHUMAN_ADAPTER:
+            if not METAHUMAN_ACTOR_PATTERN.fullmatch(actor_class):
+                raise ProfileError(
+                    f"[{section}] ActorClass is outside the reviewed asset root"
+                )
+        elif actor_class != EPIC_ARKIT_ACTOR_CLASS:
+            raise ProfileError(
+                f"[{section}] ActorClass is not the reviewed UE5EpicArkit asset"
+            )
         face_component = require_simple_name(required("FaceComponent"), "FaceComponent")
         body_component = require_simple_name(required("BodyComponent"), "BodyComponent")
         if (face_component, body_component) != ("Face", "Body"):
             raise ProfileError(
-                f"[{section}] UE58MetaHuman requires exact Face and Body components"
+                f"[{section}] {adapter} requires exact Face and Body components"
             )
         spawn_location = require_unreal_vector(
             required("SpawnLocation"), f"[{section}] SpawnLocation"
@@ -199,28 +220,52 @@ def load_profiles(config_path: Path) -> tuple[str, dict[str, CharacterProfile], 
             )
 
         cook_directories = split_list(required("CookDirectories"), f"[{section}] CookDirectories")
-        for directory in cook_directories:
-            if not (
-                directory.startswith("/Game/FayMetaHumans/Built/")
-                or directory == "/Game/FayMetaHumans/Common_UE58"
-                or directory == "/StreamingADA"
-            ):
+        if adapter == METAHUMAN_ADAPTER:
+            for directory in cook_directories:
+                if not (
+                    directory.startswith("/Game/FayMetaHumans/Built/")
+                    or directory == "/Game/FayMetaHumans/Common_UE58"
+                    or directory == "/StreamingADA"
+                ):
+                    raise ProfileError(
+                        f"[{section}] cook directory is outside the reviewed roots: {directory}"
+                    )
+        else:
+            allowed_cook_directories = {EPIC_ARKIT_COOK_ROOT, "/StreamingADA"}
+            if EPIC_ARKIT_COOK_ROOT not in cook_directories:
                 raise ProfileError(
-                    f"[{section}] cook directory is outside the reviewed roots: {directory}"
+                    f"[{section}] UE5EpicArkit requires {EPIC_ARKIT_COOK_ROOT}"
                 )
+            for directory in cook_directories:
+                if directory not in allowed_cook_directories:
+                    raise ProfileError(
+                        f"[{section}] cook directory is outside the reviewed roots: {directory}"
+                    )
 
         project_asset = required("ProjectAsset")
-        project_path = Path(project_asset)
-        if (
-            project_path.is_absolute()
-            or ".." in project_path.parts
-            or project_path.suffix != ".uasset"
-            or not project_asset.startswith("Content/FayMetaHumans/Built/")
-        ):
-            raise ProfileError(f"[{section}] ProjectAsset is unsafe")
+        if adapter == METAHUMAN_ADAPTER:
+            project_path = Path(project_asset)
+            if (
+                project_path.is_absolute()
+                or ".." in project_path.parts
+                or project_path.suffix != ".uasset"
+                or not project_asset.startswith("Content/FayMetaHumans/Built/")
+            ):
+                raise ProfileError(f"[{section}] ProjectAsset is unsafe")
+        elif project_asset != EPIC_ARKIT_PROJECT_ASSET:
+            raise ProfileError(
+                f"[{section}] ProjectAsset is not the reviewed UE5EpicArkit asset"
+            )
         package_asset = required("PackageAsset")
-        if not PACKAGE_ASSET_PATTERN.fullmatch(package_asset):
-            raise ProfileError(f"[{section}] PackageAsset is outside the reviewed package root")
+        if adapter == METAHUMAN_ADAPTER:
+            if not METAHUMAN_PACKAGE_ASSET_PATTERN.fullmatch(package_asset):
+                raise ProfileError(
+                    f"[{section}] PackageAsset is outside the reviewed package root"
+                )
+        elif package_asset != EPIC_ARKIT_PACKAGE_ASSET:
+            raise ProfileError(
+                f"[{section}] PackageAsset is not the reviewed UE5EpicArkit asset"
+            )
 
         profiles[character_id] = CharacterProfile(
             id=character_id,

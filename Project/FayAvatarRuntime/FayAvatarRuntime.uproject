@@ -17,6 +17,10 @@
       "Enabled": true
     },
     {
+      "Name": "FayArkitRuntime",
+      "Enabled": true
+    },
+    {
       "Name": "FayMetaHumanRuntime",
       "Enabled": true
     },

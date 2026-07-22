@@ -8,6 +8,7 @@ class UCameraComponent;
 class AActor;
 class UFayAvatarBridgeComponent;
 class UFayAvatarDormancyComponent;
+class UFayArkitSpeechDriverComponent;
 class UFayArdyPoseClientComponent;
 class UFayBodyMotionComponent;
 class UFayMetaHumanSpeechDriverComponent;
@@ -18,12 +19,12 @@ enum class EFayMetaHumanLiveLinkFailure : uint8;
 enum class EFayMetaHumanLiveLinkState : uint8;
 
 /**
- * ARM64 MetaHuman scene with an asset-free diagnostic fallback for DGX Spark.
+ * ARM64 digital-human scene with an asset-free diagnostic fallback for DGX Spark.
  *
  * The actor supplies a camera, owns the Fay bridge and learned speech driver,
- * and spawns the selected reviewed MetaHuman when that licensed content is
- * available. A wireframe avatar keeps the Vulkan and bridge tests useful before
- * MetaHuman content is generated or whenever loading fails.
+ * and spawns a selected reviewed character when its private licensed content is
+ * available. A wireframe avatar keeps Vulkan and bridge tests useful before
+ * character content is generated or whenever loading fails.
  */
 UCLASS()
 class FAYAVATARRUNTIME_API AFayAvatarBootstrapGameMode final : public AGameModeBase
@@ -67,6 +68,10 @@ private:
 
     UPROPERTY(VisibleAnywhere, Category = "MetaHuman")
     TObjectPtr<UFayMetaHumanSpeechDriverComponent> SpeechDriver;
+
+    /** Direct Apple ARKit morph driver used only by the reviewed Epic-skeleton avatar. */
+    UPROPERTY(VisibleAnywhere, Category = "Avatar|Speech")
+    TObjectPtr<UFayArkitSpeechDriverComponent> ArkitSpeechDriver;
 
     /** Content-free adapter; configures only an avatar carrying one sealed binding. */
     UPROPERTY(VisibleAnywhere, Category = "Avatar|Wardrobe")

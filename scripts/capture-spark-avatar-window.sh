@@ -33,8 +33,11 @@ output_mp4_input=$5
 wait_seconds=$6
 capture_phase=${7:-speech}
 expected_camera_framing=${8:-Portrait}
-[[ $character == Ada || $character == Aoi ]] || \
-    fail 'CHARACTER must be a reviewed Ada or Aoi profile'
+case "$character" in
+    Ada|Aoi) expected_adapter=UE58MetaHuman ;;
+    CasualGirl) expected_adapter=UE5EpicArkit ;;
+    *) fail 'CHARACTER must be a reviewed Ada, Aoi, or CasualGirl profile' ;;
+esac
 [[ $capture_phase == speech || $capture_phase == ardy-explain ]] || \
     fail 'capture phase must be speech or ardy-explain'
 [[ $expected_camera_framing == Portrait || $expected_camera_framing == FullBody ]] || \
@@ -139,7 +142,7 @@ deadline=$(( $(date +%s) + wait_seconds ))
 runtime_pid=''
 runtime_starttime=''
 launch_log_start=''
-camera_framing_marker="Selected reviewed character profile '$character' (adapter=UE58MetaHuman, camera_framing=$expected_camera_framing)."
+camera_framing_marker="Selected reviewed character profile '$character' (adapter=$expected_adapter, camera_framing=$expected_camera_framing)."
 camera_framing_selected_count=0
 capture_ready=0
 while (( $(date +%s) < deadline )); do

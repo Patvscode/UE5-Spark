@@ -9,6 +9,8 @@ rollback_verified=0
 canary_container_id=''
 target_container_id=''
 old_container_id=''
+target_image_id=''
+rollback_image_id=''
 evidence_root=''
 recovery_mode=0
 rollback_attempted=0
@@ -27,6 +29,9 @@ pending_launch_role=''
 pending_launch_cidfile=''
 pending_launch_absence_verified=0
 pending_launch_absent_id=''
+rollback_models_root=''
+rollback_models_seal=''
+target_models_seal=''
 
 usage() {
     printf 'Usage: %s MODELS_ROOT PRIVATE_EVIDENCE_DIR\n' "${0##*/}" >&2
@@ -50,11 +55,11 @@ fi
 readonly PRODUCTION_CONTAINER='ue5-spark-ardy'
 readonly CANARY_CONTAINER='ue5-spark-ardy-canary'
 readonly TARGET_IMAGE='ue5-spark-ardy:0.3.0'
-readonly ROLLBACK_IMAGE='ue5-spark-ardy:0.1.0'
+readonly ROLLBACK_IMAGE='ue5-spark-ardy:0.2.0'
 readonly PRODUCTION_PORT=8777
 readonly CANARY_PORT=18777
 readonly TARGET_PROVIDER='ardy'
-readonly ROLLBACK_PROVIDER='mock'
+readonly ROLLBACK_PROVIDER='ardy'
 readonly RUN_LABEL_KEY='com.ue5-spark.ardy.activation-run'
 readonly ROLE_LABEL_KEY='com.ue5-spark.ardy.activation-role'
 
@@ -71,9 +76,9 @@ validator="$repository/tools/validate_ardy_service.py"
 
 models_root=$(cd "$1" && pwd -P)
 [[ -d $models_root && ! -L $models_root ]] || \
-    fail 'MODELS_ROOT must be a real private directory'
+    fail 'MODELS_ROOT must be a real private v2 candidate directory'
 [[ -d $models_root/embeddings && ! -L $models_root/embeddings ]] || \
-    fail 'the sealed embedding directory is missing'
+    fail 'the sealed v2 candidate embedding directory is missing'
 
 evidence_parent_input=$(dirname "$2")
 evidence_name=${2##*/}
@@ -201,6 +206,157 @@ image_id() {
     printf '%s\n' "$value"
 }
 
+discover_readonly_models_root() {
+    local -n destination=$1
+    local identifier=$2 label=$3 inspect_file parsed_file resolved
+    local -a discovered=()
+    destination=''
+    inspect_file="$evidence_root/$label-mount-inspect.json"
+    parsed_file="$evidence_root/$label-models-root.txt"
+    [[ ! -e $inspect_file && ! -L $inspect_file && \
+        ! -e $parsed_file && ! -L $parsed_file ]] || return 1
+    docker_read_bounded inspect --type container "$identifier" >"$inspect_file" || \
+        return 1
+    chmod 600 "$inspect_file"
+    if ! python3 - "$inspect_file" >"$parsed_file" <<'PY'
+import json
+import os
+import sys
+
+with open(sys.argv[1], encoding="utf-8") as stream:
+    records = json.load(stream)
+if not isinstance(records, list) or len(records) != 1:
+    raise SystemExit(1)
+mounts = records[0].get("Mounts")
+if not isinstance(mounts, list) or len(mounts) != 1:
+    raise SystemExit(1)
+mount = mounts[0]
+source = mount.get("Source")
+if (
+    mount.get("Type") != "bind"
+    or not isinstance(source, str)
+    or not os.path.isabs(source)
+    or source in {"", "/"}
+    or mount.get("Destination") != "/models"
+    or mount.get("RW") is not False
+    or mount.get("Mode") not in {None, ""}
+    or mount.get("Propagation") not in {None, "rprivate"}
+):
+    raise SystemExit(1)
+print(source)
+PY
+    then
+        return 1
+    fi
+    chmod 600 "$parsed_file"
+    mapfile -t discovered <"$parsed_file"
+    (( ${#discovered[@]} == 1 )) || return 1
+    [[ -d ${discovered[0]} && ! -L ${discovered[0]} ]] || return 1
+    resolved=$(cd "${discovered[0]}" && pwd -P) || return 1
+    [[ $resolved == "${discovered[0]}" ]] || return 1
+    [[ -d $resolved/embeddings && ! -L $resolved/embeddings ]] || return 1
+    destination=$resolved
+}
+
+seal_models_tree() {
+    local -n destination=$1
+    local root=$2 output=$3 report
+    destination=''
+    [[ -d $root && ! -L $root && \
+        $output == "$evidence_root/"* && ! -e $output && ! -L $output ]] || return 1
+    report=$(python3 - "$root" <<'PY'
+import hashlib
+import json
+import os
+import stat
+import sys
+
+root = os.path.realpath(sys.argv[1])
+if root != sys.argv[1] or root == "/" or not os.path.isdir(root):
+    raise SystemExit(1)
+sensitive_names = {
+    ".env", ".token", "token", "hf_token", "huggingface_token",
+    "credentials", "credentials.json", "secrets", "secrets.json",
+}
+entries = []
+for current, directories, files in os.walk(root, topdown=True, followlinks=False):
+    directories.sort()
+    files.sort()
+    for name in directories:
+        path = os.path.join(current, name)
+        metadata = os.lstat(path)
+        if stat.S_ISLNK(metadata.st_mode) or not stat.S_ISDIR(metadata.st_mode):
+            raise SystemExit(1)
+    for name in files:
+        path = os.path.join(current, name)
+        relative = os.path.relpath(path, root)
+        if name.casefold() in sensitive_names or name.casefold().endswith((".key", ".pem")):
+            raise SystemExit(1)
+        metadata = os.lstat(path)
+        if stat.S_ISLNK(metadata.st_mode) or not stat.S_ISREG(metadata.st_mode):
+            raise SystemExit(1)
+        flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+        descriptor = os.open(path, flags)
+        try:
+            opened = os.fstat(descriptor)
+            if (
+                (opened.st_dev, opened.st_ino, opened.st_size, opened.st_mtime_ns)
+                != (metadata.st_dev, metadata.st_ino, metadata.st_size, metadata.st_mtime_ns)
+                or not stat.S_ISREG(opened.st_mode)
+            ):
+                raise SystemExit(1)
+            digest = hashlib.sha256()
+            while True:
+                block = os.read(descriptor, 8 * 1024 * 1024)
+                if not block:
+                    break
+                digest.update(block)
+            closed = os.fstat(descriptor)
+            if (
+                closed.st_dev,
+                closed.st_ino,
+                closed.st_size,
+                closed.st_mtime_ns,
+            ) != (
+                opened.st_dev,
+                opened.st_ino,
+                opened.st_size,
+                opened.st_mtime_ns,
+            ):
+                raise SystemExit(1)
+        finally:
+            os.close(descriptor)
+        entries.append((relative, opened.st_size, digest.hexdigest()))
+aggregate = hashlib.sha256()
+for relative, size, digest in entries:
+    aggregate.update(relative.encode("utf-8"))
+    aggregate.update(b"\0")
+    aggregate.update(str(size).encode("ascii"))
+    aggregate.update(b"\0")
+    aggregate.update(digest.encode("ascii"))
+    aggregate.update(b"\n")
+print(json.dumps({
+    "schema": 1,
+    "root": root,
+    "fileCount": len(entries),
+    "totalBytes": sum(entry[1] for entry in entries),
+    "treeSha256": aggregate.hexdigest(),
+}, sort_keys=True, separators=(",", ":")))
+PY
+    ) || return 1
+    [[ ${#report} -le 65536 ]] || return 1
+    write_record "$output" "$report" || return 1
+    destination=$(python3 -c '
+import json, sys
+value = json.load(sys.stdin)
+digest = value.get("treeSha256")
+if not isinstance(digest, str) or len(digest) != 64:
+    raise SystemExit(1)
+print(digest)
+' <<<"$report") || return 1
+    [[ $destination =~ ^[0-9a-f]{64}$ ]]
+}
+
 container_id_for_name() {
     local value
     value=$(docker_read_bounded inspect --type container --format '{{.Id}}' "$1" \
@@ -238,7 +394,8 @@ capture_verified_container() {
     local -n destination=$1
     local identifier=$2 expected_name=$3 expected_tag=$4 expected_image_id=$5
     local expected_provider=$6 expected_port=$7 expected_auto_remove=$8 label=$9
-    local expected_role=${10:-preexisting}
+    local expected_models_root=${10}
+    local expected_role=${11:-preexisting}
     local inspect_file parsed_file pid
     inspect_file="$evidence_root/$label-inspect.json"
     parsed_file="$evidence_root/$label-container.txt"
@@ -248,7 +405,7 @@ capture_verified_container() {
     chmod 600 "$inspect_file"
     if ! python3 - "$identifier" "$expected_name" "$expected_tag" \
         "$expected_image_id" "$expected_provider" "$expected_port" \
-        "$expected_auto_remove" "$models_root" "$(id -u):$(id -g)" \
+        "$expected_auto_remove" "$expected_models_root" "$(id -u):$(id -g)" \
         "$activation_run_id" "$expected_role" "$RUN_LABEL_KEY" "$ROLE_LABEL_KEY" \
         "$inspect_file" >"$parsed_file" <<'PY'
 import json
@@ -299,7 +456,7 @@ if (
     or host.get("NetworkMode") != "host"
     or host.get("ReadonlyRootfs") is not True
     or host.get("CapDrop") != ["ALL"]
-    or "no-new-privileges:true" not in (host.get("SecurityOpt") or [])
+    or host.get("SecurityOpt") != ["no-new-privileges:true"]
     or host.get("PidsLimit") != 512
     or host.get("ShmSize") != 4 * 1024**3
     or host.get("Tmpfs") != {"/tmp": "rw,noexec,nosuid,size=1g"}
@@ -313,9 +470,13 @@ if expected_role != "preexisting" and (
 ):
     raise SystemExit(1)
 device_requests = host.get("DeviceRequests")
-if not isinstance(device_requests, list) or not any(
-    ["gpu"] in request.get("Capabilities", []) for request in device_requests
-):
+if device_requests != [{
+    "Driver": "",
+    "Count": -1,
+    "DeviceIDs": None,
+    "Capabilities": [["gpu"]],
+    "Options": {},
+}]:
     raise SystemExit(1)
 mounts = record.get("Mounts")
 if not isinstance(mounts, list) or len(mounts) != 1:
@@ -326,6 +487,8 @@ if (
     or mount.get("Source") != expected_models_root
     or mount.get("Destination") != "/models"
     or mount.get("RW") is not False
+    or mount.get("Mode") not in {None, ""}
+    or mount.get("Propagation") not in {None, "rprivate"}
 ):
     raise SystemExit(1)
 expected_command = [
@@ -368,44 +531,205 @@ PY
     loopback_listener_owned_by_pid "$expected_port" "$pid"
 }
 
-probe_mock_health() {
-    local port=$1 output=$2 body
-    body=$(setsid --wait curl --fail --silent --show-error --noproxy '*' \
-        --connect-timeout 2 --max-time 5 "http://127.0.0.1:$port/healthz") || return 1
-    (( ${#body} <= 65536 )) || return 1
-    if ! printf '%s' "$body" | python3 -c '
+qualify_v1_rollback() {
+    local port=$1 output=$2 report
+    [[ $port == "$PRODUCTION_PORT" && \
+        $output == "$evidence_root/"* && ! -e $output && ! -L $output ]] || return 1
+    report=$(python3 - "$port" <<'PY'
 import json
+import math
 import sys
+import time
+import urllib.error
+import urllib.request
 
-value = json.load(sys.stdin)
-expected = {
+port = int(sys.argv[1])
+if port != 8777:
+    raise SystemExit(1)
+behaviors = ("idle", "listen", "explain")
+expected_health = {
     "status": "ready",
-    "provider": "mock",
+    "provider": "ardy",
     "protocolVersion": 1,
     "fps": 20,
     "bufferFrames": 8,
     "facialControl": "excluded",
-    "checkpoint": None,
-    "embeddingCount": 0,
-    "p95GenerationMs": 0.0,
+    "checkpoint": "ARDY-Core-RP-20FPS-Horizon8",
+    "embeddingCount": 3,
 }
-if value != expected:
-    raise SystemExit(1)
-'; then
-        return 1
-    fi
-    write_record "$output" "$body"
-}
+coordinate_system = "ardy-y-up-z-forward-meters"
+identity = [0.0, 0.0, 0.0, 1.0]
+opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 
-wait_for_mock_health() {
-    local port=$1 output=$2 attempt
-    for attempt in $(seq 1 60); do
-        if probe_mock_health "$port" "$output"; then
-            return 0
-        fi
-        sleep 1
-    done
-    return 1
+
+def request(path, payload=None, timeout=5.0):
+    body = None
+    headers = {"Accept": "application/json"}
+    method = "GET"
+    if payload is not None:
+        body = json.dumps(payload, separators=(",", ":"), allow_nan=False).encode()
+        headers["Content-Type"] = "application/json"
+        method = "POST"
+    value = urllib.request.Request(
+        f"http://127.0.0.1:{port}{path}",
+        data=body,
+        headers=headers,
+        method=method,
+    )
+    with opener.open(value, timeout=timeout) as response:
+        if response.status != 200 or response.headers.get_content_type() != "application/json":
+            raise RuntimeError("invalid HTTP response")
+        response_body = response.read(8 * 1024 * 1024 + 1)
+    if len(response_body) > 8 * 1024 * 1024:
+        raise RuntimeError("response exceeded size bound")
+    return json.loads(response_body.decode("utf-8"))
+
+
+def finite_number(value):
+    return type(value) in {int, float} and math.isfinite(float(value))
+
+
+def health(require_latency):
+    value = request("/healthz")
+    if not isinstance(value, dict) or set(value) != {*expected_health, "p95GenerationMs"}:
+        raise RuntimeError("invalid v1 health envelope")
+    for key, expected in expected_health.items():
+        if value.get(key) != expected or type(value.get(key)) is not type(expected):
+            raise RuntimeError(f"invalid v1 health field: {key}")
+    latency = value.get("p95GenerationMs")
+    if not finite_number(latency) or float(latency) < 0.0:
+        raise RuntimeError("invalid v1 p95 latency")
+    if require_latency and not 0.0 < float(latency) < 400.0:
+        raise RuntimeError("v1 p95 latency exceeds the playback buffer")
+    return value
+
+
+def normalized_quaternion(value):
+    return (
+        isinstance(value, list)
+        and len(value) == 4
+        and all(finite_number(component) for component in value)
+        and 0.995 <= math.sqrt(sum(float(component) ** 2 for component in value)) <= 1.005
+    )
+
+
+def finite_vector(value, length):
+    return (
+        isinstance(value, list)
+        and len(value) == length
+        and all(finite_number(component) for component in value)
+    )
+
+
+initial_health = None
+deadline = time.monotonic() + 60.0
+last_error = "v1 service did not answer"
+while time.monotonic() < deadline:
+    try:
+        initial_health = health(False)
+        break
+    except (RuntimeError, ValueError, OSError, urllib.error.URLError) as error:
+        last_error = str(error)
+        time.sleep(1.0)
+if initial_health is None:
+    raise RuntimeError(last_error)
+
+after_sequence = 0
+previous_time = None
+elapsed_ms = []
+behavior_counts = {behavior: 0 for behavior in behaviors}
+for index in range(30):
+    behavior = behaviors[index % len(behaviors)]
+    started = time.perf_counter()
+    batch = request(
+        "/v1/poses",
+        {
+            "behavior": behavior,
+            "intensity": 0.65,
+            "duration": 1.0,
+            "afterSequence": after_sequence,
+        },
+        timeout=30.0,
+    )
+    elapsed_ms.append((time.perf_counter() - started) * 1000.0)
+    if not isinstance(batch, dict) or set(batch) != {
+        "version", "sequence", "fps", "coordinateSystem", "frames"
+    }:
+        raise RuntimeError("invalid v1 pose envelope")
+    if (
+        type(batch["version"]) is not int
+        or batch["version"] != 1
+        or type(batch["sequence"]) is not int
+        or batch["sequence"] <= after_sequence
+        or type(batch["fps"]) is not int
+        or batch["fps"] != 20
+        or batch["coordinateSystem"] != coordinate_system
+        or not isinstance(batch["frames"], list)
+        or len(batch["frames"]) != 8
+    ):
+        raise RuntimeError("v1 pose metadata is outside the sealed contract")
+    first_time = float(batch["frames"][0].get("time", -1.0))
+    if previous_time is not None and not math.isclose(
+        first_time - previous_time, 0.05, abs_tol=1e-5
+    ):
+        raise RuntimeError("v1 frame time did not advance across batches")
+    for frame_index, frame in enumerate(batch["frames"]):
+        if not isinstance(frame, dict) or set(frame) != {"time", "root", "joints", "contacts"}:
+            raise RuntimeError("invalid v1 frame envelope")
+        if not finite_number(frame["time"]) or not finite_vector(frame["root"], 7):
+            raise RuntimeError("invalid v1 frame root")
+        if not normalized_quaternion(frame["root"][3:]):
+            raise RuntimeError("invalid v1 root quaternion")
+        joints = frame["joints"]
+        if (
+            not isinstance(joints, list)
+            or len(joints) != 27
+            or not all(normalized_quaternion(rotation) for rotation in joints)
+            or joints[5] != identity
+            or joints[6] != identity
+        ):
+            raise RuntimeError("invalid v1 joint payload or face ownership")
+        contacts = frame["contacts"]
+        if (
+            not isinstance(contacts, list)
+            or len(contacts) != 4
+            or not all(type(contact) is float and 0.0 <= contact <= 1.0 for contact in contacts)
+        ):
+            raise RuntimeError("invalid v1 contact payload")
+        if frame_index and not math.isclose(
+            float(frame["time"]) - float(batch["frames"][frame_index - 1]["time"]),
+            0.05,
+            abs_tol=1e-5,
+        ):
+            raise RuntimeError("v1 frames are not exactly 20 FPS")
+    after_sequence = batch["sequence"]
+    previous_time = float(batch["frames"][-1]["time"])
+    behavior_counts[behavior] += 1
+
+final_health = health(True)
+steady = sorted(elapsed_ms[1:])
+p95 = steady[max(0, math.ceil(0.95 * len(steady)) - 1)]
+if not 0.0 < p95 < 400.0:
+    raise RuntimeError("observed v1 p95 latency exceeds the playback buffer")
+print(json.dumps({
+    "schemaVersion": 1,
+    "status": "passed",
+    "protocolVersion": 1,
+    "host": "127.0.0.1",
+    "port": port,
+    "batches": 30,
+    "frames": 240,
+    "behaviorCounts": behavior_counts,
+    "finalSequence": after_sequence,
+    "finalFrameTime": previous_time,
+    "steadyP95Ms": round(p95, 3),
+    "initialHealth": initial_health,
+    "finalHealth": final_health,
+}, sort_keys=True, separators=(",", ":"), allow_nan=False))
+PY
+    ) || return 1
+    (( ${#report} <= 1048576 )) || return 1
+    write_record "$output" "$report"
 }
 
 capture_owned_run_container() {
@@ -560,6 +884,7 @@ launch_container() {
     local -n destination=$1
     local name=$2 image=$3 port=$4 provider=$5 auto_remove=$6 role=$7
     local launch_status=0 resolved_id='' cidfile stdout_file cidfile_id=''
+    local launch_models_root=''
     local -a arguments=(--detach)
     destination=''
     case "$role:$name:$image:$port:$provider:$auto_remove" in
@@ -568,6 +893,12 @@ launch_container() {
         "rollback:$PRODUCTION_CONTAINER:$rollback_image_id:$PRODUCTION_PORT:$ROLLBACK_PROVIDER:true") ;;
         *) return 1 ;;
     esac
+    case $role in
+        canary|target) launch_models_root=$models_root ;;
+        rollback) launch_models_root=$rollback_models_root ;;
+        *) return 1 ;;
+    esac
+    [[ -d $launch_models_root && ! -L $launch_models_root ]] || return 1
     cidfile="$evidence_root/$role-container.cid"
     stdout_file="$evidence_root/$role-launch.stdout"
     [[ ! -e $cidfile && ! -L $cidfile && \
@@ -597,7 +928,7 @@ launch_container() {
         --shm-size 4g
         --tmpfs /tmp:rw,noexec,nosuid,size=1g
         --user "$(id -u):$(id -g)"
-        --mount "type=bind,src=$models_root,dst=/models,readonly"
+        --mount "type=bind,src=$launch_models_root,dst=/models,readonly"
         "$image"
         --host 127.0.0.1 --port "$port" --provider "$provider" --models-root /models
     )
@@ -663,7 +994,7 @@ cleanup_canary() {
 }
 
 restore_rollback() {
-    local current_id rollback_id='' attempt owned_target_id=''
+    local current_id rollback_id='' attempt owned_target_id='' restored_models_seal=''
     local -a rollback_snapshot=()
     # Do not overwrite an unresolved ownership record with a rollback launch.
     # A late daemon publication must remain fail-closed and auditable.
@@ -673,12 +1004,25 @@ restore_rollback() {
             >/dev/null 2>&1; then
         current_id=$(container_id_for_name "$PRODUCTION_CONTAINER" 2>/dev/null || true)
         if [[ $current_id == "$old_container_id" ]]; then
-            if probe_mock_health "$PRODUCTION_PORT" \
-                "$evidence_root/rollback-existing-health.json"; then
-                rollback_verified=1
-                return 0
-            fi
-            return 1
+            capture_verified_container rollback_snapshot "$old_container_id" \
+                "$PRODUCTION_CONTAINER" "$current_image_reference" \
+                "$rollback_image_id" "$ROLLBACK_PROVIDER" "$PRODUCTION_PORT" true \
+                rollback-existing "$rollback_models_root" || return 1
+            [[ ${rollback_snapshot[0]} == "${production_before[0]}" && \
+                ${rollback_snapshot[1]} == "${production_before[1]}" && \
+                ${rollback_snapshot[2]} == "${production_before[2]}" && \
+                ${rollback_snapshot[3]} == "${production_before[3]}" && \
+                ${rollback_snapshot[4]} == "${production_before[4]}" && \
+                ${rollback_snapshot[5]} == "${production_before[5]}" && \
+                ${rollback_snapshot[6]} == "${production_before[6]}" && \
+                ${rollback_snapshot[7]} == "${production_before[7]}" ]] || return 1
+            qualify_v1_rollback "$PRODUCTION_PORT" \
+                "$evidence_root/rollback-existing-validation.json" || return 1
+            seal_models_tree restored_models_seal "$rollback_models_root" \
+                "$evidence_root/rollback-existing-models.json" || return 1
+            [[ $restored_models_seal == "$rollback_models_seal" ]] || return 1
+            rollback_verified=1
+            return 0
         fi
     fi
     if capture_owned_run_container owned_target_id "$PRODUCTION_CONTAINER" \
@@ -733,13 +1077,18 @@ restore_rollback() {
     launch_container rollback_id "$PRODUCTION_CONTAINER" "$rollback_image_id" \
         "$PRODUCTION_PORT" "$ROLLBACK_PROVIDER" true rollback || return 1
     [[ $rollback_id =~ ^[0-9a-f]{64}$ ]] || return 1
-    if ! wait_for_mock_health "$PRODUCTION_PORT" \
-        "$evidence_root/rollback-health.json"; then
-        return 1
-    fi
+    qualify_v1_rollback "$PRODUCTION_PORT" \
+        "$evidence_root/rollback-validation.json" || return 1
     capture_verified_container rollback_snapshot "$rollback_id" "$PRODUCTION_CONTAINER" \
         "$rollback_image_id" "$rollback_image_id" "$ROLLBACK_PROVIDER" \
-        "$PRODUCTION_PORT" true rollback rollback || return 1
+        "$PRODUCTION_PORT" true rollback "$rollback_models_root" rollback || return 1
+    [[ ${rollback_snapshot[3]} == "${production_before[3]}" && \
+        ${rollback_snapshot[5]} == "${production_before[5]}" && \
+        ${rollback_snapshot[6]} == "${production_before[6]}" && \
+        ${rollback_snapshot[7]} == "${production_before[7]}" ]] || return 1
+    seal_models_tree restored_models_seal "$rollback_models_root" \
+        "$evidence_root/rollback-restored-models.json" || return 1
+    [[ $restored_models_seal == "$rollback_models_seal" ]] || return 1
     rollback_verified=1
 }
 
@@ -797,7 +1146,7 @@ on_exit() {
     if [[ -n $evidence_root && -d $evidence_root && \
         ! -e $evidence_root/activation-result.txt ]]; then
         write_record "$evidence_root/activation-result.txt" \
-            'schema=1' \
+            'schema=2' \
             "completed_utc=$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
             "status=$([[ $status == 0 ]] && printf passed || printf failed)" \
             "error=$last_error" \
@@ -818,7 +1167,11 @@ on_exit() {
             "old_container_id=$old_container_id" \
             "target_container_id=$target_container_id" \
             "target_image_id=${target_image_id:-unavailable}" \
-            "rollback_image_id=${rollback_image_id:-unavailable}"
+            "rollback_image_id=${rollback_image_id:-unavailable}" \
+            "target_models_root=${models_root:-unavailable}" \
+            "target_models_sha256=${target_models_seal:-unavailable}" \
+            "rollback_models_root=${rollback_models_root:-unavailable}" \
+            "rollback_models_sha256=${rollback_models_seal:-unavailable}"
     fi
     exit "$status"
 }
@@ -846,21 +1199,16 @@ old_container_id=$(container_id_for_name "$PRODUCTION_CONTAINER" 2>/dev/null || 
 if [[ -z $old_container_id ]]; then
     loopback_port_is_unused "$PRODUCTION_PORT" || \
         fail 'production ARDY is absent but its fixed loopback port is unexpectedly owned'
-    recovery_mode=1
-    current_image_reference=absent
-    current_runtime_image_id=absent
-    # If the real canary or relaunch fails, restore the sealed mock endpoint.
-    rollback_armed=1
-else
-    current_image_reference=$(docker_read_bounded inspect --type container \
-        --format '{{.Config.Image}}' "$old_container_id") || \
-        fail 'could not identify the production ARDY image tag'
-    current_runtime_image_id=$(docker_read_bounded inspect --type container \
-        --format '{{.Image}}' "$old_container_id") || \
-        fail 'could not identify the production ARDY image ID'
-    [[ $current_runtime_image_id =~ ^sha256:[0-9a-f]{64}$ ]] || \
-        fail 'the production ARDY image ID is malformed'
+    fail 'production ARDY 0.2.0 is absent; no exact live rollback can be captured'
 fi
+current_image_reference=$(docker_read_bounded inspect --type container \
+    --format '{{.Config.Image}}' "$old_container_id") || \
+    fail 'could not identify the production ARDY image reference'
+current_runtime_image_id=$(docker_read_bounded inspect --type container \
+    --format '{{.Image}}' "$old_container_id") || \
+    fail 'could not identify the production ARDY image ID'
+[[ $current_runtime_image_id =~ ^sha256:[0-9a-f]{64}$ ]] || \
+    fail 'the production ARDY image ID is malformed'
 if [[ $current_runtime_image_id == "$target_image_id" ]]; then
     [[ $current_image_reference == "$TARGET_IMAGE" || \
         $current_image_reference == "$target_image_id" ]] || \
@@ -868,39 +1216,63 @@ if [[ $current_runtime_image_id == "$target_image_id" ]]; then
     capture_verified_container production_before "$old_container_id" \
         "$PRODUCTION_CONTAINER" "$current_image_reference" "$target_image_id" \
         "$TARGET_PROVIDER" \
-        "$PRODUCTION_PORT" true production-already-active || \
+        "$PRODUCTION_PORT" true production-already-active "$models_root" || \
         fail 'the existing real production container failed its identity contract'
     "$validator" --port "$PRODUCTION_PORT" --batches 30 --startup-timeout 180 \
         >"$evidence_root/production-already-active-validation.json" \
         2>"$evidence_root/production-already-active-validation.stderr" || \
         fail 'the existing real production provider failed qualification'
     chmod 600 "$evidence_root"/production-already-active-validation.*
+    seal_models_tree target_models_seal "$models_root" \
+        "$evidence_root/production-already-active-models.json" || \
+        fail 'the active v2 model tree could not be sealed'
     activation_complete=1
     last_error='none-already-active'
     printf 'ARDY was already real and passed qualification; private evidence: %s\n' \
         "$evidence_root"
     exit 0
 fi
-if (( recovery_mode == 0 )); then
-    [[ $current_runtime_image_id == "$rollback_image_id" ]] || \
-        fail 'production uses neither the sealed rollback nor target image tag'
-    [[ $current_image_reference == "$ROLLBACK_IMAGE" || \
-        $current_image_reference == "$rollback_image_id" ]] || \
-        fail 'the mock production container uses an unexpected image reference'
-    capture_verified_container production_before "$old_container_id" \
-        "$PRODUCTION_CONTAINER" "$current_image_reference" "$rollback_image_id" \
-        "$ROLLBACK_PROVIDER" "$PRODUCTION_PORT" true production-before || \
-        fail 'the current mock rollback failed its identity and isolation contract'
-    wait_for_mock_health "$PRODUCTION_PORT" \
-        "$evidence_root/production-before-health.json" || \
-        fail 'the current mock rollback failed its exact health contract'
-fi
+[[ $current_runtime_image_id == "$rollback_image_id" ]] || \
+    fail 'production uses neither the sealed 0.2.0 rollback nor 0.3.0 target image'
+[[ $current_image_reference == "$ROLLBACK_IMAGE" || \
+    $current_image_reference == "$rollback_image_id" ]] || \
+    fail 'the v1 production container uses an unexpected image reference'
+discover_readonly_models_root rollback_models_root "$old_container_id" \
+    production-before || \
+    fail 'the current v1 production models mount is not exact and read-only'
+[[ $models_root != "$rollback_models_root" ]] || \
+    fail 'the v2 candidate models must be isolated from the preserved v1 rollback models'
+case "$models_root/" in
+    "$rollback_models_root/"*) \
+        fail 'the v2 candidate models cannot be nested below the v1 rollback models' ;;
+esac
+case "$rollback_models_root/" in
+    "$models_root/"*) \
+        fail 'the v1 rollback models cannot be nested below the v2 candidate models' ;;
+esac
+capture_verified_container production_before "$old_container_id" \
+    "$PRODUCTION_CONTAINER" "$current_image_reference" "$rollback_image_id" \
+    "$ROLLBACK_PROVIDER" "$PRODUCTION_PORT" true production-before \
+    "$rollback_models_root" || \
+    fail 'the current v1 rollback failed its identity, isolation, and mount contract'
+qualify_v1_rollback "$PRODUCTION_PORT" \
+    "$evidence_root/production-before-v1-validation.json" || \
+    fail 'the current real v1 rollback failed strict 30-batch qualification'
+seal_models_tree rollback_models_seal "$rollback_models_root" \
+    "$evidence_root/rollback-models-before.json" || \
+    fail 'the preserved v1 rollback model tree could not be sealed'
+seal_models_tree target_models_seal "$models_root" \
+    "$evidence_root/target-models-before.json" || \
+    fail 'the v2 candidate model tree could not be sealed'
 
 write_record "$evidence_root/activation-before.txt" \
     'schema=1' \
     "started_utc=$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-    "models_root=$models_root" \
-    "old_container_id=${old_container_id:-absent-recovery}" \
+    "target_models_root=$models_root" \
+    "target_models_sha256=$target_models_seal" \
+    "rollback_models_root=$rollback_models_root" \
+    "rollback_models_sha256=$rollback_models_seal" \
+    "old_container_id=$old_container_id" \
     "recovery_mode=$recovery_mode" \
     "activation_run_id=$activation_run_id" \
     "target_image=$TARGET_IMAGE" \
@@ -921,47 +1293,64 @@ chmod 600 "$evidence_root"/canary-validation.*
 declare -a canary_snapshot=()
 capture_verified_container canary_snapshot "$canary_container_id" "$CANARY_CONTAINER" \
     "$target_image_id" "$target_image_id" "$TARGET_PROVIDER" "$CANARY_PORT" false \
-    canary canary || \
+    canary "$models_root" canary || \
     fail 'the qualified canary failed its identity and isolation contract'
 cleanup_canary || fail 'the exact retained canary could not be removed safely'
 canary_container_id=''
 
-if (( recovery_mode == 0 )); then
-    capture_verified_container production_reverified "$old_container_id" \
-        "$PRODUCTION_CONTAINER" "$current_image_reference" "$rollback_image_id" \
-        "$ROLLBACK_PROVIDER" "$PRODUCTION_PORT" true production-reverified || \
-        fail 'production changed while the isolated canary was qualifying'
-    [[ ${production_before[0]} == "${production_reverified[0]}" && \
-        ${production_before[1]} == "${production_reverified[1]}" && \
-        ${production_before[2]} == "${production_reverified[2]}" ]] || \
-        fail 'production identity changed while the isolated canary was qualifying'
-    wait_for_mock_health "$PRODUCTION_PORT" \
-        "$evidence_root/production-reverified-health.json" || \
-        fail 'the mock rollback health changed during canary qualification'
+capture_verified_container production_reverified "$old_container_id" \
+    "$PRODUCTION_CONTAINER" "$current_image_reference" "$rollback_image_id" \
+    "$ROLLBACK_PROVIDER" "$PRODUCTION_PORT" true production-reverified \
+    "$rollback_models_root" || \
+    fail 'production changed while the isolated v2 canary was qualifying'
+[[ ${production_before[0]} == "${production_reverified[0]}" && \
+    ${production_before[1]} == "${production_reverified[1]}" && \
+    ${production_before[2]} == "${production_reverified[2]}" && \
+    ${production_before[3]} == "${production_reverified[3]}" && \
+    ${production_before[4]} == "${production_reverified[4]}" && \
+    ${production_before[5]} == "${production_reverified[5]}" && \
+    ${production_before[6]} == "${production_reverified[6]}" && \
+    ${production_before[7]} == "${production_reverified[7]}" ]] || \
+    fail 'production identity changed while the isolated v2 canary was qualifying'
+qualify_v1_rollback "$PRODUCTION_PORT" \
+    "$evidence_root/production-reverified-v1-validation.json" || \
+    fail 'the real v1 rollback changed during v2 canary qualification'
+rollback_models_reverified=''
+target_models_reverified=''
+seal_models_tree rollback_models_reverified "$rollback_models_root" \
+    "$evidence_root/rollback-models-reverified.json" || \
+    fail 'the v1 rollback model tree could not be reverified'
+seal_models_tree target_models_reverified "$models_root" \
+    "$evidence_root/target-models-reverified.json" || \
+    fail 'the v2 target model tree could not be reverified'
+[[ $rollback_models_reverified == "$rollback_models_seal" ]] || \
+    fail 'the preserved v1 rollback models changed during canary qualification'
+[[ $target_models_reverified == "$target_models_seal" ]] || \
+    fail 'the sealed v2 target models changed during canary qualification'
+[[ $(image_id "$rollback_image_id") == "$rollback_image_id" ]] || \
+    fail 'the immutable v1 rollback image disappeared before cutover'
+[[ $(image_id "$target_image_id") == "$target_image_id" ]] || \
+    fail 'the immutable v2 target image disappeared before cutover'
 
-    rollback_armed=1
-    docker_stop_bounded "$old_container_id" >"$evidence_root/production-stop.txt" || \
-        fail 'could not stop the exact recorded mock rollback container'
-    chmod 600 "$evidence_root/production-stop.txt"
-    for _ in $(seq 1 30); do
-        if ! docker_read_bounded inspect --type container "$old_container_id" \
-            >/dev/null 2>&1 && \
-            ! container_id_for_name "$PRODUCTION_CONTAINER" >/dev/null 2>&1; then
-            break
-        fi
-        sleep 1
-    done
-    ! docker_read_bounded inspect --type container "$old_container_id" \
-        >/dev/null 2>&1 || \
-        fail 'the exact mock rollback container did not disappear after stop'
-else
-    ! container_id_for_name "$PRODUCTION_CONTAINER" >/dev/null 2>&1 || \
-        fail 'the production container name was claimed during recovery qualification'
-    loopback_port_is_unused "$PRODUCTION_PORT" || \
-        fail 'the production loopback port was claimed during recovery qualification'
-fi
+rollback_armed=1
+docker_stop_bounded "$old_container_id" >"$evidence_root/production-stop.txt" || \
+    fail 'could not stop the exact recorded real v1 rollback container'
+chmod 600 "$evidence_root/production-stop.txt"
+for _ in $(seq 1 30); do
+    if ! docker_read_bounded inspect --type container "$old_container_id" \
+        >/dev/null 2>&1 && \
+        ! container_id_for_name "$PRODUCTION_CONTAINER" >/dev/null 2>&1; then
+        break
+    fi
+    sleep 1
+done
+! docker_read_bounded inspect --type container "$old_container_id" \
+    >/dev/null 2>&1 || \
+    fail 'the exact real v1 rollback container did not disappear after stop'
 ! container_id_for_name "$PRODUCTION_CONTAINER" >/dev/null 2>&1 || \
     fail 'the production container name was unexpectedly reclaimed'
+loopback_port_is_unused "$PRODUCTION_PORT" || \
+    fail 'the production loopback port was unexpectedly reclaimed'
 
 launch_container target_container_id "$PRODUCTION_CONTAINER" "$target_image_id" \
     "$PRODUCTION_PORT" "$TARGET_PROVIDER" true target || \
@@ -974,22 +1363,29 @@ launch_container target_container_id "$PRODUCTION_CONTAINER" "$target_image_id" 
 chmod 600 "$evidence_root"/production-validation.*
 capture_verified_container production_after "$target_container_id" "$PRODUCTION_CONTAINER" \
     "$target_image_id" "$target_image_id" "$TARGET_PROVIDER" "$PRODUCTION_PORT" true \
-    production-after target || \
+    production-after "$models_root" target || \
     fail 'the real provider failed its final identity and isolation contract'
+target_models_after=''
+seal_models_tree target_models_after "$models_root" \
+    "$evidence_root/target-models-after.json" || \
+    fail 'the active v2 target model tree could not be sealed after qualification'
+[[ $target_models_after == "$target_models_seal" ]] || \
+    fail 'the v2 target models changed during production qualification'
 
 last_error='none'
 write_record "$evidence_root/activation-after.txt" \
     'schema=1' \
     "completed_utc=$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
     'status=passed' \
-    "old_container_id=${old_container_id:-absent-recovery}" \
+    "old_container_id=$old_container_id" \
     "recovery_mode=$recovery_mode" \
     "activation_run_id=$activation_run_id" \
     "target_container_id=$target_container_id" \
     "target_image_id=$target_image_id" \
     'provider=ardy' \
+    'protocol_version=2' \
     'checkpoint=ARDY-Core-RP-20FPS-Horizon8' \
-    'embedding_count=3' || fail 'could not publish the activation success record'
+    'embedding_count=9' || fail 'could not publish the activation success record'
 activation_complete=1
-printf 'Guarded ARDY real-provider activation passed; private evidence: %s\n' \
+printf 'Guarded ARDY v1-to-v2 migration passed; private evidence: %s\n' \
     "$evidence_root"

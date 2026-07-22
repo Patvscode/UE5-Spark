@@ -82,7 +82,7 @@ character_manifest_rows() {
     if [[ ! -e $character_manifest ]]; then
         if (( allow_legacy_portrait_manifest == 1 )) && \
             [[ $expected_camera_framing == Portrait ]]; then
-            printf 'Ada\tFayAvatarRuntime/Content/FayMetaHumans/Built/AdaFay/BP_AdaFay.uasset\n'
+            printf 'Ada\tUE58MetaHuman\tFayAvatarRuntime/Content/FayMetaHumans/Built/AdaFay/BP_AdaFay.uasset\n'
             return
         fi
         fail 'the packaged character manifest is missing; only sealed legacy Portrait packages may omit it'
@@ -135,6 +135,26 @@ if not isinstance(characters, list) or not 1 <= len(characters) <= 16:
     raise SystemExit("invalid character manifest count")
 ids = set()
 assets = set()
+metahuman_actor_pattern = re.compile(
+    r"^/Game/FayMetaHumans/Built/"
+    r"(?P<directory>[A-Za-z][A-Za-z0-9_-]{0,63})/"
+    r"(?P<blueprint>BP_[A-Za-z][A-Za-z0-9_-]{0,63})\."
+    r"(?P=blueprint)_C$"
+)
+metahuman_package_pattern = re.compile(
+    r"^FayAvatarRuntime/Content/FayMetaHumans/Built/"
+    r"(?P<directory>[A-Za-z][A-Za-z0-9_-]{0,63})/"
+    r"(?P<blueprint>BP_[A-Za-z][A-Za-z0-9_-]{0,63})\.uasset$"
+)
+casual_girl_id = "CasualGirl"
+casual_girl_actor = (
+    "/Game/FayFab/CasualGirl/Runtime/"
+    "BP_CasualGirlFay.BP_CasualGirlFay_C"
+)
+casual_girl_package = (
+    "FayAvatarRuntime/Content/FayFab/CasualGirl/Runtime/"
+    "BP_CasualGirlFay.uasset"
+)
 for character in characters:
     expected_character_keys = {"id", "adapter", "actorClass", "packageAsset"}
     if schema == 2:
@@ -142,6 +162,8 @@ for character in characters:
     if not isinstance(character, dict) or set(character) != expected_character_keys:
         raise SystemExit("invalid character manifest entry")
     character_id = character["id"]
+    adapter = character["adapter"]
+    actor_class = character["actorClass"]
     package_asset = character["packageAsset"]
     if not isinstance(character_id, str) or not re.fullmatch(
         r"[A-Za-z][A-Za-z0-9_-]{0,31}", character_id
@@ -149,29 +171,50 @@ for character in characters:
         raise SystemExit("invalid character ID")
     if character_id in ids:
         raise SystemExit("duplicate character ID")
-    if character["adapter"] != "UE58MetaHuman":
-        raise SystemExit("unsupported packaged character adapter")
     if schema == 2:
         if character["cameraFramings"] != ["Portrait", "FullBody"]:
             raise SystemExit("unsupported packaged camera framing contract")
         if expected_camera_framing not in character["cameraFramings"]:
             raise SystemExit("requested camera framing is not sealed for the character")
-    if not isinstance(character["actorClass"], str) or not character[
-        "actorClass"
-    ].startswith("/Game/FayMetaHumans/Built/"):
-        raise SystemExit("unsafe packaged actor class")
-    if not isinstance(package_asset, str) or not re.fullmatch(
-        r"FayAvatarRuntime/Content/FayMetaHumans/Built/"
-        r"[A-Za-z][A-Za-z0-9_-]{0,63}/"
-        r"BP_[A-Za-z][A-Za-z0-9_-]{0,63}\.uasset",
-        package_asset,
-    ):
-        raise SystemExit("unsafe packaged character asset")
+    if adapter == "UE58MetaHuman":
+        actor_match = (
+            metahuman_actor_pattern.fullmatch(actor_class)
+            if isinstance(actor_class, str)
+            else None
+        )
+        package_match = (
+            metahuman_package_pattern.fullmatch(package_asset)
+            if isinstance(package_asset, str)
+            else None
+        )
+        if actor_match is None:
+            raise SystemExit("unsafe packaged UE58MetaHuman actor class")
+        if package_match is None:
+            raise SystemExit("unsafe packaged UE58MetaHuman character asset")
+        if (
+            actor_match.group("directory"),
+            actor_match.group("blueprint"),
+        ) != (
+            package_match.group("directory"),
+            package_match.group("blueprint"),
+        ):
+            raise SystemExit("cross-adapter or mismatched MetaHuman asset paths")
+    elif adapter == "UE5EpicArkit":
+        if schema == 1:
+            raise SystemExit("legacy manifests support only UE58MetaHuman")
+        if character_id != casual_girl_id:
+            raise SystemExit("unreviewed UE5EpicArkit character ID")
+        if actor_class != casual_girl_actor:
+            raise SystemExit("unsafe packaged UE5EpicArkit actor class")
+        if package_asset != casual_girl_package:
+            raise SystemExit("unsafe packaged UE5EpicArkit character asset")
+    else:
+        raise SystemExit("unsupported packaged character adapter")
     if package_asset in assets:
         raise SystemExit("duplicate packaged character asset")
     ids.add(character_id)
     assets.add(package_asset)
-    print(f"{character_id}\t{package_asset}")
+    print(f"{character_id}\t{adapter}\t{package_asset}")
 PY
 }
 
@@ -264,19 +307,46 @@ verify_deep_content() {
     local manifest_output
     manifest_output=$(character_manifest_rows) || \
         fail 'the packaged character manifest failed validation'
-    local character_id package_asset
-    while IFS=$'\t' read -r character_id package_asset; do
-        [[ -n $character_id && -n $package_asset ]] || \
+    local requires_metahuman=0
+    local requires_epic_arkit=0
+    local requires_streaming_ada=0
+    local character_id adapter package_asset
+    while IFS=$'\t' read -r character_id adapter package_asset; do
+        [[ -n $character_id && -n $adapter && -n $package_asset ]] || \
             fail 'the packaged character manifest produced an empty record'
         grep -Fq "$package_asset" "$temporary_listing" || \
             fail "the sealed package does not contain reviewed character $character_id"
+        case $adapter in
+            UE58MetaHuman)
+                requires_metahuman=1
+                requires_streaming_ada=1
+                ;;
+            UE5EpicArkit)
+                requires_epic_arkit=1
+                # The current sealed UE5EpicArkit contract deliberately keeps
+                # StreamingADA until a future manifest schema can state a
+                # different reviewed face-solver dependency explicitly.
+                requires_streaming_ada=1
+                ;;
+            *)
+                fail 'the packaged character manifest produced an unsupported adapter'
+                ;;
+        esac
     done <<<"$manifest_output"
-    grep -Fq 'FayAvatarRuntime/Content/FayMetaHumans/Common_UE58/' \
-        "$temporary_listing" || fail 'the sealed package does not contain the MetaHuman common assets'
-    grep -Fq 'StreamingADA/Content/xsada_face_base_fp32_v2_0_0.uasset' \
-        "$temporary_listing" || fail 'the sealed package does not contain the StreamingADA v2 model'
-    grep -Fq 'Interchange/Assets/Content/Functions/MF_PhongToMetalRoughness.uasset' \
-        "$temporary_listing" || fail 'the sealed package does not contain the reviewed garment material dependency'
+    if (( requires_metahuman == 1 )); then
+        grep -Fq 'FayAvatarRuntime/Content/FayMetaHumans/Common_UE58/' \
+            "$temporary_listing" || fail 'the sealed package does not contain the MetaHuman common assets'
+        grep -Fq 'Interchange/Assets/Content/Functions/MF_PhongToMetalRoughness.uasset' \
+            "$temporary_listing" || fail 'the sealed package does not contain the reviewed MetaHuman garment material dependency'
+    fi
+    if (( requires_epic_arkit == 1 )); then
+        grep -Fq 'FayAvatarRuntime/Content/FayFab/CasualGirl/' \
+            "$temporary_listing" || fail 'the sealed package does not contain the reviewed Casual Girl content root'
+    fi
+    if (( requires_streaming_ada == 1 )); then
+        grep -Fq 'StreamingADA/Content/xsada_face_base_fp32_v2_0_0.uasset' \
+            "$temporary_listing" || fail 'the sealed character adapter contract requires the StreamingADA v2 model'
+    fi
     if grep -Fiq 'FayMetaHumanEditorTools' "$temporary_listing"; then
         fail 'the Editor-only FayMetaHumanEditorTools plugin leaked into packaged content'
     fi
@@ -373,8 +443,8 @@ printf '  ARM64 Game executable: verified\n'
 printf '  ARM64 ONNX Runtime: verified\n'
 printf '  Content layout: Pak-only (IoStore disabled)\n'
 manifest_summary=$(character_manifest_rows | cut -f1 | tr '\n' ',' | sed 's/,$//')
-printf '  Character profile(s) and StreamingADA content: deep-verified and hash-sealed (%s)\n' \
+printf '  Character profile(s) and required adapter content: deep-verified and hash-sealed (%s)\n' \
     "$manifest_summary"
-printf '  Garment material dependency: deep-verified\n'
+printf '  Adapter-specific face, common, and garment dependencies: verified when required\n'
 printf '  Editor-only helper: absent\n'
 printf '  Package files: unchanged since deep verification\n'

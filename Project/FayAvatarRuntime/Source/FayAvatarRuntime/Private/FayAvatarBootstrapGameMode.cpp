@@ -8,6 +8,7 @@
 #include "Engine/Engine.h"
 #include "Engine/SkeletalMesh.h"
 #include "Engine/World.h"
+#include "FayArkitSpeechDriverComponent.h"
 #include "FayAvatarBridgeComponent.h"
 #include "FayAvatarDormancyComponent.h"
 #include "FayArdyPoseClientComponent.h"
@@ -31,7 +32,10 @@ constexpr TCHAR AvatarSettingsSection[] = TEXT("FayAvatar");
 constexpr TCHAR DefaultCharacterId[] = TEXT("Ada");
 constexpr TCHAR DefaultCameraFramingId[] = TEXT("Portrait");
 constexpr TCHAR FullBodyCameraFramingId[] = TEXT("FullBody");
-constexpr TCHAR RequiredAdapter[] = TEXT("UE58MetaHuman");
+constexpr TCHAR MetaHumanAdapter[] = TEXT("UE58MetaHuman");
+constexpr TCHAR EpicArkitAdapter[] = TEXT("UE5EpicArkit");
+constexpr TCHAR ReviewedEpicArkitActorClass[] =
+    TEXT("/Game/FayFab/CasualGirl/Runtime/BP_CasualGirlFay.BP_CasualGirlFay_C");
 constexpr float ReviewedMaximumFramesPerSecond = 30.0f;
 constexpr float FrameRateLimitTolerance = 0.01f;
 constexpr double FrameRatePolicyAuditIntervalSeconds = 5.0;
@@ -86,11 +90,25 @@ bool IsReviewedCharacterId(const FString& Value)
     return true;
 }
 
-bool IsReviewedActorClassPath(const FString& Value)
+bool IsReviewedActorClassPath(
+    const FString& Value,
+    const FString& Adapter)
 {
-    return Value.StartsWith(TEXT("/Game/FayMetaHumans/Built/")) &&
-        Value.EndsWith(TEXT("_C")) && !Value.Contains(TEXT("..")) &&
-        !Value.Contains(TEXT("\\"));
+    if (Adapter.Equals(MetaHumanAdapter, ESearchCase::CaseSensitive))
+    {
+        return Value.StartsWith(
+                   TEXT("/Game/FayMetaHumans/Built/"),
+                   ESearchCase::CaseSensitive) &&
+            Value.EndsWith(TEXT("_C"), ESearchCase::CaseSensitive) &&
+            !Value.Contains(TEXT("..")) && !Value.Contains(TEXT("\\"));
+    }
+    if (Adapter.Equals(EpicArkitAdapter, ESearchCase::CaseSensitive))
+    {
+        return Value.Equals(
+            ReviewedEpicArkitActorClass,
+            ESearchCase::CaseSensitive);
+    }
+    return false;
 }
 }
 
@@ -125,6 +143,8 @@ AFayAvatarBootstrapGameMode::AFayAvatarBootstrapGameMode()
     ArdyPoseClient = CreateDefaultSubobject<UFayArdyPoseClientComponent>(TEXT("FayArdyPoseClient"));
     BodyMotion = CreateDefaultSubobject<UFayBodyMotionComponent>(TEXT("FayBodyMotion"));
     SpeechDriver = CreateDefaultSubobject<UFayMetaHumanSpeechDriverComponent>(TEXT("FayMetaHumanSpeechDriver"));
+    ArkitSpeechDriver =
+        CreateDefaultSubobject<UFayArkitSpeechDriverComponent>(TEXT("FayArkitSpeechDriver"));
     Wardrobe = CreateDefaultSubobject<UFayWardrobeComponent>(TEXT("FayWardrobe"));
     Dormancy->AddTickPrerequisiteComponent(SpeechDriver);
     Dormancy->AddTickPrerequisiteComponent(BodyMotion);
@@ -229,6 +249,23 @@ void AFayAvatarBootstrapGameMode::BeginPlay()
         }
     }
     bCharacterProfileValid = LoadCharacterProfile();
+    if (bCharacterProfileValid && CharacterAdapter.Equals(
+            EpicArkitAdapter,
+            ESearchCase::CaseSensitive))
+    {
+        // Only the selected speech adapter may consume decoded speech. Keep
+        // the MetaHuman path unchanged for MetaHuman and diagnostic profiles,
+        // but disconnect it before activating the direct ARKit morph driver.
+        if (SpeechDriver != nullptr)
+        {
+            SpeechDriver->OnLiveLinkStateChanged.RemoveAll(this);
+            SpeechDriver->AttachBridge(nullptr);
+        }
+        if (ArkitSpeechDriver != nullptr)
+        {
+            ArkitSpeechDriver->AttachBridge(Bridge);
+        }
+    }
     TrySpawnMetaHuman();
 }
 
@@ -241,6 +278,11 @@ void AFayAvatarBootstrapGameMode::EndPlay(
     if (SpeechDriver != nullptr)
     {
         SpeechDriver->OnLiveLinkStateChanged.RemoveAll(this);
+    }
+    if (ArkitSpeechDriver != nullptr)
+    {
+        ArkitSpeechDriver->ClearAvatar();
+        ArkitSpeechDriver->AttachBridge(nullptr);
     }
     Super::EndPlay(EndPlayReason);
 }
@@ -267,6 +309,16 @@ void AFayAvatarBootstrapGameMode::Tick(const float DeltaSeconds)
 
     if (IsValid(MetaHumanActor))
     {
+        if (CharacterAdapter.Equals(
+                EpicArkitAdapter,
+                ESearchCase::CaseSensitive) &&
+            ArkitSpeechDriver != nullptr &&
+            !ArkitSpeechDriver->IsConfigured())
+        {
+            // Fail open to the narrow amplitude jaw path if the reviewed face
+            // component or mesh disappears after initial configuration.
+            bJawFallbackActive = true;
+        }
         DriveJawFallback();
     }
     else if (!bSceneOnlyDiagnostic)
@@ -350,7 +402,9 @@ void AFayAvatarBootstrapGameMode::HandleLiveLinkStateChanged(
     const EFayMetaHumanLiveLinkState State,
     const EFayMetaHumanLiveLinkFailure Failure)
 {
-    if (bEndingPlay)
+    if (bEndingPlay || !CharacterAdapter.Equals(
+            MetaHumanAdapter,
+            ESearchCase::CaseSensitive))
     {
         return;
     }
@@ -433,7 +487,10 @@ void AFayAvatarBootstrapGameMode::HandleLiveLinkStateChanged(
 
 void AFayAvatarBootstrapGameMode::TickLiveLinkRecovery(const float DeltaSeconds)
 {
-    if (bEndingPlay || SpeechDriver == nullptr)
+    if (bEndingPlay || SpeechDriver == nullptr ||
+        !CharacterAdapter.Equals(
+            MetaHumanAdapter,
+            ESearchCase::CaseSensitive))
     {
         return;
     }
@@ -614,12 +671,17 @@ bool AFayAvatarBootstrapGameMode::LoadCharacterProfile()
             *RequestedCameraFraming);
         return false;
     }
-    if (Adapter != RequiredAdapter || FaceComponent != TEXT("Face") ||
-        BodyComponent != TEXT("Body") || !IsReviewedActorClassPath(ActorClassPath))
+    const bool bReviewedAdapter =
+        Adapter.Equals(MetaHumanAdapter, ESearchCase::CaseSensitive) ||
+        Adapter.Equals(EpicArkitAdapter, ESearchCase::CaseSensitive);
+    if (!bReviewedAdapter || FaceComponent != TEXT("Face") ||
+        BodyComponent != TEXT("Body") ||
+        !IsReviewedActorClassPath(ActorClassPath, Adapter))
     {
         UE_LOG(LogFayAvatarRuntime, Error,
-            TEXT("Character profile '%s' is outside the reviewed UE 5.8 MetaHuman contract."),
-            *RequestedId);
+            TEXT("Character profile '%s' is outside the reviewed adapter, component, or actor-path contract (adapter=%s)."),
+            *RequestedId,
+            *Adapter);
         return false;
     }
 
@@ -701,31 +763,59 @@ void AFayAvatarBootstrapGameMode::TrySpawnMetaHuman()
     {
         Wardrobe->ConfigureFromReviewedBinding(MetaHumanActor);
     }
-    LiveLinkRecoveryAttemptCount = 0;
-    LiveLinkRecoveryDelayRemainingSeconds = 0.0;
+    if (CharacterAdapter.Equals(
+            MetaHumanAdapter,
+            ESearchCase::CaseSensitive))
+    {
+        LiveLinkRecoveryAttemptCount = 0;
+        LiveLinkRecoveryDelayRemainingSeconds = 0.0;
+        bLiveLinkRecoveryScheduled = false;
+        bLiveLinkRecoveryExhaustionPending = false;
+        bJawFallbackActive = true;
+        bLiveLinkConfigured = false;
+        bLiveLinkConfigurationRequested = SpeechDriver != nullptr &&
+            SpeechDriver->IsSolverReady();
+        if (bLiveLinkConfigurationRequested)
+        {
+            bLiveLinkConfigured = SpeechDriver->ConfigureAvatar(MetaHumanActor);
+            bLiveLinkConfigurationRequested =
+                !bLiveLinkConfigured && SpeechDriver->IsAvatarConfigurationPending();
+        }
+        if (Dormancy != nullptr)
+        {
+            Dormancy->ConfigureAvatar(MetaHumanActor);
+        }
+        UE_LOG(LogFayAvatarRuntime, Display,
+            TEXT("Spawned character '%s' (speech_live_link=%s)."),
+            *ActiveCharacterId,
+            bLiveLinkConfigured
+                ? TEXT("configured")
+                : (bLiveLinkConfigurationRequested ? TEXT("pending exact-source verification")
+                                                   : TEXT("jaw fallback")));
+        return;
+    }
+
+    // UE5EpicArkit bypasses the MetaHuman Live Link driver and its recovery
+    // state machine. The direct morph driver owns only the exact Face mesh of
+    // the sealed Casual Girl wrapper Blueprint.
+    bLiveLinkConfigured = false;
+    bLiveLinkConfigurationRequested = false;
     bLiveLinkRecoveryScheduled = false;
     bLiveLinkRecoveryExhaustionPending = false;
-    bJawFallbackActive = true;
-    bLiveLinkConfigured = false;
-    bLiveLinkConfigurationRequested = SpeechDriver != nullptr &&
-        SpeechDriver->IsSolverReady();
-    if (bLiveLinkConfigurationRequested)
+    LiveLinkRecoveryAttemptCount = 0;
+    LiveLinkRecoveryDelayRemainingSeconds = 0.0;
+    bool bArkitConfigured = false;
+    if (ArkitSpeechDriver != nullptr)
     {
-        bLiveLinkConfigured = SpeechDriver->ConfigureAvatar(MetaHumanActor);
-        bLiveLinkConfigurationRequested =
-            !bLiveLinkConfigured && SpeechDriver->IsAvatarConfigurationPending();
+        ArkitSpeechDriver->AttachBridge(Bridge);
+        ArkitSpeechDriver->ConfigureAvatar(MetaHumanActor, FaceComponentName);
+        bArkitConfigured = ArkitSpeechDriver->IsConfigured();
     }
-    if (Dormancy != nullptr)
-    {
-        Dormancy->ConfigureAvatar(MetaHumanActor);
-    }
+    bJawFallbackActive = !bArkitConfigured;
     UE_LOG(LogFayAvatarRuntime, Display,
-        TEXT("Spawned character '%s' (speech_live_link=%s)."),
+        TEXT("Spawned character '%s' (speech_arkit_morphs=%s, speech_live_link=disabled)."),
         *ActiveCharacterId,
-        bLiveLinkConfigured
-            ? TEXT("configured")
-            : (bLiveLinkConfigurationRequested ? TEXT("pending exact-source verification")
-                                               : TEXT("jaw fallback")));
+        bArkitConfigured ? TEXT("configured") : TEXT("jaw fallback"));
 }
 
 void AFayAvatarBootstrapGameMode::ResolveFaceAndJawMorph()
