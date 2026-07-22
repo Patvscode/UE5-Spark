@@ -1,50 +1,41 @@
-# Companion-mode design QA
+# Direct framing and command design QA
 
 ## Evidence
 
-- Source visual truth: `/tmp/codex-remote-attachments/019f7b48-0d14-7751-87d2-08d1b4193263/14EAFA76-E97A-49AA-8570-4E6BCD578A4E/1-Photo-1.jpg`.
-- Source pixels: 590 × 1280. The app-owned region was normalized to 390 × 844 at 1× for comparison; the source OS status bar was not recreated.
-- Browser-rendered mobile implementation: `/Users/patrickmello/UE5-Spark/apps/private-controller/qa-companion-mobile.png`, 390 × 844 CSS pixels normalized to a 390 × 844 image at 1×.
-- Same-size comparison: `/Users/patrickmello/UE5-Spark/apps/private-controller/qa-comparison-companion-mobile.png`, source and implementation side by side at 390 × 844 each.
-- Browser-rendered desktop implementation: `/Users/patrickmello/UE5-Spark/apps/private-controller/qa-companion-desktop.png`, 1280 × 720 CSS pixels normalized to 1×.
-- State: Ada replay fallback, autonomous Alive mode enabled, no sheet open, dark stage, right shortcut rail, and bottom companion dock.
-- Capture method: the in-app browser rendered the real Vite app inside a same-origin 390 × 844 iframe. Two browser viewport captures were stitched at the exact scroll boundary because the browser surface itself remained 1280 × 720.
+- User correction source: `/tmp/codex-remote-attachments/019f7b48-0d14-7751-87d2-08d1b4193263/B4B7BD6B-2CD5-4727-83F2-7C35CD962265/1-Photo-1.jpg`, 590 × 1280.
+- Browser-rendered mobile implementation: `/Users/patrickmello/UE5-Spark/apps/private-controller/qa-mobile-direct-controls.png`, 390 × 844 CSS pixels at 1×.
+- Combined comparison input: `/Users/patrickmello/UE5-Spark/apps/private-controller/qa-reference-comparison.png`, source and implementation side by side at 390 × 844 each.
+- Capture method: the in-app browser rendered the real Vite app in a same-origin 390 × 844 frame. Two viewport captures were stitched at the exact 720-pixel browser boundary.
+- State: Ada replay fallback, autonomous Alive mode on, zoom at Fit/1.0×, no modal open, persistent movement and message fields visible.
 
-## Full-view comparison
+## Visual comparison
 
-The implementation now follows the reference hierarchy closely: the character owns the viewport, identity is quiet in the upper-left, shortcuts sit in a slim right rail, and voice/text controls form one bottom dock. Technical status, transcripts, movement details, camera settings, and wardrobe controls are absent from the default stage and open only in dismissible sheets.
+The supplied screen made Ada fill and overflow the portrait viewport because the landscape renderer image used `object-fit: cover`. The corrected screen uses `contain`, so Fit exposes every pixel in the current Unreal frame. Ada is consequently smaller at the default distance, with a nonmodal 0.75×–3.0× distance control for moving closer. This is honest framing: it does not invent legs or body pixels absent from the current Unreal camera.
 
-The source uses an anime full-body render and branded purple environment. The implementation intentionally uses the real Ada Unreal capture on its real black stage, with no copied branding or synthetic background. Ada is chest-up because that is what the current renderer camera provides; CSS cannot reveal body pixels the renderer did not capture. This is a runtime-package constraint rather than a UI substitution.
-
-Focused region comparison was not necessary after the same-size mobile pass: the name, right rail, character crop, and bottom dock are all legible at 390 × 844 in the combined evidence.
-
-## Required fidelity surfaces
-
-- Fonts and typography: DM Sans gives the identity and controls the same direct sans-serif character as the reference. Name, status, placeholder, and Text mode maintain clear optical hierarchy without recreating the reference logo.
-- Spacing and layout rhythm: the stage is uninterrupted; edge controls stay inside iPhone safe-area offsets; the right rail has consistent 9-pixel rhythm; and the four-part bottom dock fits without horizontal overflow at 390 CSS pixels.
-- Colors and visual tokens: translucent charcoal controls, white text, mint Alive state, and the real black renderer background preserve contrast. The reference's branded purple treatment was intentionally not copied.
-- Image quality and asset fidelity: the character remains real Ada media or the private live Unreal frame. No generated stand-in, CSS illustration, fake full body, or copied character asset is used. Phosphor supplies every interface icon.
-- Copy and content: `Ada`, truthful readiness, `Ask Ada anything`, and `Text` are concise. Runtime limitations remain in the relevant sheets instead of covering the character.
+The two command rows occupy only the lower edge. Movement is the slimmer upper row; speech, framing, and general chat remain in the primary lower dock. The character, right rail, and stage remain unobstructed above them. At 390 CSS pixels, labels remain legible, text fields stay at 16 pixels to avoid iOS input zoom, and there is no horizontal overflow.
 
 ## Interaction verification
 
-- Opened and dismissed the movement director from the right rail.
-- Confirmed Wave, Explain, and Listen remain functional quick actions inside the sheet.
-- Hid all companion chrome and restored it with the single remaining affordance.
-- Confirmed the Alive control is visibly enabled and exposes pressed state to assistive technology.
-- Confirmed the phone-camera control is explicit opt-in and says that its local preview is not yet sent to Fay or Unreal.
-- Browser console contained no errors or warnings after the final reload and interaction pass.
-- Production build completed successfully.
+- The movement input is permanently present and accepts direct text without opening a sheet.
+- Once is selected by default. Loop can be selected inline; the submit control changes to the repeating-action state, and an active loop exposes Stop.
+- The ordinary message field is permanently present and its send control becomes enabled after entry.
+- Reviewed movement wording in general chat routes through the sealed movement endpoint; unknown wording falls back to Fay instead of pretending a motion ran.
+- The distance control opens from both framing shortcuts, exposes the current multiplier and a Fit reset, and media retains `object-fit: contain` at mobile width.
+- One-shot fallback clips return to idle instead of replaying forever; explicit loops repeat only until stopped or an error occurs.
+- The in-app browser console contained no errors or warnings after the final reload and interaction pass.
+- The production build completed successfully.
 
-## Comparison history
+## Issue resolution
 
-1. Earlier deployed screen had a P1 hierarchy problem: stacked motion, conversation, and camera panels reduced the character to a small preview. The app was changed to a fixed full-viewport stage with on-demand sheets.
-2. The first immersive version still placed a permanent caption and motion shelf over Ada's torso. Those P1 obstructions were removed; quick motions moved into the movement sheet, status became a short-lived toast, and shortcuts moved to the edge rail.
-3. The 390 × 844 browser pass found no horizontal overflow or persistent central obstruction. The character, rail, and bottom dock remain readable and operable. No actionable P0, P1, or P2 visual issue remains.
+1. P1: mobile cover-crop hid most of Ada and prevented motion assessment. Resolved with full-frame containment plus direct adjustable zoom.
+2. P1: movement required a blocking bottom sheet. Resolved with a permanent inline movement composer.
+3. P1: the main Ask control opened another sheet instead of accepting text. Resolved with a real inline message field that can also route reviewed movements.
+4. P2: movement replay semantics were ambiguous. Resolved with explicit Once/Loop/Stop controls and once-by-default behavior.
 
-## Follow-up polish
+No actionable P0, P1, or P2 visual issue remains in the reviewed mobile state.
 
-- Replace the current portrait renderer camera with the qualified full-body v30 package; that is the remaining visible difference with the reference's character freedom.
-- Validate the local camera-permission state on the user's actual iPhone before connecting any reviewed gaze bridge.
+## Runtime limit
+
+The browser can now reveal the entire current renderer frame, but a true head-to-toe view still requires the wider Unreal camera package. The UI labels Fit as the current frame rather than claiming unsupported full-body output.
 
 final result: passed

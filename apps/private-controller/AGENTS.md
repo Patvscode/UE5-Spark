@@ -12,7 +12,9 @@ Durable mobile feedback: the avatar stage must own the full iPhone viewport. Kee
 
 Durable companion-mode feedback: follow the reference hierarchy of a full-screen character, a slim right-edge shortcut rail, and one bottom conversation dock. Keep our own identity and truthful runtime labels; do not copy another product's logo or unsupported camera/upload actions. The entire visible chrome must be collapsible so the character can occupy the screen alone.
 
-Durable movement feedback: free-text body requests belong in a dedicated movement sheet opened from the compact shelf. A local LLM may suggest only a reviewed motion-catalog ID; deterministic code owns the final ID, duration, intensity, root mode, and renderer route. Never present a staged ARDY catalog item as movement that actually occurred.
+Durable movement feedback: keep a persistent inline movement composer on the stage; directing a move must not require a modal. Commands run once by default, with explicit Loop and Stop controls. The ordinary message field may route recognizable reviewed movement requests before chat. A local LLM may suggest only a reviewed motion-catalog ID; deterministic code owns the final ID, duration, intensity, root mode, and renderer route. Never present a staged ARDY catalog item as movement that actually occurred.
+
+Durable framing feedback: mobile must default to `object-fit: contain` so the entire current Unreal frame is visible. Provide an inline distance slider and Fit reset without leaving the stage. State honestly that browser framing cannot reveal body parts that the Unreal camera did not render.
 
 Durable agency feedback: the default companion may run a bounded Alive loop that autonomously selects only packaged, allowlisted ARDY behaviors with small timing and intensity variation. It must pause during direct user speech or explicit direction, never improvise arbitrary joint data, and never label a replay or staged behavior as live motion.
 

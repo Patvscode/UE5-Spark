@@ -34,6 +34,29 @@ const MOTION_COMMAND_EXAMPLES = [
   "Jumping jacks", "Jog in place", "Run in place", "Stretch", "Wave",
 ];
 
+const MOVEMENT_ROUTES = [
+  { command: "jumping jacks", pattern: /\bjumping jacks?\b/i },
+  { command: "jog in place", pattern: /\bjog(?:ging)? in place\b/i },
+  { command: "run in place", pattern: /\brun(?:ning)? in place\b/i },
+  { command: "stretch", pattern: /\b(?:do (?:a )?)?stretch(?: your (?:arms|body))?\b/i },
+  { command: "dance", pattern: /\b(?:dance|dancing)(?: casually| in place)?\b/i },
+  { command: "wave", pattern: /\b(?:wave|wave hello|greet me)\b/i },
+  { command: "explain with your hands", pattern: /\b(?:explain|talk)(?: it)? with your hands\b/i },
+  { command: "listen", pattern: /\b(?:listening pose|listen to me)\b/i },
+  { command: "idle", pattern: /\b(?:go idle|stand naturally|relax your body)\b/i },
+];
+
+const LOOP_REQUEST_PATTERN = /\b(?:keep|loop|repeat|repeatedly|continuously|over and over)\b/i;
+const STOP_MOVEMENT_PATTERN = /\b(?:stop (?:the )?(?:move|motion|movement|moving|wave|dance|jogging|running|repeating|loop|that)|end (?:the )?(?:movement|loop))\b/i;
+
+function movementRouteFor(message) {
+  const reviewed = MOVEMENT_ROUTES.find((route) => route.pattern.test(message));
+  if (reviewed) return reviewed.command;
+  return /\b(?:do|perform|show me|start|begin|keep)\b.*\b(?:move|motion|pose|jog|run|jump|walk|dance|wave|stretch)\b/i.test(message)
+    ? message
+    : null;
+}
+
 const ALIVE_ACTIONS = [
   { behavior: "idle", label: "relaxed weight shift", weight: 5, duration: [3.4, 5.2], intensity: [0.3, 0.46] },
   { behavior: "listen", label: "attentive listening", weight: 3, duration: [2.8, 4.4], intensity: [0.34, 0.5] },
@@ -62,7 +85,7 @@ const PENDING_WARDROBE = {
 export function App() {
   const [character, setCharacter] = useState("ada");
   const [motion, setMotion] = useState("explain");
-  const [camera, setCamera] = useState("portrait");
+  const [camera, setCamera] = useState("fit");
   const [messages, setMessages] = useState([{
     id: "welcome", role: "assistant",
     content: "Hello, I’m Ada. Talk to me or try one of the real-time movement controls.",
@@ -78,6 +101,10 @@ export function App() {
   const [aliveMode, setAliveMode] = useState(true);
   const [visionState, setVisionState] = useState("off");
   const [motionDraft, setMotionDraft] = useState("");
+  const [motionMode, setMotionMode] = useState("once");
+  const [motionLoop, setMotionLoop] = useState(null);
+  const [stageZoom, setStageZoom] = useState(1);
+  const [showZoom, setShowZoom] = useState(false);
   const [directingMotion, setDirectingMotion] = useState(false);
   const [motionPlan, setMotionPlan] = useState(null);
   const [wardrobe, setWardrobe] = useState(PENDING_WARDROBE);
@@ -105,6 +132,7 @@ export function App() {
   const liveStage = streamRequested && streamState === "live" && Boolean(liveFrameUrl);
   const liveLabel = !health.checked ? "Checking" : liveStage ? "Stage live" : streamRequested && streamState === "error" ? "Replay fallback" : streamRequested ? "Stream connecting" : health.renderer ? "Renderer linked" : systemsReady ? "Systems ready" : "Limited preview";
   const characterName = character === "ada" ? "Ada" : "Aoi";
+  const stageMediaStyle = { "--stage-zoom": stageZoom };
   const sheetMeta = activeSheet === "conversation"
     ? { eyebrow: "Live Fay conversation", title: `Talk with ${characterName}`, label: "Conversation" }
     : activeSheet === "motion"
@@ -291,7 +319,7 @@ export function App() {
   }, [notice]);
 
   useEffect(() => {
-    if (!aliveMode || !health.renderer || !health.ardy || listening || sending) return undefined;
+    if (!aliveMode || motionLoop || !health.renderer || !health.ardy || listening || sending) return undefined;
     let cancelled = false;
     let timer = null;
     let controller = null;
@@ -349,7 +377,50 @@ export function App() {
       window.clearTimeout(timer);
       controller?.abort();
     };
-  }, [activeSheet, aliveMode, health.ardy, health.renderer, listening, sending]);
+  }, [activeSheet, aliveMode, health.ardy, health.renderer, listening, motionLoop, sending]);
+
+  useEffect(() => {
+    if (!motionLoop) return undefined;
+    let cancelled = false;
+    let timer = null;
+
+    const schedule = (duration) => {
+      if (cancelled) return;
+      timer = window.setTimeout(repeat, Math.max(0.8, Number(duration) || 2) * 1000 + 180);
+    };
+    async function repeat() {
+      if (cancelled || document.hidden) {
+        schedule(1);
+        return;
+      }
+      try {
+        const response = await fetch("/api/motion-command", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ command: motionLoop.command }),
+        });
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok || payload.status === "staged") throw new Error(payload.detail || "Repeated movement stopped");
+        if (payload.behavior) {
+          setMotion(payload.behavior);
+          setPlaying(true);
+        }
+        setNotice(`${payload.label || motionLoop.label} · repeating until you stop it`);
+        schedule(payload.duration || motionLoop.duration);
+      } catch (error) {
+        if (cancelled) return;
+        setMotionLoop(null);
+        setMotionMode("once");
+        setNotice(error.message || "Repeated movement stopped");
+      }
+    }
+
+    schedule(motionLoop.duration);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [motionLoop]);
 
   useEffect(() => {
     if (cameraPreviewRef.current && cameraStreamRef.current) {
@@ -378,20 +449,63 @@ export function App() {
     return () => window.removeEventListener("keydown", closeOnEscape);
   }, [activeSheet]);
 
+  async function requestMovement(command) {
+    const response = await fetch("/api/motion-command", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ command }),
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      const error = new Error(payload.detail || payload.error || "That movement is not available yet.");
+      error.status = response.status;
+      throw error;
+    }
+    return payload;
+  }
+
+  function applyMovementPayload(payload) {
+    setMotionPlan(payload);
+    if (payload.behavior) {
+      setMotion(payload.behavior);
+      setPlaying(true);
+    }
+  }
+
+  function beginMotionLoop(command, payload) {
+    setMotionMode("loop");
+    setMotionLoop({
+      command,
+      label: payload.label || "Movement",
+      duration: Number(payload.duration) || 2,
+      startedAt: Date.now(),
+    });
+  }
+
+  async function stopMotionLoop({ announce = true } = {}) {
+    if (!motionLoop) return;
+    setMotionLoop(null);
+    setMotionMode("once");
+    if (announce) setNotice(`${motionLoop.label} loop stopped`);
+    try {
+      const payload = await requestMovement("idle");
+      applyMovementPayload(payload);
+    } catch { /* The current bounded action will still end on its own. */ }
+  }
+
   async function playMotion(nextMotion) {
     const selected = MOTIONS.find((item) => item.id === nextMotion);
+    setMotionLoop(null);
+    setMotionMode("once");
     setMotion(nextMotion);
     setPlaying(true);
     setNotice(health.renderer
       ? `Sending ${selected?.label || "motion"} to the live renderer…`
       : `${selected?.label || "Motion"} · verified ${character === "ada" ? "Ada" : "Aoi"} replay`);
     try {
-      const response = await fetch("/api/motion-command", {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ command: nextMotion }),
-      });
-      const payload = await response.json().catch(() => ({}));
-      if (response.ok && payload.live) {
+      const payload = await requestMovement(nextMotion);
+      applyMovementPayload(payload);
+      if (payload.live) {
         setNotice(liveStage
           ? `${selected?.label || "Motion"} · moving live now`
           : `${selected?.label || "Motion"} sent live · preview connecting`);
@@ -403,29 +517,36 @@ export function App() {
     event.preventDefault();
     const command = motionDraft.trim();
     if (!command || directingMotion) return;
+    if (STOP_MOVEMENT_PATTERN.test(command)) {
+      const hadLoop = Boolean(motionLoop);
+      setMotionDraft("");
+      await stopMotionLoop();
+      if (!hadLoop) setNotice("No repeated movement is running");
+      return;
+    }
+    const resolvedCommand = movementRouteFor(command) || command;
+    const repeatRequested = motionMode === "loop" || LOOP_REQUEST_PATTERN.test(command);
+    setMotionLoop(null);
     setDirectingMotion(true);
     setMotionPlan(null);
     setNotice("Checking the reviewed movement catalog…");
     try {
-      const response = await fetch("/api/motion-command", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ command }),
-      });
-      const payload = await response.json().catch(() => ({}));
-      if (!response.ok) throw new Error(payload.detail || payload.error || "That movement is not available yet.");
-      setMotionPlan(payload);
+      const payload = await requestMovement(resolvedCommand);
+      applyMovementPayload(payload);
+      setMotionDraft("");
       if (payload.status === "staged") {
+        setMotionMode("once");
         setNotice(`${payload.label} understood · renderer package still pending`);
         return;
       }
-      if (payload.behavior) {
-        setMotion(payload.behavior);
-        setPlaying(true);
+      if (repeatRequested) {
+        beginMotionLoop(resolvedCommand, payload);
+        setNotice(`${payload.label} · repeating until you stop it`);
+      } else {
+        setNotice(payload.live
+          ? `${payload.label} · running once now`
+          : `${payload.label} · one verified replay`);
       }
-      setNotice(payload.live
-        ? `${payload.label} · moving live now`
-        : `${payload.label} · routed to the verified replay fallback`);
     } catch (error) {
       setMotionPlan({ error: error.message || "Movement director is unavailable." });
       setNotice("Movement was not sent");
@@ -474,6 +595,47 @@ export function App() {
     setSending(true);
     setNotice("Ada is thinking…");
     try {
+      if (STOP_MOVEMENT_PATTERN.test(message)) {
+        const hadLoop = Boolean(motionLoop);
+        await stopMotionLoop();
+        const reply = hadLoop ? "Okay — I stopped the repeated movement." : "There isn’t a repeated movement running right now.";
+        setMessages((items) => [...items, { id: `assistant-${Date.now()}`, role: "assistant", content: reply }]);
+        setNotice(hadLoop ? "Repeated movement stopped" : "No repeated movement is running");
+        speak(reply);
+        return;
+      }
+
+      const movementCommand = movementRouteFor(message);
+      if (movementCommand) {
+        try {
+          setMotionLoop(null);
+          const payload = await requestMovement(movementCommand);
+          applyMovementPayload(payload);
+          let reply;
+          if (payload.status === "staged") {
+            setMotionMode("once");
+            reply = `I understand ${payload.label.toLowerCase()}, but that movement is not installed in the current renderer yet.`;
+            setNotice(`${payload.label} understood · renderer package pending`);
+          } else if (LOOP_REQUEST_PATTERN.test(message)) {
+            beginMotionLoop(movementCommand, payload);
+            reply = `${payload.label} — I’ll repeat it until you tell me to stop.`;
+            setNotice(`${payload.label} · repeating until stopped`);
+          } else {
+            setMotionMode("once");
+            reply = payload.live
+              ? `${payload.label} — doing it once now.`
+              : `${payload.label} — playing the verified fallback once.`;
+            setNotice(`${payload.label} · one time`);
+          }
+          setMessages((items) => [...items, { id: `assistant-${Date.now()}`, role: "assistant", content: reply }]);
+          speak(reply);
+          return;
+        } catch (error) {
+          if (error.status !== 422) throw error;
+          // Unknown movement wording falls through to Fay instead of pretending it ran.
+        }
+      }
+
       const response = await fetch("/api/chat", {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ message }),
@@ -498,8 +660,8 @@ export function App() {
     }
     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
     if (!SpeechRecognition) {
-      setNotice("Voice capture is not available here · type below instead");
-      setActiveSheet("conversation");
+      setNotice("Voice capture is not available here · use the message field");
+      window.setTimeout(() => inputRef.current?.focus(), 0);
       return;
     }
     const recognition = new SpeechRecognition();
@@ -539,9 +701,17 @@ export function App() {
     else { video.pause(); setPlaying(false); }
   }
 
+  function finishReplay() {
+    if (motionLoop || motion === "idle") return;
+    setMotion("idle");
+    setPlaying(true);
+  }
+
   function recenter() {
     if (videoRef.current) videoRef.current.currentTime = 0;
-    setNotice("Stage recentered");
+    setStageZoom(1);
+    setCamera("fit");
+    setNotice("Fit shows the entire rendered frame");
   }
 
   async function toggleVisionPreview() {
@@ -580,10 +750,10 @@ export function App() {
   return (
     <main className="app-shell">
       <section className="avatar-stage" aria-label={`${character === "ada" ? "Ada" : "Aoi"} avatar stage`}>
-        <video ref={videoRef} className={`avatar-video ${liveStage ? "is-behind-live" : ""}`} key={videoSource} autoPlay muted loop playsInline poster={media.poster} aria-hidden={liveStage} onPlay={() => setPlaying(true)} onPause={() => setPlaying(false)}>
+        <video ref={videoRef} className={`avatar-video ${liveStage ? "is-behind-live" : ""}`} style={stageMediaStyle} key={videoSource} autoPlay muted loop={motion === "idle" || Boolean(motionLoop)} playsInline poster={media.poster} aria-hidden={liveStage} onPlay={() => setPlaying(true)} onPause={() => setPlaying(false)} onEnded={finishReplay}>
           <source src={videoSource} type="video/mp4" />
         </video>
-        {liveStage && <img className="avatar-live-frame" src={liveFrameUrl} alt={`${character === "ada" ? "Ada" : "Aoi"} live renderer stream`} draggable="false" />}
+        {liveStage && <img className="avatar-live-frame" style={stageMediaStyle} src={liveFrameUrl} alt={`${character === "ada" ? "Ada" : "Aoi"} live renderer stream`} draggable="false" />}
 
         {!chromeHidden ? (
           <>
@@ -601,10 +771,10 @@ export function App() {
               <button className={`rail-button alive-toggle ${aliveMode ? "is-alive" : ""}`} onClick={() => { setAliveMode((value) => !value); setNotice(aliveMode ? "Alive motion paused" : "Alive motion enabled"); }} type="button" aria-label={aliveMode ? "Pause autonomous movement" : "Enable autonomous movement"} aria-pressed={aliveMode}>
                 <Sparkle size={24} weight={aliveMode ? "fill" : "light"} />
               </button>
-              <button className={`rail-button ${activeSheet === "motion" ? "is-active" : ""}`} onClick={() => setActiveSheet("motion")} type="button" aria-label="Open movement director" aria-expanded={activeSheet === "motion"}>
+              <button className="rail-button" onClick={() => motionInputRef.current?.focus()} type="button" aria-label="Focus movement command">
                 <PersonSimpleRun size={24} weight="light" />
               </button>
-              <button className="rail-button" onClick={recenter} type="button" aria-label="Recenter avatar stage">
+              <button className={`rail-button ${showZoom ? "is-active" : ""}`} onClick={() => setShowZoom((value) => !value)} type="button" aria-label="Adjust avatar framing" aria-expanded={showZoom}>
                 <ArrowsInSimple size={24} weight="light" />
               </button>
               <button className={`rail-button ${activeSheet === "settings" ? "is-active" : ""}`} onClick={() => setActiveSheet("settings")} type="button" aria-label="Open character and wardrobe settings" aria-expanded={activeSheet === "settings"}>
@@ -620,25 +790,44 @@ export function App() {
               </button>
             </nav>
 
+            {showZoom && (
+              <div className="stage-zoom-panel" role="group" aria-label="Avatar distance">
+                <span className="zoom-readout"><strong>Distance</strong><small>{stageZoom.toFixed(1)}×</small></span>
+                <input type="range" min="0.75" max="3" step="0.05" value={stageZoom} onChange={(event) => { setStageZoom(Number(event.target.value)); setCamera("custom"); }} aria-label="Avatar zoom" />
+                <button className="zoom-fit" onClick={recenter} type="button">Fit</button>
+                <button className="zoom-close" onClick={() => setShowZoom(false)} type="button" aria-label="Close distance control"><X size={15} /></button>
+              </div>
+            )}
+
             <div className={`stage-toast ${noticeVisible ? "is-visible" : ""}`} aria-live="polite" aria-atomic="true">
               <span>{notice}</span>
             </div>
 
-            <nav className="companion-dock" aria-label="Companion controls">
-              <button className={`dock-round ${listening ? "is-listening" : ""}`} onClick={toggleListening} type="button" aria-label={listening ? "Stop listening" : `Talk to ${characterName}`}>
-                {listening ? <CircleNotch size={24} weight="bold" className="spin" /> : <Microphone size={24} weight="regular" />}
-              </button>
-              <button className={`dock-round ${activeSheet === "settings" ? "is-active" : ""}`} onClick={() => setActiveSheet("settings")} type="button" aria-label="Open camera settings" aria-expanded={activeSheet === "settings"}>
-                <Camera size={24} weight="regular" />
-              </button>
-              <button className={`dock-round ${activeSheet === "motion" ? "is-active" : ""}`} onClick={() => setActiveSheet("motion")} type="button" aria-label="Direct a body movement" aria-expanded={activeSheet === "motion"}>
-                <PersonSimpleRun size={24} weight="regular" />
-              </button>
-              <button className={`conversation-launch ${activeSheet === "conversation" ? "is-active" : ""}`} onClick={() => setActiveSheet("conversation")} type="button" aria-label={`Open text conversation with ${characterName}`} aria-expanded={activeSheet === "conversation"}>
-                <span className="conversation-placeholder">Ask {characterName} anything</span>
-                <span className="conversation-text-mode"><ChatCircleDots size={19} weight="regular" /><TextT size={18} weight="bold" /><span>Text</span></span>
-              </button>
-            </nav>
+            <div className="command-stack">
+              <form className="inline-motion-composer" onSubmit={directMovement}>
+                <PersonSimpleRun size={20} weight="regular" aria-hidden="true" />
+                <input id="inline-motion-command" ref={motionInputRef} value={motionDraft} onChange={(event) => setMotionDraft(event.target.value)} placeholder="Movement: wave, stretch…" maxLength={160} autoComplete="off" enterKeyHint="go" aria-label="Movement command" />
+                <span className="motion-mode-toggle" aria-label="Movement repetition">
+                  <button className={motionMode === "once" ? "is-selected" : ""} onClick={() => { if (motionLoop) stopMotionLoop(); else setMotionMode("once"); }} type="button" aria-pressed={motionMode === "once"}>Once</button>
+                  <button className={motionMode === "loop" ? "is-selected" : ""} onClick={() => { if (motionLoop) stopMotionLoop(); else setMotionMode("loop"); }} type="button" aria-pressed={motionMode === "loop"}>{motionLoop ? "Stop" : "Loop"}</button>
+                </span>
+                <button className="inline-send motion-send" type="submit" disabled={!motionDraft.trim() || directingMotion} aria-label={motionMode === "loop" ? "Start repeating movement" : "Run movement once"}>{directingMotion ? <CircleNotch className="spin" size={17} /> : <ArrowRight size={17} weight="bold" />}</button>
+              </form>
+
+              <nav className="companion-dock" aria-label="Companion controls">
+                <button className={`dock-round ${listening ? "is-listening" : ""}`} onClick={toggleListening} type="button" aria-label={listening ? "Stop listening" : `Talk to ${characterName}`}>
+                  {listening ? <CircleNotch size={24} weight="bold" className="spin" /> : <Microphone size={24} weight="regular" />}
+                </button>
+                <button className={`dock-round ${showZoom ? "is-active" : ""}`} onClick={() => setShowZoom((value) => !value)} type="button" aria-label="Adjust avatar distance" aria-expanded={showZoom}>
+                  <Camera size={24} weight="regular" />
+                </button>
+                <form className="inline-chat-composer" onSubmit={(event) => { event.preventDefault(); sendMessage(); }}>
+                  <input ref={inputRef} value={draft} onChange={(event) => setDraft(event.target.value)} placeholder={`Ask ${characterName} anything…`} maxLength={2000} autoComplete="off" enterKeyHint="send" aria-label={`Message ${characterName}`} />
+                  <button className="chat-history-button" onClick={() => setActiveSheet("conversation")} type="button" aria-label="Open conversation history"><TextT size={17} weight="bold" /></button>
+                  <button className="inline-send chat-send" type="submit" disabled={!draft.trim() || sending} aria-label="Send message">{sending ? <CircleNotch className="spin" size={17} /> : <ArrowRight size={17} weight="bold" />}</button>
+                </form>
+              </nav>
+            </div>
           </>
         ) : (
           <button className="restore-chrome" onClick={() => setChromeHidden(false)} type="button" aria-label="Show companion controls">
@@ -724,11 +913,11 @@ export function App() {
             ) : (
               <div className="settings-content">
                 <section className="sheet-section">
-                  <div className="panel-heading"><span>Camera</span><span className="camera-note">Full body is the next runtime package</span></div>
+                  <div className="panel-heading"><span>Framing</span><span className="camera-note">Fit reveals the whole current frame</span></div>
                   <div className="camera-options">
-                    <button className={camera === "full-body" ? "is-selected" : ""} onClick={() => { setCamera("full-body"); setNotice("Full-body framing selected · new runtime package in progress"); }} type="button"><Person size={21} /><span><strong>Full body</strong><small>Target framing</small></span></button>
-                    <button className={camera === "portrait" ? "is-selected" : ""} onClick={() => { setCamera("portrait"); setNotice("Portrait · current verified capture"); }} type="button"><UserCircle size={21} /><span><strong>Portrait</strong><small>Available now</small></span></button>
-                    <button onClick={recenter} type="button"><ArrowsInSimple size={21} /><span><strong>Recenter</strong><small>Restart replay</small></span></button>
+                    <button className={camera === "fit" ? "is-selected" : ""} onClick={() => { setCamera("fit"); setStageZoom(1); setNotice("Entire rendered frame visible · a wider Unreal camera is still pending"); }} type="button"><Person size={21} /><span><strong>Fit frame</strong><small>Available now</small></span></button>
+                    <button className={camera === "portrait" ? "is-selected" : ""} onClick={() => { setCamera("portrait"); setStageZoom(1.7); setNotice("Closer portrait framing"); }} type="button"><UserCircle size={21} /><span><strong>Closer</strong><small>1.7× crop</small></span></button>
+                    <button onClick={recenter} type="button"><ArrowsInSimple size={21} /><span><strong>Reset</strong><small>Fit current frame</small></span></button>
                   </div>
                 </section>
                 <section className="sheet-section vision-section">
