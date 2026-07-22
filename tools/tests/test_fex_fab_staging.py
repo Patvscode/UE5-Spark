@@ -53,7 +53,7 @@ class FexFabStagingContractTests(unittest.TestCase):
             'export XDG_CACHE_HOME="$private_state/cache"',
             'export XDG_DATA_HOME="$private_state/data"',
             'export XDG_STATE_HOME="$private_state/state"',
-            'grep -qx \'# UE5-SPARK-FEX-XDG-OPEN-PORTAL-V2\'',
+            'grep -qx \'# UE5-SPARK-FEX-XDG-OPEN-PORTAL-V3\'',
             '-onethread',
             '-norhithread',
             '>"$log" 2>&1',

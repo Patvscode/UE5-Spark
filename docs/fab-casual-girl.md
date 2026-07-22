@@ -22,11 +22,12 @@ and incorporating the asset into a project. It does not permit redistributing
 the asset by itself. Source assets and cooked packages remain private and are
 excluded by this repository's ignore rules.
 
-## One user action required
+## One user authorization required
 
 Open the listing while signed into Epic/Fab, choose the free Personal license,
 and select **Add to My Library**. Do not send credentials or browser tokens to
 the project. The Editor can then install the owned asset from the Fab library.
+This license/EULA acceptance remains a user action.
 
 ## Safe import gate
 
@@ -108,9 +109,30 @@ DISPLAY=:1 XAUTHORITY="$spark_xauthority" \
   "$cooker_workspace/logs-private/fab-acquisition/before-import.json"
 ```
 
-Authentication is always completed interactively in the browser opened by the
-desktop portal. Never place an Epic password, authorization code, cookie, or
-token in a command, project file, repository, or support log.
+Authentication can be completed in the browser opened by the desktop portal.
+An experimental, fail-closed phone handoff is also available below. It keeps
+Unreal and EOS running on the Spark, validates the one-time Epic activation
+origin, keeps the full URL in relay memory only, and exposes a random route through
+Tailscale Serve—not Funnel—for at most twelve minutes:
+
+```bash
+./scripts/configure-fex-xdg-open.sh "$cooker_workspace"
+
+./scripts/run-fex-fab-phone-auth.sh \
+  "$cooker_workspace" "$isolated_engine" \
+  "$cooker_workspace/fab-acquisition-staging/FayFabAcquisition/FayFabAcquisition.uproject" \
+  "$cooker_workspace/logs-private/fab-acquisition/before-import.json"
+```
+
+Open the printed `PHONE_AUTH_URL` only from a device on the same tailnet. The
+relay renders only the validated eight-character device code, never the full
+activation URL, and links separately to Epic's fixed activation page. Enter
+that code at Epic; EOS must then report `User logged in` on the Spark before
+this route is considered proven. Private mode-0600 Editor
+logs remain subject to review because Epic controls EOS logging. The relay and
+Tailscale route are removed on exit or timeout. Never place an Epic password,
+exchange code, cookie, access token, or refresh token in a command, project
+file, repository, or support log.
 
 The public pending wardrobe profile is
 `config/wardrobe-profiles/CasualGirl.pending.json`. It exposes logical choices,

@@ -1435,6 +1435,7 @@ if [[ -n $python_bin ]] && ! "$python_bin" -m unittest \
     tools.tests.test_ardy_unreal_contract \
     tools.tests.test_capture_spark_avatar_window \
     tools.tests.test_character_camera_framing \
+    tools.tests.test_fab_auth_relay \
     tools.tests.test_fab_module_metadata \
     tools.tests.test_fab_staging_manifest \
     tools.tests.test_fex_fab_staging \

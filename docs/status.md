@@ -29,6 +29,10 @@ content remain private and are not part of this repository.
   on the Spark. A separate content-only acquisition project also built and
   initialized Epic's official Fab 0.0.13 Editor module under rootless FEX with
   a matching Unreal BuildId, private account state, and unchanged staging seal.
+  A guarded secondary-device handoff candidate can present the validated,
+  short-lived Epic device code from the Spark through a random tailnet-only
+  page without persisting the full activation URL. It remains unqualified until a real
+  Fab login completes and the private EOS/Editor evidence is reviewed.
   The licensed listing has not been added/downloaded or linked against the
   runtime, and no replacement package exists; wardrobe controls and full
   undress remain disabled.

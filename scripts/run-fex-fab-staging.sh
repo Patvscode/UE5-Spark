@@ -83,7 +83,7 @@ file "$editor" | grep -q 'x86-64' || fail 'the isolated Unreal Editor is not x86
 file "$fab_binary" | grep -q 'x86-64' || fail 'the Fab Editor module is not x86-64'
 file "$fab_downloader" | grep -q 'x86-64' || fail 'the Fab downloader is not x86-64'
 file "$epic_web_helper" | grep -q 'x86-64' || fail 'EpicWebHelper is not x86-64'
-grep -qx '# UE5-SPARK-FEX-XDG-OPEN-PORTAL-V2' "$guest_portal" || \
+grep -qx '# UE5-SPARK-FEX-XDG-OPEN-PORTAL-V3' "$guest_portal" || \
     fail 'the guarded FEX portal adapter is missing or unreviewed'
 cmp -s "$project_template" "$project" || \
     fail 'the staging descriptor differs from the reviewed template'
