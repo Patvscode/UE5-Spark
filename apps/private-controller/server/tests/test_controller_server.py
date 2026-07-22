@@ -126,6 +126,10 @@ class ValidationTests(unittest.TestCase):
             live_root.chmod(0o700)
             self.assertEqual(SERVER.safe_private_root(live_root, "live root"), live_root.resolve())
 
+    def test_live_blob_preview_is_allowed_by_the_csp(self):
+        source = MODULE_PATH.read_text(encoding="utf-8")
+        self.assertIn("img-src 'self' blob:", source)
+
 
 if __name__ == "__main__":
     unittest.main()

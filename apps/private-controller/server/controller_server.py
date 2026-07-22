@@ -434,7 +434,7 @@ class ControllerHandler(BaseHTTPRequestHandler):
         self.send_header(
             "Content-Security-Policy",
             "default-src 'self'; base-uri 'none'; connect-src 'self'; font-src 'self'; "
-            "form-action 'self'; frame-ancestors 'none'; img-src 'self'; media-src 'self'; "
+            "form-action 'self'; frame-ancestors 'none'; img-src 'self' blob:; media-src 'self'; "
             "object-src 'none'; script-src 'self'; style-src 'self'",
         )
 
