@@ -9,6 +9,22 @@
 class AActor;
 class UMeshComponent;
 
+/** Opts one reviewed character Blueprint into one sealed wardrobe profile. */
+UCLASS(ClassGroup = (Fay), meta = (BlueprintSpawnableComponent))
+class FAYWARDROBE_API UFayWardrobeBindingComponent final : public UActorComponent
+{
+    GENERATED_BODY()
+
+public:
+    UFayWardrobeBindingComponent();
+
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Fay|Wardrobe")
+    TSoftObjectPtr<UFayWardrobeProfileAsset> Profile;
+
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Fay|Wardrobe")
+    FName DefaultPresetId = NAME_None;
+};
+
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(
     FFayWardrobeChangedEvent,
     FName,
@@ -40,6 +56,10 @@ public:
     /** Validate the complete profile and actor before changing any visibility. */
     UFUNCTION(BlueprintCallable, Category = "Fay|Wardrobe")
     bool ConfigureAvatar(AActor* InAvatar, const FFayWardrobeProfile& InProfile);
+
+    /** Resolve exactly one private binding and apply its complete default preset. */
+    UFUNCTION(BlueprintCallable, Category = "Fay|Wardrobe")
+    bool ConfigureFromReviewedBinding(AActor* InAvatar);
 
     /** Apply one complete reviewed preset atomically. */
     UFUNCTION(BlueprintCallable, Category = "Fay|Wardrobe")
@@ -73,22 +93,26 @@ private:
     {
         bool bVisible = true;
         bool bHiddenInGame = false;
+        bool bTickEnabled = false;
     };
 
     bool ValidateAndResolveProfile(
         AActor* InAvatar,
         const FFayWardrobeProfile& InProfile,
-        TMap<FName, TMap<FName, TWeakObjectPtr<UMeshComponent>>>& OutComponents,
+        TMap<FName, TMap<FName, TArray<TWeakObjectPtr<UMeshComponent>>>>& OutComponents,
         TMap<TWeakObjectPtr<UMeshComponent>, FOriginalVisibility>& OutVisibility,
         FString& OutError) const;
     bool ApplySelection(const TMap<FName, FName>& Selection, FString& OutError);
+    static bool SelectionIsFullyUnclothed(
+        const TMap<FName, FName>& Selection,
+        const FFayWardrobeProfile& Profile);
     static bool IsReviewedId(FName Value);
 
     UPROPERTY(Transient)
     TObjectPtr<AActor> Avatar;
 
     FFayWardrobeProfile ActiveProfile;
-    TMap<FName, TMap<FName, TWeakObjectPtr<UMeshComponent>>> ComponentsBySlot;
+    TMap<FName, TMap<FName, TArray<TWeakObjectPtr<UMeshComponent>>>> ComponentsBySlot;
     TMap<TWeakObjectPtr<UMeshComponent>, FOriginalVisibility> OriginalVisibility;
     TMap<FName, FName> ActiveSelection;
     bool bReady = false;

@@ -20,6 +20,11 @@ UFayWardrobeComponent::UFayWardrobeComponent()
     PrimaryComponentTick.bCanEverTick = false;
 }
 
+UFayWardrobeBindingComponent::UFayWardrobeBindingComponent()
+{
+    PrimaryComponentTick.bCanEverTick = false;
+}
+
 void UFayWardrobeComponent::EndPlay(const EEndPlayReason::Type EndPlayReason)
 {
     ResetWardrobe();
@@ -30,7 +35,7 @@ bool UFayWardrobeComponent::ConfigureAvatar(
     AActor* InAvatar,
     const FFayWardrobeProfile& InProfile)
 {
-    TMap<FName, TMap<FName, TWeakObjectPtr<UMeshComponent>>> ResolvedComponents;
+    TMap<FName, TMap<FName, TArray<TWeakObjectPtr<UMeshComponent>>>> ResolvedComponents;
     TMap<TWeakObjectPtr<UMeshComponent>, FOriginalVisibility> ResolvedVisibility;
     FString Error;
     if (!ValidateAndResolveProfile(
@@ -60,6 +65,42 @@ bool UFayWardrobeComponent::ConfigureAvatar(
         ActiveProfile.Slots.Num(),
         ActiveProfile.Presets.Num(),
         ActiveProfile.bAllowFullyUnclothed ? TEXT("reviewed") : TEXT("blocked"));
+    return true;
+}
+
+bool UFayWardrobeComponent::ConfigureFromReviewedBinding(AActor* InAvatar)
+{
+    if (!IsValid(InAvatar))
+    {
+        return false;
+    }
+    TInlineComponentArray<UFayWardrobeBindingComponent*> Bindings(InAvatar);
+    if (Bindings.Num() == 0)
+    {
+        UE_LOG(LogFayWardrobe, Verbose,
+            TEXT("Avatar has no reviewed wardrobe binding; wardrobe remains disabled."));
+        return false;
+    }
+    if (Bindings.Num() != 1 || !IsValid(Bindings[0]) ||
+        Bindings[0]->Profile.IsNull() ||
+        !IsReviewedId(Bindings[0]->DefaultPresetId))
+    {
+        UE_LOG(LogFayWardrobe, Error,
+            TEXT("Avatar wardrobe failed closed: expected exactly one complete reviewed binding."));
+        return false;
+    }
+
+    UFayWardrobeProfileAsset* ProfileAsset =
+        Bindings[0]->Profile.LoadSynchronous();
+    if (!IsValid(ProfileAsset) ||
+        !ConfigureAvatar(InAvatar, ProfileAsset->Profile) ||
+        !ApplyPreset(Bindings[0]->DefaultPresetId))
+    {
+        ResetWardrobe();
+        UE_LOG(LogFayWardrobe, Error,
+            TEXT("Avatar wardrobe binding or default preset was rejected and reset."));
+        return false;
+    }
     return true;
 }
 
@@ -112,6 +153,13 @@ bool UFayWardrobeComponent::SetSlotItem(const FName SlotId, const FName ItemId)
         return false;
     }
     Selection.Add(SlotId, ItemId);
+    if (SelectionIsFullyUnclothed(Selection, ActiveProfile) &&
+        !ActiveProfile.bAllowFullyUnclothed)
+    {
+        UE_LOG(LogFayWardrobe, Warning,
+            TEXT("Wardrobe slot change rejected by the independent complete-body approval gate."));
+        return false;
+    }
     FString Error;
     if (!ApplySelection(Selection, Error))
     {
@@ -131,6 +179,7 @@ void UFayWardrobeComponent::ResetWardrobe()
         {
             Component->SetVisibility(Entry.Value.bVisible, false);
             Component->SetHiddenInGame(Entry.Value.bHiddenInGame, false);
+            Component->SetComponentTickEnabled(Entry.Value.bTickEnabled);
         }
     }
     Avatar = nullptr;
@@ -150,7 +199,7 @@ FName UFayWardrobeComponent::GetActiveItem(const FName SlotId) const
 bool UFayWardrobeComponent::ValidateAndResolveProfile(
     AActor* InAvatar,
     const FFayWardrobeProfile& InProfile,
-    TMap<FName, TMap<FName, TWeakObjectPtr<UMeshComponent>>>& OutComponents,
+    TMap<FName, TMap<FName, TArray<TWeakObjectPtr<UMeshComponent>>>>& OutComponents,
     TMap<TWeakObjectPtr<UMeshComponent>, FOriginalVisibility>& OutVisibility,
     FString& OutError) const
 {
@@ -182,6 +231,7 @@ bool UFayWardrobeComponent::ValidateAndResolveProfile(
 
     TSet<FName> SeenSlots;
     TSet<FName> SeenComponents;
+    bool bHasBodyCoverageItem = false;
     for (const FFayWardrobeSlot& Slot : InProfile.Slots)
     {
         if (!IsReviewedId(Slot.SlotId) || SeenSlots.Contains(Slot.SlotId) ||
@@ -191,7 +241,7 @@ bool UFayWardrobeComponent::ValidateAndResolveProfile(
             return false;
         }
         SeenSlots.Add(Slot.SlotId);
-        TMap<FName, TWeakObjectPtr<UMeshComponent>> ResolvedItems;
+        TMap<FName, TArray<TWeakObjectPtr<UMeshComponent>>> ResolvedItems;
         for (const FFayWardrobeItem& Item : Slot.Items)
         {
             if (!IsReviewedId(Item.ItemId) || ResolvedItems.Contains(Item.ItemId))
@@ -201,35 +251,53 @@ bool UFayWardrobeComponent::ValidateAndResolveProfile(
             }
             if (Item.ItemId == TEXT("none"))
             {
-                if (!Item.ComponentName.IsNone())
+                if (!Item.ComponentNames.IsEmpty() || Item.bProvidesBodyCoverage)
                 {
-                    OutError = TEXT("the logical none item must not name a component");
+                    OutError = TEXT("the logical none item must be empty and cannot provide coverage");
                     return false;
                 }
-                ResolvedItems.Add(Item.ItemId, nullptr);
+                ResolvedItems.Add(
+                    Item.ItemId,
+                    TArray<TWeakObjectPtr<UMeshComponent>>());
                 continue;
             }
-            if (Item.ComponentName.IsNone())
+            if (Item.ComponentNames.IsEmpty() || Item.ComponentNames.Num() > 8)
             {
-                OutError = TEXT("a visible wardrobe item has no reviewed component");
+                OutError = TEXT("a visible wardrobe item must contain one through eight reviewed components");
                 return false;
             }
-            UMeshComponent* const* Component =
-                NamedComponents.Find(Item.ComponentName.ToString());
-            if (Component == nullptr || !IsValid(*Component) ||
-                SeenComponents.Contains(Item.ComponentName))
+            TArray<TWeakObjectPtr<UMeshComponent>> ResolvedItemComponents;
+            TSet<FName> ItemComponentNames;
+            for (const FName ComponentName : Item.ComponentNames)
             {
-                OutError = TEXT("a reviewed wardrobe component is missing or reused");
-                return false;
+                UMeshComponent* const* Component =
+                    NamedComponents.Find(ComponentName.ToString());
+                if (ComponentName.IsNone() ||
+                    ItemComponentNames.Contains(ComponentName) ||
+                    Component == nullptr || !IsValid(*Component) ||
+                    SeenComponents.Contains(ComponentName))
+                {
+                    OutError = TEXT("a reviewed wardrobe component is missing, duplicated, or reused");
+                    return false;
+                }
+                ItemComponentNames.Add(ComponentName);
+                SeenComponents.Add(ComponentName);
+                ResolvedItemComponents.Add(*Component);
+                FOriginalVisibility Visibility;
+                Visibility.bVisible = (*Component)->IsVisible();
+                Visibility.bHiddenInGame = (*Component)->bHiddenInGame;
+                Visibility.bTickEnabled = (*Component)->IsComponentTickEnabled();
+                OutVisibility.Add(*Component, Visibility);
             }
-            SeenComponents.Add(Item.ComponentName);
-            ResolvedItems.Add(Item.ItemId, *Component);
-            FOriginalVisibility Visibility;
-            Visibility.bVisible = (*Component)->IsVisible();
-            Visibility.bHiddenInGame = (*Component)->bHiddenInGame;
-            OutVisibility.Add(*Component, Visibility);
+            bHasBodyCoverageItem |= Item.bProvidesBodyCoverage;
+            ResolvedItems.Add(Item.ItemId, MoveTemp(ResolvedItemComponents));
         }
         OutComponents.Add(Slot.SlotId, MoveTemp(ResolvedItems));
+    }
+    if (!bHasBodyCoverageItem)
+    {
+        OutError = TEXT("wardrobe profile has no reviewed body-coverage item");
+        return false;
     }
 
     TSet<FName> SeenPresets;
@@ -237,6 +305,8 @@ bool UFayWardrobeComponent::ValidateAndResolveProfile(
     {
         if (!IsReviewedId(Preset.PresetId) || SeenPresets.Contains(Preset.PresetId) ||
             Preset.SlotItems.Num() != OutComponents.Num() ||
+            Preset.bFullyUnclothed !=
+                SelectionIsFullyUnclothed(Preset.SlotItems, InProfile) ||
             (Preset.bFullyUnclothed && !InProfile.bAllowFullyUnclothed))
         {
             OutError = TEXT("wardrobe preset is incomplete, duplicated, or unapproved");
@@ -245,7 +315,7 @@ bool UFayWardrobeComponent::ValidateAndResolveProfile(
         SeenPresets.Add(Preset.PresetId);
         for (const TPair<FName, FName>& Selection : Preset.SlotItems)
         {
-            const TMap<FName, TWeakObjectPtr<UMeshComponent>>* Items =
+            const TMap<FName, TArray<TWeakObjectPtr<UMeshComponent>>>* Items =
                 OutComponents.Find(Selection.Key);
             if (Items == nullptr || !Items->Contains(Selection.Value))
             {
@@ -266,9 +336,15 @@ bool UFayWardrobeComponent::ApplySelection(
         OutError = TEXT("wardrobe is not ready or selection is incomplete");
         return false;
     }
+    if (SelectionIsFullyUnclothed(Selection, ActiveProfile) &&
+        !ActiveProfile.bAllowFullyUnclothed)
+    {
+        OutError = TEXT("selection requires independent complete-body approval");
+        return false;
+    }
 
     TArray<TPair<UMeshComponent*, bool>> VisibilityPlan;
-    for (const TPair<FName, TMap<FName, TWeakObjectPtr<UMeshComponent>>>& Slot :
+    for (const TPair<FName, TMap<FName, TArray<TWeakObjectPtr<UMeshComponent>>>>& Slot :
         ComponentsBySlot)
     {
         const FName* SelectedItem = Selection.Find(Slot.Key);
@@ -277,19 +353,22 @@ bool UFayWardrobeComponent::ApplySelection(
             OutError = TEXT("selection contains an unknown slot or item");
             return false;
         }
-        for (const TPair<FName, TWeakObjectPtr<UMeshComponent>>& Item : Slot.Value)
+        for (const TPair<FName, TArray<TWeakObjectPtr<UMeshComponent>>>& Item : Slot.Value)
         {
             if (Item.Key == TEXT("none"))
             {
                 continue;
             }
-            UMeshComponent* Component = Item.Value.Get();
-            if (!IsValid(Component))
+            for (const TWeakObjectPtr<UMeshComponent>& WeakComponent : Item.Value)
             {
-                OutError = TEXT("a reviewed wardrobe component became unavailable");
-                return false;
+                UMeshComponent* Component = WeakComponent.Get();
+                if (!IsValid(Component))
+                {
+                    OutError = TEXT("a reviewed wardrobe component became unavailable");
+                    return false;
+                }
+                VisibilityPlan.Emplace(Component, Item.Key == *SelectedItem);
             }
-            VisibilityPlan.Emplace(Component, Item.Key == *SelectedItem);
         }
     }
 
@@ -297,6 +376,9 @@ bool UFayWardrobeComponent::ApplySelection(
     {
         Change.Key->SetVisibility(Change.Value, false);
         Change.Key->SetHiddenInGame(!Change.Value, false);
+        const FOriginalVisibility* Original = OriginalVisibility.Find(Change.Key);
+        Change.Key->SetComponentTickEnabled(
+            Change.Value && Original != nullptr && Original->bTickEnabled);
     }
     const TMap<FName, FName> PreviousSelection = ActiveSelection;
     ActiveSelection = Selection;
@@ -309,6 +391,28 @@ bool UFayWardrobeComponent::ApplySelection(
         }
     }
     return true;
+}
+
+bool UFayWardrobeComponent::SelectionIsFullyUnclothed(
+    const TMap<FName, FName>& Selection,
+    const FFayWardrobeProfile& Profile)
+{
+    bool bProfileContainsCoverage = false;
+    bool bSelectionProvidesCoverage = false;
+    for (const FFayWardrobeSlot& Slot : Profile.Slots)
+    {
+        const FName* SelectedId = Selection.Find(Slot.SlotId);
+        for (const FFayWardrobeItem& Item : Slot.Items)
+        {
+            bProfileContainsCoverage |= Item.bProvidesBodyCoverage;
+            if (SelectedId != nullptr && Item.ItemId == *SelectedId &&
+                Item.bProvidesBodyCoverage)
+            {
+                bSelectionProvidesCoverage = true;
+            }
+        }
+    }
+    return bProfileContainsCoverage && !bSelectionProvidesCoverage;
 }
 
 bool UFayWardrobeComponent::IsReviewedId(const FName Value)

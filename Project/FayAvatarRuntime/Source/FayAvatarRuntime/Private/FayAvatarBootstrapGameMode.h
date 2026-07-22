@@ -68,7 +68,7 @@ private:
     UPROPERTY(VisibleAnywhere, Category = "MetaHuman")
     TObjectPtr<UFayMetaHumanSpeechDriverComponent> SpeechDriver;
 
-    /** Content-free sealed wardrobe adapter; remains unconfigured for Ada/Aoi. */
+    /** Content-free adapter; configures only an avatar carrying one sealed binding. */
     UPROPERTY(VisibleAnywhere, Category = "Avatar|Wardrobe")
     TObjectPtr<UFayWardrobeComponent> Wardrobe;
 

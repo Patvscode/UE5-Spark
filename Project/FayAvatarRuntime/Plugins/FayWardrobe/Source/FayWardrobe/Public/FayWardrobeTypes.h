@@ -1,10 +1,11 @@
 #pragma once
 
 #include "CoreMinimal.h"
+#include "Engine/DataAsset.h"
 
 #include "FayWardrobeTypes.generated.h"
 
-/** One reviewed logical choice backed by a component already inside the avatar. */
+/** One reviewed logical choice backed by components already inside the avatar. */
 USTRUCT(BlueprintType)
 struct FAYWARDROBE_API FFayWardrobeItem
 {
@@ -15,7 +16,11 @@ struct FAYWARDROBE_API FFayWardrobeItem
 
     /** Empty only for the explicit logical `none` item. Never supplied by a client. */
     UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Fay|Wardrobe")
-    FName ComponentName = NAME_None;
+    TArray<FName> ComponentNames;
+
+    /** True only when the reviewed item covers otherwise exposed body anatomy. */
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Fay|Wardrobe")
+    bool bProvidesBodyCoverage = false;
 };
 
 /** A mutually exclusive group such as top, bottom, feet, or hair. */
@@ -66,4 +71,15 @@ struct FAYWARDROBE_API FFayWardrobeProfile
     /** False until a manual complete-body, material, and every-LOD audit passes. */
     UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Fay|Wardrobe")
     bool bAllowFullyUnclothed = false;
+};
+
+/** Private cooked profile selected only through a component in a reviewed avatar. */
+UCLASS(BlueprintType)
+class FAYWARDROBE_API UFayWardrobeProfileAsset final : public UDataAsset
+{
+    GENERATED_BODY()
+
+public:
+    UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Fay|Wardrobe")
+    FFayWardrobeProfile Profile;
 };

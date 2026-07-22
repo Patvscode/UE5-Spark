@@ -33,6 +33,8 @@ class WardrobeUnrealContractTests(unittest.TestCase):
             "bool ApplyPreset(FName PresetId);",
             "bool SetSlotItem(FName SlotId, FName ItemId);",
             "bool bAllowFullyUnclothed = false;",
+            "TArray<FName> ComponentNames;",
+            "bool bProvidesBodyCoverage = false;",
             "A complete preset must be applied before individual wardrobe changes.",
         ):
             self.assertIn(marker, HEADER + TYPES + SOURCE)
@@ -70,6 +72,23 @@ class WardrobeUnrealContractTests(unittest.TestCase):
             "Preset.bFullyUnclothed && !InProfile.bAllowFullyUnclothed",
             SOURCE,
         )
+        for marker in (
+            "SelectionIsFullyUnclothed(Selection, ActiveProfile)",
+            "selection requires independent complete-body approval",
+            "Preset.bFullyUnclothed !=",
+            "bProfileContainsCoverage && !bSelectionProvidesCoverage",
+        ):
+            self.assertIn(marker, SOURCE)
+
+    def test_grouped_items_and_hidden_tick_costs_are_supported(self) -> None:
+        for marker in (
+            "TArray<TWeakObjectPtr<UMeshComponent>>",
+            "Item.ComponentNames.Num() > 8",
+            "for (const FName ComponentName : Item.ComponentNames)",
+            "Visibility.bTickEnabled = (*Component)->IsComponentTickEnabled();",
+            "SetComponentTickEnabled(",
+        ):
+            self.assertIn(marker, SOURCE + HEADER)
 
     def test_game_runtime_owns_the_content_free_adapter(self) -> None:
         game_header = (
@@ -92,6 +111,18 @@ class WardrobeUnrealContractTests(unittest.TestCase):
             'CreateDefaultSubobject<UFayWardrobeComponent>(TEXT("FayWardrobe"))',
             game_source,
         )
+        self.assertIn(
+            "Wardrobe->ConfigureFromReviewedBinding(MetaHumanActor);",
+            game_source,
+        )
+        for marker in (
+            "class FAYWARDROBE_API UFayWardrobeBindingComponent",
+            "TSoftObjectPtr<UFayWardrobeProfileAsset> Profile;",
+            "FName DefaultPresetId = NAME_None;",
+            "Bindings.Num() != 1",
+            "Bindings[0]->Profile.LoadSynchronous()",
+        ):
+            self.assertIn(marker, HEADER + SOURCE)
         self.assertIn('"FayWardrobe"', game_build)
 
 

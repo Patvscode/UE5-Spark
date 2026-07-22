@@ -697,6 +697,10 @@ void AFayAvatarBootstrapGameMode::TrySpawnMetaHuman()
     {
         BodyMotion->ConfigureAvatar(MetaHumanActor, BodyComponentName);
     }
+    if (Wardrobe != nullptr)
+    {
+        Wardrobe->ConfigureFromReviewedBinding(MetaHumanActor);
+    }
     LiveLinkRecoveryAttemptCount = 0;
     LiveLinkRecoveryDelayRemainingSeconds = 0.0;
     bLiveLinkRecoveryScheduled = false;
