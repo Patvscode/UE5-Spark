@@ -82,6 +82,18 @@ class WardrobeProfileTests(unittest.TestCase):
         self.assertIn('REVIEWED_ROOT = "/Game/FayFab/CasualGirl"', source)
         self.assertIn('emit("BODY_COMPLETENESS", "manual_review_required")', source)
         self.assertIn('emit("UNDERWEAR_IMPLEMENTATION", "manual_review_required")', source)
+        self.assertLess(source.index("dirty_before = dirty_packages()"), source.index("asset = unreal.load_asset"))
+        for marker in (
+            'mesh.get_editor_property("morph_targets")',
+            "AssetRegistryDependencyOptions",
+            "SkeletalMeshEditorSubsystem.get_lod_count",
+            "verify_epic_body_hierarchy",
+            "PLUGIN_DEPENDENCIES",
+            "verify_reviewed_content_files",
+            'BASELINE_ENVIRONMENT = "FAY_FAB_STAGING_BASELINE_VERIFIED"',
+        ):
+            self.assertIn(marker, source)
+        self.assertNotIn("get_all_morph_target_names", source)
         for forbidden in ("save_asset(", "save_loaded_asset(", "delete_asset(", "rename_asset("):
             self.assertNotIn(forbidden, source)
 

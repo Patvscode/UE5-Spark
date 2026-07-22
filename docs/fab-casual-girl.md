@@ -30,16 +30,25 @@ the project. The Editor can then install the owned asset from the Fab library.
 
 ## Safe import gate
 
-1. Import into `/Game/FayFab/CasualGirl` in an isolated copy of the project.
-2. Do not import directly into the sealed v29 content tree.
-3. Set `FAY_FAB_CHARACTER_ASSET` to the imported Blueprint object path and run
+1. Enable Fab only in a disposable staging project. Fab startup can change a
+   renderer setting and Add to Project writes the seller's pack at the project
+   root, so never enable it in the sealed runtime project.
+2. After building the staging Editor and before Add to Project, seal its
+   non-content state with `scripts/fab-staging-manifest.py create`. After the
+   import, run `verify` against the same private manifest. Any `.uproject`,
+   Config, Plugins, Source, or Binaries change fails the gate.
+3. Migrate reviewed assets with Unreal's asset tools into
+   `/Game/FayFab/CasualGirl`; do not import directly into the sealed v29 tree.
+4. Set `FAY_FAB_STAGING_BASELINE_VERIFIED=1` only after that verification, set
+   `FAY_FAB_CHARACTER_ASSET` to the migrated Blueprint object path, and run
    `scripts/audit-fab-casual-girl.py` through the graphical UE 5.8 Editor.
-4. Review the emitted component, skeleton, LOD, and ARKit morph markers.
-5. Manually inspect every body LOD with garments hidden. Confirm whether the
+5. Review the emitted component, dependency, class, skeleton hierarchy, LOD,
+   physics, material, and ARKit morph markers.
+6. Manually inspect every body LOD with garments hidden. Confirm whether the
    underwear is a removable mesh, a material layer, or baked into the body.
-6. Reject unexpected native binaries, Editor-only hard dependencies, missing
+7. Reject unexpected native binaries, Editor-only hard dependencies, missing
    body regions, broken physics, or Apple-only runtime requirements.
-7. Up-convert and resave only inside the private content workspace, then cook a
+8. Up-convert and resave only inside the private content workspace, then cook a
    minimal LinuxArm64 test before adding it to the production package.
 
 The public pending wardrobe profile is
@@ -63,3 +72,9 @@ ARDY must not drive face, neck, head, detailed fingers, or any secondary breast
 bones. Clothing and hair physics run after the final body pose. The asset is
 promoted only after front/side full-body captures, speech/face validation,
 wardrobe transitions, failure fallback, and a native LinuxArm64 soak pass.
+
+The runtime wardrobe profile can group several reviewed mesh components into
+one logical outfit and stops hidden cloth/hair components from ticking. A
+reviewed binding on the private wrapper Blueprint selects the profile and its
+complete default preset. Individual slot changes are checked again for body
+coverage, so they cannot bypass the independent fully-unclothed approval gate.
