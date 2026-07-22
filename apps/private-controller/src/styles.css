@@ -425,6 +425,11 @@ h2 { margin: 0; font-family: "Cormorant Garamond", Georgia, serif; font-size: 28
 }
 
 @media (max-width: 520px) {
+  .avatar-video,
+  .avatar-live-frame {
+    object-fit: cover;
+    object-position: center center;
+  }
   .stage-topbar { gap: 6px; }
   .stage-identity { min-height: 34px; padding: 0 10px; }
   .stage-name { font-size: 18px; }
