@@ -3,9 +3,10 @@ set -euo pipefail
 umask 077
 
 usage() {
-    printf 'Usage: %s EXPECTED_UNREAL_EXE RUNTIME_LOG CHARACTER OUTPUT_PNG OUTPUT_MP4 WAIT_SECONDS [speech|ardy-explain]\n' \
+    printf 'Usage: %s EXPECTED_UNREAL_EXE RUNTIME_LOG CHARACTER OUTPUT_PNG OUTPUT_MP4 WAIT_SECONDS [speech|ardy-explain] [Portrait|FullBody]\n' \
         "${0##*/}" >&2
     printf 'Waits for one fresh reviewed avatar run, then captures only its exact 1280x720 X11 client window.\n' >&2
+    printf 'The reviewed camera framing defaults to Portrait when omitted.\n' >&2
 }
 
 fail() {
@@ -13,7 +14,7 @@ fail() {
     exit 1
 }
 
-if (( $# < 6 || $# > 7 )); then
+if (( $# < 6 || $# > 8 )); then
     usage
     exit 64
 fi
@@ -31,10 +32,13 @@ output_png_input=$4
 output_mp4_input=$5
 wait_seconds=$6
 capture_phase=${7:-speech}
+expected_camera_framing=${8:-Portrait}
 [[ $character == Ada || $character == Aoi ]] || \
     fail 'CHARACTER must be a reviewed Ada or Aoi profile'
 [[ $capture_phase == speech || $capture_phase == ardy-explain ]] || \
     fail 'capture phase must be speech or ardy-explain'
+[[ $expected_camera_framing == Portrait || $expected_camera_framing == FullBody ]] || \
+    fail 'camera framing must be the reviewed Portrait or FullBody preset'
 [[ $wait_seconds =~ ^[1-9][0-9]*$ && $wait_seconds -le 600 ]] || \
     fail 'WAIT_SECONDS must be an integer from 1 through 600'
 
@@ -135,6 +139,8 @@ deadline=$(( $(date +%s) + wait_seconds ))
 runtime_pid=''
 runtime_starttime=''
 launch_log_start=''
+camera_framing_marker="Selected reviewed character profile '$character' (adapter=UE58MetaHuman, camera_framing=$expected_camera_framing)."
+camera_framing_selected_count=0
 capture_ready=0
 while (( $(date +%s) < deadline )); do
     mapfile -t runtime_pids < <(find_runtime_pids)
@@ -163,13 +169,15 @@ while (( $(date +%s) < deadline )); do
             launch_log_start=${latest_log_open%%:*}
             if [[ $launch_log_start =~ ^[1-9][0-9]*$ ]]; then
                 launch_log=$(tail -n "+$launch_log_start" "$runtime_log")
+                camera_framing_selected_count=$(grep -Fc "$camera_framing_marker" \
+                    <<<"$launch_log" || true)
                 phase_ready=0
                 if [[ $capture_phase == speech ]] || \
                     grep -Fq "Using ARDY generated motion provider for 'explain'" \
                         <<<"$launch_log"; then
                     phase_ready=1
                 fi
-                if grep -Fq "Selected reviewed character profile '$character'" <<<"$launch_log" &&
+                if (( camera_framing_selected_count == 1 )) &&
                     grep -Fq "Spawned character '$character'" <<<"$launch_log" &&
                     grep -Fq 'Connected to the Fay avatar WebSocket.' <<<"$launch_log" &&
                     grep -Fq 'Activated the visible Spark studio camera and lighting rig.' <<<"$launch_log" &&
@@ -286,6 +294,8 @@ rm -- "$temporary_png" "$temporary_mp4"
 trap - EXIT HUP INT TERM
 printf 'capture_status=passed\n'
 printf 'character=%s\n' "$character"
+printf 'camera_framing=%s\n' "$expected_camera_framing"
+printf 'camera_framing_marker_count=%s\n' "$camera_framing_selected_count"
 printf 'capture_phase=%s\n' "$capture_phase"
 printf 'runtime_pid=%s\n' "$runtime_pid"
 printf 'runtime_starttime=%s\n' "$runtime_starttime"

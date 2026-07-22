@@ -1746,6 +1746,7 @@ runner_barrier_token=$(python3 -c 'import secrets; print(secrets.token_hex(32))'
 runner_identity_capture_in_progress=1
 (
     export FAY_SOAK_CHARACTER=Ada
+    export FAY_SOAK_CAMERA_FRAMING=Portrait
     export FAY_SOAK_EXPECTED_RES_X=1280
     export FAY_SOAK_EXPECTED_RES_Y=720
     export FAY_SOAK_EVIDENCE_MODE=diagnostic

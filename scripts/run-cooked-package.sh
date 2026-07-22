@@ -18,6 +18,32 @@ fi
 
 launcher_input=$1
 shift
+camera_framing=Portrait
+camera_framing_argument_count=0
+for argument in "$@"; do
+    normalized_argument=${argument,,}
+    case $normalized_argument in
+        -faycameraframing|-faycameraframing=*)
+            camera_framing_argument_count=$((camera_framing_argument_count + 1))
+            if (( camera_framing_argument_count > 1 )); then
+                printf 'error: -FayCameraFraming may be specified only once\n' >&2
+                exit 64
+            fi
+            case $argument in
+                -FayCameraFraming=Portrait)
+                    camera_framing=Portrait
+                    ;;
+                -FayCameraFraming=FullBody)
+                    camera_framing=FullBody
+                    ;;
+                *)
+                    printf 'error: camera framing must be exact -FayCameraFraming=Portrait or -FayCameraFraming=FullBody\n' >&2
+                    exit 64
+                    ;;
+            esac
+            ;;
+    esac
+done
 if [[ ! -f "$launcher_input" ]]; then
     printf 'error: launcher does not exist: %s\n' "$launcher_input" >&2
     exit 66
@@ -44,7 +70,8 @@ if [[ "$description" != *"ELF 64-bit"* || "$description" != *"ARM aarch64"* ]]; 
     printf '  %s\n' "$description" >&2
     exit 65
 fi
-"$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)/verify-cooked-package.sh" "$launcher_dir"
+"$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)/verify-cooked-package.sh" \
+    "$launcher_dir" --camera-framing "$camera_framing"
 
 printf 'Launcher: %s\n' "$launcher"
 printf 'ARM64 game executable: %s\n' "$game_binary"

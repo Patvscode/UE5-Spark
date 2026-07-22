@@ -102,10 +102,11 @@ fallbacks remain available. The real Horizon8 adapter drives nineteen reviewed
 body bones from pelvis through both leg/foot chains as well as the spine and
 arms, while face, neck, head, and sparse finger endpoints remain excluded.
 Private portrait media verifies procedural wave and generated upper-body
-`explain`, but the current camera crops the legs. A reviewed full-body camera
-preset plus wide front/side capture is required before lower-body visual quality
-is considered proven. Receiving a Fay action event alone is never sufficient
-motion evidence.
+`explain`, but the default camera crops the legs. Source now carries sealed
+per-character full-body presets, selected only by `-FayCameraFraming=FullBody`;
+a newly cooked package plus wide front/side capture is required before
+lower-body visual quality is considered proven. Receiving a Fay action event
+alone is never sufficient motion evidence.
 
 ## Performance order
 

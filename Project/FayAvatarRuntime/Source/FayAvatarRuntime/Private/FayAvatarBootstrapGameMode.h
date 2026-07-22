@@ -89,6 +89,7 @@ private:
     FName FaceComponentName = TEXT("Face");
     FName BodyComponentName = TEXT("Body");
     FString ActiveCharacterId = TEXT("Ada");
+    FString ActiveCameraFramingId = TEXT("Portrait");
     FString CharacterAdapter = TEXT("UE58MetaHuman");
     FVector CharacterSpawnLocation = FVector::ZeroVector;
     FRotator CharacterSpawnRotation = FRotator(0.0f, 180.0f, 0.0f);

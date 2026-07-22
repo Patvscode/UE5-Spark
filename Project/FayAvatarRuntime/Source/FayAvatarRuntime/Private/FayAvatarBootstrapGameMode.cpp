@@ -28,6 +28,8 @@ namespace
 {
 constexpr TCHAR AvatarSettingsSection[] = TEXT("FayAvatar");
 constexpr TCHAR DefaultCharacterId[] = TEXT("Ada");
+constexpr TCHAR DefaultCameraFramingId[] = TEXT("Portrait");
+constexpr TCHAR FullBodyCameraFramingId[] = TEXT("FullBody");
 constexpr TCHAR RequiredAdapter[] = TEXT("UE58MetaHuman");
 constexpr float ReviewedMaximumFramesPerSecond = 30.0f;
 constexpr float FrameRateLimitTolerance = 0.01f;
@@ -533,7 +535,56 @@ bool AFayAvatarBootstrapGameMode::LoadCharacterProfile()
         return false;
     }
 
+    FString RequestedCameraFraming = DefaultCameraFramingId;
+    const FString CameraFramingArgumentPrefix = TEXT("-FayCameraFraming=");
+    TArray<FString> CommandLineTokens;
+    FString(FCommandLine::Get()).ParseIntoArrayWS(CommandLineTokens);
+    int32 CameraFramingArgumentCount = 0;
+    bool bMalformedCameraFramingArgument = false;
+    for (const FString& Token : CommandLineTokens)
+    {
+        if (Token.Equals(TEXT("-FayCameraFraming"), ESearchCase::IgnoreCase))
+        {
+            bMalformedCameraFramingArgument = true;
+            continue;
+        }
+        if (!Token.StartsWith(CameraFramingArgumentPrefix, ESearchCase::IgnoreCase))
+        {
+            continue;
+        }
+        ++CameraFramingArgumentCount;
+        if (!Token.StartsWith(CameraFramingArgumentPrefix, ESearchCase::CaseSensitive))
+        {
+            bMalformedCameraFramingArgument = true;
+            continue;
+        }
+        RequestedCameraFraming = Token.RightChop(CameraFramingArgumentPrefix.Len());
+    }
+    const bool bReviewedCameraFraming =
+        CameraFramingArgumentCount <= 1 && !bMalformedCameraFramingArgument &&
+        (RequestedCameraFraming.Equals(
+             DefaultCameraFramingId, ESearchCase::CaseSensitive) ||
+            RequestedCameraFraming.Equals(
+                FullBodyCameraFramingId, ESearchCase::CaseSensitive));
+    if (!bReviewedCameraFraming)
+    {
+        UE_LOG(LogFayAvatarRuntime, Error,
+            TEXT("Requested camera framing is unknown or ambiguous; expected at most one exact -FayCameraFraming=Portrait|FullBody argument and refusing character loading."));
+        return false;
+    }
+
     const FString Section = FString::Printf(TEXT("FayCharacter.%s"), *RequestedId);
+    const bool bPortraitCameraFraming = RequestedCameraFraming.Equals(
+        DefaultCameraFramingId, ESearchCase::CaseSensitive);
+    const TCHAR* CameraLocationKey = bPortraitCameraFraming
+        ? TEXT("CameraPortraitRelativeLocation")
+        : TEXT("CameraFullBodyRelativeLocation");
+    const TCHAR* CameraRotationKey = bPortraitCameraFraming
+        ? TEXT("CameraPortraitRelativeRotation")
+        : TEXT("CameraFullBodyRelativeRotation");
+    const TCHAR* CameraFieldOfViewKey = bPortraitCameraFraming
+        ? TEXT("CameraPortraitFieldOfView")
+        : TEXT("CameraFullBodyFieldOfView");
     FString ActorClassPath;
     FString Adapter;
     FString FaceComponent;
@@ -550,14 +601,15 @@ bool AFayAvatarBootstrapGameMode::LoadCharacterProfile()
         GConfig->GetString(*Section, TEXT("BodyComponent"), BodyComponent, GGameIni) &&
         GConfig->GetString(*Section, TEXT("SpawnLocation"), SpawnLocation, GGameIni) &&
         GConfig->GetString(*Section, TEXT("SpawnRotation"), SpawnRotation, GGameIni) &&
-        GConfig->GetString(*Section, TEXT("CameraRelativeLocation"), CameraLocation, GGameIni) &&
-        GConfig->GetString(*Section, TEXT("CameraRelativeRotation"), CameraRotation, GGameIni) &&
-        GConfig->GetFloat(*Section, TEXT("CameraFieldOfView"), CameraFieldOfView, GGameIni);
+        GConfig->GetString(*Section, CameraLocationKey, CameraLocation, GGameIni) &&
+        GConfig->GetString(*Section, CameraRotationKey, CameraRotation, GGameIni) &&
+        GConfig->GetFloat(*Section, CameraFieldOfViewKey, CameraFieldOfView, GGameIni);
     if (!bComplete)
     {
         UE_LOG(LogFayAvatarRuntime, Error,
-            TEXT("Character profile '%s' is missing required fields; using the diagnostic avatar."),
-            *RequestedId);
+            TEXT("Character profile '%s' is missing required fields for camera framing '%s'; using the diagnostic avatar."),
+            *RequestedId,
+            *RequestedCameraFraming);
         return false;
     }
     if (Adapter != RequiredAdapter || FaceComponent != TEXT("Face") ||
@@ -586,6 +638,7 @@ bool AFayAvatarBootstrapGameMode::LoadCharacterProfile()
     }
 
     ActiveCharacterId = RequestedId;
+    ActiveCameraFramingId = RequestedCameraFraming;
     CharacterAdapter = Adapter;
     FaceComponentName = FName(*FaceComponent);
     BodyComponentName = FName(*BodyComponent);
@@ -596,9 +649,10 @@ bool AFayAvatarBootstrapGameMode::LoadCharacterProfile()
     Camera->SetRelativeRotation(ParsedCameraRotation);
     Camera->FieldOfView = CameraFieldOfView;
     UE_LOG(LogFayAvatarRuntime, Display,
-        TEXT("Selected reviewed character profile '%s' (adapter=%s)."),
+        TEXT("Selected reviewed character profile '%s' (adapter=%s, camera_framing=%s)."),
         *ActiveCharacterId,
-        *CharacterAdapter);
+        *CharacterAdapter,
+        *ActiveCameraFramingId);
     return true;
 }
 

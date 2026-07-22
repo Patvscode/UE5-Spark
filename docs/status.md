@@ -395,9 +395,10 @@ deployable application.
   protocol tests already cover those inputs, and v29 has passed the separate
   exact-container live outage/fallback/recovery diagnostic without interrupting
   externally managed Fay.
-- Add a reviewed full-body camera framing preset, then retain wide front/side
-  motion review plus an updated Aoi comparison capture. CSV and capture overhead remain
-  diagnostic-only and cannot replace a production endurance qualification.
+- Recook the sealed full-body camera framing presets, then retain wide
+  front/side motion review plus an updated Aoi comparison capture. CSV and
+  capture overhead remain diagnostic-only and cannot replace a production
+  endurance qualification.
 - Keep the free modular Casual Girl Fab character as a deferred private
   compatibility target. Reliability, MCP control, deterministic motion, and
   real ARDY activation take precedence; no Fab content belongs in this public

@@ -2,12 +2,12 @@
 
 ## Evidence
 
-- Source visual truth: `/Users/patrickmello/.codex/generated_images/019f7b48-0d14-7751-87d2-08d1b4193263/exec-5d4f19a0-a8ba-4d9f-bef3-cbe1d032d105.png`
+- Source visual truth: the private Product Design reference captured for this task (kept outside the repository).
 - Source pixels: 1672 × 941 at 1× density.
 - Desktop source crop: 1180 × 793 pixels from the app-owned desktop region.
-- Desktop implementation: `/Users/patrickmello/UE5-Spark/apps/private-controller/qa-desktop-match.jpg`, 1180 × 793 CSS pixels at 1× density.
-- Normalized desktop comparison: `/Users/patrickmello/UE5-Spark/apps/private-controller/qa-comparison-desktop.jpg`, source and implementation side by side without scaling.
-- Mobile implementation: `/Users/patrickmello/UE5-Spark/apps/private-controller/qa-deployed-mobile.jpg`, 390 × 844 CSS pixels at 1× density.
+- Desktop implementation: private QA capture `qa-desktop-match.jpg`, 1180 × 793 CSS pixels at 1× density (ignored by Git).
+- Normalized desktop comparison: private QA capture `qa-comparison-desktop.jpg`, source and implementation side by side without scaling (ignored by Git).
+- Mobile implementation: private QA capture `qa-deployed-mobile.jpg`, 390 × 844 CSS pixels at 1× density (ignored by Git).
 - State: Ada selected, Explain initially selected, Full body selected as the pending target, Fay and ARDY ready, renderer honestly reported as verified replay.
 
 ## Full-view comparison

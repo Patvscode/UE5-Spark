@@ -290,6 +290,11 @@ def scan_text(path, text):
             reject(f"{path}:{line_number}: contains a machine-specific home or volume path")
 
         for value in IPV4_PATTERN.findall(line):
+            # The CGNAT network address is a public, non-identifying protocol
+            # constant used to validate Tailscale peers. Concrete addresses in
+            # that range remain forbidden below.
+            if value == "100.64.0.0":
+                continue
             try:
                 address = ipaddress.ip_address(value)
             except ValueError:
@@ -366,6 +371,9 @@ python_sources = (
     Path("tools/validate_ardy_service.py"),
     Path("tools/tests/test_activate_ardy_provider.py"),
     Path("tools/tests/test_ardy_unreal_contract.py"),
+    Path("tools/tests/test_capture_spark_avatar_window.py"),
+    Path("tools/tests/test_character_camera_framing.py"),
+    Path("tools/tests/test_package_manifest_compatibility.py"),
     Path("tools/tests/test_run_spark_avatar_gate.py"),
     Path("tools/tests/test_run_spark_ardy_recovery_gate.py"),
     Path("tools/tests/test_validate_ardy_service.py"),
@@ -676,8 +684,11 @@ elif not term_position < kill_position < capture_position < verify_position:
 for marker in (
     "FAY_SOAK_EXPECTED_FAY_EXE",
     "FAY_SOAK_EXPECTED_FAY_STARTTIME",
+    "FAY_SOAK_EXPECTED_CAMERA_FRAMING",
     "process_matches_identity \"$fay_pid\" \"$fay_exe\" \"$fay_starttime\"",
     "reviewed_runtime_argv=(",
+    '"-FayCameraFraming=$expected_camera_framing"',
+    "camera_framing_selected_count",
     "nonreviewed-runtime-arguments",
     "actual_elapsed_seconds=$((end - start))",
     "idle_measurement_window_start=",
@@ -801,6 +812,7 @@ for marker in (
     "if (( $# != 3 )); then",
     "readonly RUN_DURATION_SECONDS=180",
     "export FAY_SOAK_CHARACTER=Ada",
+    "export FAY_SOAK_CAMERA_FRAMING=Portrait",
     "export FAY_SOAK_EXPECTED_RES_X=1280",
     "export FAY_SOAK_EXPECTED_RES_Y=720",
     "scope=diagnostic-only-not-production-qualification",
@@ -906,6 +918,9 @@ for marker in (
     "runtime_log_prelaunch_identity",
     "RUNTIME_LOG does not belong to EXPECTED_UNREAL_EXE",
     "Selected reviewed character profile",
+    "expected_camera_framing=${8:-Portrait}",
+    "camera_framing_selected_count == 1",
+    "camera_framing_marker_count",
     "Spawned character",
     "Connected to the Fay avatar WebSocket.",
     "Started Fay speech playback",
@@ -954,6 +969,31 @@ game_user_settings_source = Path(
     "Project/FayAvatarRuntime/Source/FayAvatarRuntime/Private/"
     "FayGameUserSettings.cpp"
 ).read_text()
+for marker in (
+    'DefaultCameraFramingId[] = TEXT("Portrait")',
+    'FullBodyCameraFramingId[] = TEXT("FullBody")',
+    'TEXT("-FayCameraFraming=")',
+    "ParseIntoArrayWS(CommandLineTokens)",
+    "CameraFramingArgumentCount <= 1",
+    "!bMalformedCameraFramingArgument",
+    "ESearchCase::CaseSensitive",
+    "if (!bReviewedCameraFraming)",
+    'TEXT("CameraPortraitRelativeLocation")',
+    'TEXT("CameraFullBodyRelativeLocation")',
+    "camera_framing=%s",
+):
+    if marker not in game_mode_source:
+        reject(f"the reviewed camera-framing contract is missing: {marker}")
+for forbidden in (
+    "FayCameraLocation=",
+    "FayCameraRotation=",
+    "FayCameraFieldOfView=",
+    "RequestedCameraFraming.TrimStartAndEndInline",
+):
+    if forbidden in game_mode_source:
+        reject(f"runtime camera framing accepts an unreviewed value: {forbidden}")
+if 'ActiveCameraFramingId = TEXT("Portrait")' not in game_mode_header:
+    reject("the active camera-framing state does not preserve the Portrait default")
 for marker in (
     "EFayMetaHumanLiveLinkState::RecoveryBackoff",
     "EFayMetaHumanLiveLinkState::TerminalFailure",
@@ -1167,6 +1207,9 @@ fi
 if [[ -n $python_bin ]] && ! "$python_bin" -m unittest \
     tools.tests.test_activate_ardy_provider \
     tools.tests.test_ardy_unreal_contract \
+    tools.tests.test_capture_spark_avatar_window \
+    tools.tests.test_character_camera_framing \
+    tools.tests.test_package_manifest_compatibility \
     tools.tests.test_run_spark_avatar_gate \
     tools.tests.test_run_spark_ardy_recovery_gate \
     tools.tests.test_validate_ardy_service; then

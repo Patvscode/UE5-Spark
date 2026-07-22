@@ -36,6 +36,7 @@ expected_unreal_starttime=${FAY_SOAK_EXPECTED_UNREAL_STARTTIME:-}
 expected_fay_input=${FAY_SOAK_EXPECTED_FAY_EXE:-}
 expected_fay_starttime=${FAY_SOAK_EXPECTED_FAY_STARTTIME:-}
 expected_character=${FAY_SOAK_EXPECTED_CHARACTER:-Ada}
+expected_camera_framing=${FAY_SOAK_EXPECTED_CAMERA_FRAMING:-Portrait}
 expected_res_x=${FAY_SOAK_EXPECTED_RES_X:-1280}
 expected_res_y=${FAY_SOAK_EXPECTED_RES_Y:-720}
 expected_scene_only=${FAY_SOAK_EXPECT_SCENE_ONLY:-0}
@@ -120,13 +121,15 @@ if [[ -n $expected_fay_starttime && ! $expected_fay_starttime =~ ^[0-9]+$ ]]; th
 fi
 [[ $expected_character == Ada || $expected_character == Aoi ]] || \
     fail 'FAY_SOAK_EXPECTED_CHARACTER must name a reviewed packaged profile'
+[[ $expected_camera_framing == Portrait || $expected_camera_framing == FullBody ]] || \
+    fail 'FAY_SOAK_EXPECTED_CAMERA_FRAMING must be Portrait or FullBody'
 if [[ -n $preflight_package_seal_sha256 &&
     ! $preflight_package_seal_sha256 =~ ^[0-9a-f]{64}$ ]]; then
     fail 'FAY_SOAK_PREFLIGHT_PACKAGE_SEAL_SHA256 must be a lowercase SHA-256 digest'
 fi
 
 for command_name in awk cp curl date dirname grep head journalctl mkdir nvidia-smi ps \
-    readlink realpath sed sha256sum sleep ss tail tr wc; do
+    python3 readlink realpath sed sha256sum sleep ss tail tr wc; do
     command -v "$command_name" >/dev/null 2>&1 || fail "missing command: $command_name"
 done
 
@@ -273,6 +276,7 @@ reviewed_runtime_argv=(
     -vulkan
     -log
     "-FayCharacter=$expected_character"
+    "-FayCameraFraming=$expected_camera_framing"
     -FayResetSpeechCache=0
     -FayTrimSpeechMemory=1
     -ResX=1280
@@ -407,13 +411,30 @@ package_launcher_sha256=$(sha256sum -- "$package_launcher")
 package_launcher_sha256=${package_launcher_sha256%% *}
 package_seal_record_count=$(( $(wc -l <"$package_seal") - 1 ))
 (( package_seal_record_count > 0 )) || fail 'the package seal contains no file records'
-character_manifest_sha256=absent
-if [[ -e $character_manifest || -L $character_manifest ]]; then
-    [[ -f $character_manifest && ! -L $character_manifest ]] || \
-        fail 'the packaged character manifest is not a regular file'
-    character_manifest_sha256=$(sha256sum -- "$character_manifest")
-    character_manifest_sha256=${character_manifest_sha256%% *}
-fi
+[[ -f $character_manifest && ! -L $character_manifest ]] || \
+    fail 'the packaged character manifest is missing or unsafe'
+python3 - "$character_manifest" "$expected_character" "$expected_camera_framing" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+payload = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+if payload.get("schema") != 2 or payload.get("defaultCameraFraming") != "Portrait":
+    raise SystemExit("the packaged character manifest has an unsupported camera schema")
+matches = [
+    character
+    for character in payload.get("characters", [])
+    if isinstance(character, dict) and character.get("id") == sys.argv[2]
+]
+if (
+    len(matches) != 1
+    or matches[0].get("cameraFramings") != ["Portrait", "FullBody"]
+    or sys.argv[3] not in matches[0]["cameraFramings"]
+):
+    raise SystemExit("the packaged character manifest does not seal the requested framing")
+PY
+character_manifest_sha256=$(sha256sum -- "$character_manifest")
+character_manifest_sha256=${character_manifest_sha256%% *}
 package_identity="$output_dir/package-identity.txt"
 {
     printf 'schema=1\n'
@@ -425,6 +446,8 @@ package_identity="$output_dir/package-identity.txt"
     printf 'seal_sha256=%s\n' "$package_seal_sha256"
     printf 'seal_record_count=%s\n' "$package_seal_record_count"
     printf 'character_manifest_sha256=%s\n' "$character_manifest_sha256"
+    printf 'character=%s\n' "$expected_character"
+    printf 'camera_framing=%s\n' "$expected_camera_framing"
 } >"$package_identity"
 
 if (( ${#diagnostic_overrides[@]} == 0 )); then
@@ -743,11 +766,18 @@ frame_rate_policy_enforced_count=$(grep -Fc \
 game_user_settings_policy_verified_count=$(grep -Fc \
     'Verified project-owned FayGameUserSettings runtime policy.' \
     "$runtime_new_log" || true)
+camera_framing_selected_count=$(grep -Fc \
+    "Selected reviewed character profile '$expected_character' (adapter=UE58MetaHuman, camera_framing=$expected_camera_framing)." \
+    "$runtime_new_log" || true)
 frame_rate_policy_violation_count=$(grep -Ec \
     'Reviewed runtime frame cap policy drifted|Could not enforce the reviewed 30.00 FPS runtime frame cap|The packaged runtime is not using project-owned FayGameUserSettings' \
     "$runtime_new_log" || true)
 if (( game_user_settings_policy_verified_count != 1 ||
     frame_rate_policy_enforced_count != 1 || frame_rate_policy_violation_count != 0 )); then
+    status=failed
+fi
+if [[ $expected_scene_only == 0 && $camera_framing_selected_count != 1 ]] ||
+    [[ $expected_scene_only == 1 && $camera_framing_selected_count != 0 ]]; then
     status=failed
 fi
 dormancy_configured_count=$(grep -Fc \
@@ -909,6 +939,9 @@ fi
     printf 'rendered_required=%s\n' "$require_rendered"
     printf 'normal_audio_required=%s\n' "$require_normal_audio"
     printf 'procedural_actions_required=%s\n' "$require_procedural_actions"
+    printf 'character=%s\n' "$expected_character"
+    printf 'camera_framing=%s\n' "$expected_camera_framing"
+    printf 'camera_framing_selected_count=%s\n' "$camera_framing_selected_count"
     printf 'avatar_dormancy_expected=%s\n' "$expected_avatar_dormancy"
     printf 'avatar_dormancy_delay_seconds=%s\n' "$expected_avatar_dormancy_delay"
     printf 'unreal_pid=%s\n' "$unreal_pid"

@@ -12,6 +12,7 @@ import argparse
 import configparser
 import hashlib
 import json
+import math
 import os
 import re
 import tempfile
@@ -19,8 +20,17 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 
 
-SCHEMA = 1
+SCHEMA = 2
+DEFAULT_CAMERA_FRAMING = "Portrait"
+CAMERA_FRAMING_IDS = (DEFAULT_CAMERA_FRAMING, "FullBody")
 ID_PATTERN = re.compile(r"^[A-Za-z][A-Za-z0-9_-]{0,31}$")
+UNREAL_DECIMAL = r"-?(?:0|[1-9][0-9]*)(?:\.[0-9]+)?"
+UNREAL_VECTOR_PATTERN = re.compile(
+    rf"X=({UNREAL_DECIMAL}) Y=({UNREAL_DECIMAL}) Z=({UNREAL_DECIMAL})"
+)
+UNREAL_ROTATOR_PATTERN = re.compile(
+    rf"P=({UNREAL_DECIMAL}) Y=({UNREAL_DECIMAL}) R=({UNREAL_DECIMAL})"
+)
 ACTOR_PATTERN = re.compile(
     r"^/Game/FayMetaHumans/Built/[A-Za-z][A-Za-z0-9_-]{0,63}/"
     r"BP_[A-Za-z][A-Za-z0-9_-]{0,63}\.BP_[A-Za-z][A-Za-z0-9_-]{0,63}_C$"
@@ -36,6 +46,14 @@ class ProfileError(RuntimeError):
 
 
 @dataclass(frozen=True)
+class CameraFramingProfile:
+    id: str
+    location: str
+    rotation: str
+    field_of_view: float
+
+
+@dataclass(frozen=True)
 class CharacterProfile:
     id: str
     actor_class: str
@@ -44,9 +62,7 @@ class CharacterProfile:
     body_component: str
     spawn_location: str
     spawn_rotation: str
-    camera_location: str
-    camera_rotation: str
-    camera_fov: float
+    camera_framings: tuple[CameraFramingProfile, ...]
     cook_directories: tuple[str, ...]
     project_asset: str
     package_asset: str
@@ -67,6 +83,38 @@ def require_simple_name(value: str, label: str) -> str:
     return value
 
 
+def require_unreal_transform(
+    value: str,
+    label: str,
+    pattern: re.Pattern[str],
+    syntax: str,
+) -> str:
+    match = pattern.fullmatch(value)
+    if match is None or not all(
+        math.isfinite(float(component)) for component in match.groups()
+    ):
+        raise ProfileError(f"{label} must use exact reviewed Unreal syntax: {syntax}")
+    return value
+
+
+def require_unreal_vector(value: str, label: str) -> str:
+    return require_unreal_transform(
+        value,
+        label,
+        UNREAL_VECTOR_PATTERN,
+        "X=<decimal> Y=<decimal> Z=<decimal>",
+    )
+
+
+def require_unreal_rotator(value: str, label: str) -> str:
+    return require_unreal_transform(
+        value,
+        label,
+        UNREAL_ROTATOR_PATTERN,
+        "P=<decimal> Y=<decimal> R=<decimal>",
+    )
+
+
 def load_profiles(config_path: Path) -> tuple[str, dict[str, CharacterProfile], str]:
     config_path = config_path.resolve(strict=True)
     if not config_path.is_file() or config_path.is_symlink():
@@ -83,6 +131,11 @@ def load_profiles(config_path: Path) -> tuple[str, dict[str, CharacterProfile], 
         parser.get("FayAvatar", "DefaultCharacter", fallback="").strip(),
         "DefaultCharacter",
     )
+    default_camera_framing = parser.get(
+        "FayAvatar", "DefaultCameraFraming", fallback=""
+    ).strip()
+    if default_camera_framing != DEFAULT_CAMERA_FRAMING:
+        raise ProfileError("DefaultCameraFraming must be the reviewed Portrait preset")
 
     profiles: dict[str, CharacterProfile] = {}
     prefix = "FayCharacter."
@@ -111,12 +164,39 @@ def load_profiles(config_path: Path) -> tuple[str, dict[str, CharacterProfile], 
             raise ProfileError(
                 f"[{section}] UE58MetaHuman requires exact Face and Body components"
             )
-        try:
-            camera_fov = float(required("CameraFieldOfView"))
-        except ValueError as exc:
-            raise ProfileError(f"[{section}] CameraFieldOfView is not numeric") from exc
-        if not 20.0 <= camera_fov <= 90.0:
-            raise ProfileError(f"[{section}] CameraFieldOfView is outside 20-90 degrees")
+        spawn_location = require_unreal_vector(
+            required("SpawnLocation"), f"[{section}] SpawnLocation"
+        )
+        spawn_rotation = require_unreal_rotator(
+            required("SpawnRotation"), f"[{section}] SpawnRotation"
+        )
+        camera_framings: list[CameraFramingProfile] = []
+        for framing_id in CAMERA_FRAMING_IDS:
+            key_prefix = f"Camera{framing_id}"
+            try:
+                field_of_view = float(required(f"{key_prefix}FieldOfView"))
+            except ValueError as exc:
+                raise ProfileError(
+                    f"[{section}] {key_prefix}FieldOfView is not numeric"
+                ) from exc
+            if not 20.0 <= field_of_view <= 90.0:
+                raise ProfileError(
+                    f"[{section}] {key_prefix}FieldOfView is outside 20-90 degrees"
+                )
+            camera_framings.append(
+                CameraFramingProfile(
+                    id=framing_id,
+                    location=require_unreal_vector(
+                        required(f"{key_prefix}RelativeLocation"),
+                        f"[{section}] {key_prefix}RelativeLocation",
+                    ),
+                    rotation=require_unreal_rotator(
+                        required(f"{key_prefix}RelativeRotation"),
+                        f"[{section}] {key_prefix}RelativeRotation",
+                    ),
+                    field_of_view=field_of_view,
+                )
+            )
 
         cook_directories = split_list(required("CookDirectories"), f"[{section}] CookDirectories")
         for directory in cook_directories:
@@ -148,11 +228,9 @@ def load_profiles(config_path: Path) -> tuple[str, dict[str, CharacterProfile], 
             adapter=adapter,
             face_component=face_component,
             body_component=body_component,
-            spawn_location=required("SpawnLocation"),
-            spawn_rotation=required("SpawnRotation"),
-            camera_location=required("CameraRelativeLocation"),
-            camera_rotation=required("CameraRelativeRotation"),
-            camera_fov=camera_fov,
+            spawn_location=spawn_location,
+            spawn_rotation=spawn_rotation,
+            camera_framings=tuple(camera_framings),
             cook_directories=cook_directories,
             project_asset=project_asset,
             package_asset=package_asset,
@@ -217,12 +295,16 @@ def manifest_payload(
     return {
         "schema": SCHEMA,
         "profileConfigSha256": config_digest,
+        "defaultCameraFraming": DEFAULT_CAMERA_FRAMING,
         "characters": [
             {
                 "id": profile.id,
                 "adapter": profile.adapter,
                 "actorClass": profile.actor_class,
                 "packageAsset": profile.package_asset,
+                "cameraFramings": [
+                    framing.id for framing in profile.camera_framings
+                ],
             }
             for profile in profiles
         ],

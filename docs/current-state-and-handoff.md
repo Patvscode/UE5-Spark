@@ -143,7 +143,8 @@ user revokes the connected application.
 - The existing private media page is a progress viewer, not the interaction UI.
 - Current Ada framing is portrait/chest-up. It proves face and upper-body motion
   but does not visually prove the lower-body retarget path.
-- A reviewed `FullBody` camera preset plus wide front/side capture is required.
+- Source now contains sealed per-character `FullBody` camera presets; a new
+  package plus wide front/side capture is still required.
 - ARDY's current public runtime interface is deliberately limited to approved
   behavior names. Arbitrary prompts do not enter Unreal.
 - Detailed fingers need reviewed hand poses or another compatible provider.
@@ -164,11 +165,10 @@ user revokes the connected application.
 4. Do not register the web client as a second `User` on Fay's avatar WebSocket;
    that could mask the real Unreal renderer. Proxy only the reviewed control and
    sanitized status surfaces.
-5. Add reviewed `Portrait` and `FullBody` presets to each character profile and
-   select only by `-FayCameraFraming=<reviewed-id>`. Never accept transforms or
-   FOV values from command line, MCP, or the web UI. Seal the available framing
-   IDs in the package manifest, recook as a new package, and capture front plus
-   side motion before calling lower-body quality proven.
+5. Recook the schema-v2 character profiles as a new package, select the sealed
+   `FullBody` preset only through `-FayCameraFraming=FullBody`, and capture front
+   plus side motion before calling lower-body quality proven. Never accept
+   transforms or FOV values from command line, MCP, or the web UI.
 6. Run mobile Safari and desktop browser acceptance through Tailscale, including
    reconnection, microphone permission, media playback, and safe failure states.
 7. Run a longer v29 endurance gate after UI/camera changes settle; preserve v28

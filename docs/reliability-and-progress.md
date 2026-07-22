@@ -335,7 +335,7 @@ records no audio.
   Ada \
   /private/media-root/v27/ada-v27-speaking-wave.png \
   /private/media-root/v27/ada-v27-speaking-wave-8s.mp4 \
-  180
+  180 speech Portrait
 ```
 
 For a real generated-motion progress clip, pass the optional sealed
@@ -348,8 +348,13 @@ are not accepted.
   /path/to/FayAvatarRuntime/Binaries/LinuxArm64/FayAvatarRuntime \
   /path/to/FayAvatarRuntime/Saved/Logs/FayAvatarRuntime.log \
   Ada /private/media-root/v28/ada-real-ardy.png \
-  /private/media-root/v28/ada-real-ardy-8s.mp4 480 ardy-explain
+  /private/media-root/v28/ada-real-ardy-8s.mp4 480 ardy-explain Portrait
 ```
+
+For lower-body evidence, launch the reviewed `FullBody` runtime preset and pass
+`FullBody` as the final capture argument. The watcher requires exactly one
+matching framing marker before it records, and its output metadata names the
+framing that was actually qualified.
 
 Run that watcher in parallel with an explicitly diagnostic one-turn rendered
 test, or a five-turn diagnostic when capturing `ardy-explain`. The capture

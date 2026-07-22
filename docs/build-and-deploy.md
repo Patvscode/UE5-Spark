@@ -111,11 +111,18 @@ following:
 
 Do not continue if either check fails.
 
+For rollback continuity, verification-only runs accept the already sealed v28
+and v29 schema-1 manifests in `Portrait` framing. Schema 1 is rejected for
+`FullBody` and for every new `--seal` operation; newly sealed packages must use
+the strict schema-2 framing contract.
+
 `DefaultGame.ini` contains reviewed character profiles. Select one or more with
 repeatable `--character <id>` arguments when cooking; the packager writes a
 validated profile manifest into the archive. The runtime accepts only those
-reviewed IDs through `-FayCharacter=<id>` and never accepts arbitrary asset
-paths. Each profile keeps its generated assembly/common paths and
+reviewed IDs through `-FayCharacter=<id>` and accepts only the sealed
+`-FayCameraFraming=Portrait|FullBody` presets; omitted framing remains
+`Portrait`. It never accepts arbitrary asset paths or camera transforms. Each
+profile keeps its generated assembly/common paths and
 `/StreamingADA` in the cook. The runtime adapter converts Fay PCM to 16 kHz
 mono, runs the model through `NNERuntimeORTCpu`, converts its output to 251 raw
 MetaHuman controls, and publishes `FayAudio` through Live Link. The reference
@@ -160,7 +167,10 @@ diagnostic package is acceptable; the script will not do it automatically.
 ```
 
 The launcher validates that an AArch64 ELF and cooked content exist beside the
-package launcher before starting Unreal with `-vulkan -log`.
+package launcher before starting Unreal with `-vulkan -log`. It defaults to
+`Portrait`, accepts at most one exact `-FayCameraFraming=Portrait|FullBody`
+argument, and passes that selection into package verification. Consequently,
+legacy schema-1 rollback packages cannot be launched as `FullBody`.
 
 If Fay is already running and the complete local stack should be checked before
 launch, use:

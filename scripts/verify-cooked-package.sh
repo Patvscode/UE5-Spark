@@ -2,7 +2,7 @@
 set -euo pipefail
 
 usage() {
-    printf 'Usage: %s /path/to/cooked/archive [--unrealpak /path/to/UnrealPak] [--seal]\n' \
+    printf 'Usage: %s /path/to/cooked/archive [--camera-framing Portrait|FullBody] [--unrealpak /path/to/UnrealPak] [--seal]\n' \
         "${0##*/}" >&2
     printf 'A package without an existing seal requires --unrealpak and --seal.\n' >&2
 }
@@ -21,8 +21,20 @@ archive_input=$1
 shift
 unrealpak=
 write_seal=0
+expected_camera_framing=Portrait
+camera_framing_option_seen=0
 while (( $# > 0 )); do
     case $1 in
+        --camera-framing)
+            (( $# >= 2 )) || fail '--camera-framing requires Portrait or FullBody'
+            (( camera_framing_option_seen == 0 )) || \
+                fail '--camera-framing may be specified only once'
+            [[ $2 == Portrait || $2 == FullBody ]] || \
+                fail '--camera-framing requires exact Portrait or FullBody'
+            expected_camera_framing=$2
+            camera_framing_option_seen=1
+            shift 2
+            ;;
         --unrealpak)
             (( $# >= 2 )) || fail '--unrealpak requires an executable path'
             [[ -z $unrealpak ]] || fail '--unrealpak may be specified only once'
@@ -64,31 +76,58 @@ engine_saved_root="$package_root/Engine/Saved"
 game_binary="$game_root/Binaries/LinuxArm64/FayAvatarRuntime"
 seal_file="$package_root/.ue5-spark-package.sha256"
 character_manifest="$package_root/.ue5-spark-characters.json"
+allow_legacy_portrait_manifest=$(( 1 - write_seal ))
 
 character_manifest_rows() {
     if [[ ! -e $character_manifest ]]; then
-        printf 'Ada\tFayAvatarRuntime/Content/FayMetaHumans/Built/AdaFay/BP_AdaFay.uasset\n'
-        return
+        if (( allow_legacy_portrait_manifest == 1 )) && \
+            [[ $expected_camera_framing == Portrait ]]; then
+            printf 'Ada\tFayAvatarRuntime/Content/FayMetaHumans/Built/AdaFay/BP_AdaFay.uasset\n'
+            return
+        fi
+        fail 'the packaged character manifest is missing; only sealed legacy Portrait packages may omit it'
     fi
     [[ -f $character_manifest && ! -L $character_manifest ]] || \
         fail 'the packaged character manifest must be a regular file'
     [[ $(wc -c <"$character_manifest") -le 65536 ]] || \
         fail 'the packaged character manifest is unexpectedly large'
-    python3 - "$character_manifest" <<'PY'
+    python3 - "$character_manifest" "$expected_camera_framing" \
+        "$allow_legacy_portrait_manifest" <<'PY'
 import json
 import re
 import sys
 from pathlib import Path
 
 path = Path(sys.argv[1])
+expected_camera_framing = sys.argv[2]
+allow_legacy_portrait = sys.argv[3] == "1"
+if expected_camera_framing not in ("Portrait", "FullBody"):
+    raise SystemExit("invalid expected camera framing")
 try:
     payload = json.loads(path.read_text(encoding="utf-8"))
 except (OSError, UnicodeError, json.JSONDecodeError) as exc:
     raise SystemExit(f"invalid character manifest: {exc}")
-if set(payload) != {"schema", "profileConfigSha256", "characters"}:
-    raise SystemExit("invalid character manifest keys")
-if payload["schema"] != 1:
+if not isinstance(payload, dict):
+    raise SystemExit("invalid character manifest root")
+schema = payload.get("schema")
+if type(schema) is not int or schema not in (1, 2):
     raise SystemExit("unsupported character manifest schema")
+if schema == 1:
+    if not allow_legacy_portrait:
+        raise SystemExit("legacy schema-1 manifests cannot be used to seal new packages")
+    if expected_camera_framing != "Portrait":
+        raise SystemExit("legacy schema-1 packages support only Portrait framing")
+    if set(payload) != {"schema", "profileConfigSha256", "characters"}:
+        raise SystemExit("invalid legacy character manifest keys")
+else:
+    if set(payload) != {
+        "schema", "profileConfigSha256", "defaultCameraFraming", "characters"
+    }:
+        raise SystemExit("invalid character manifest keys")
+    if payload["schema"] != 2:
+        raise SystemExit("unsupported character manifest schema")
+    if payload["defaultCameraFraming"] != "Portrait":
+        raise SystemExit("unsupported default camera framing")
 if not re.fullmatch(r"[0-9a-f]{64}", payload["profileConfigSha256"]):
     raise SystemExit("invalid character profile digest")
 characters = payload["characters"]
@@ -97,9 +136,10 @@ if not isinstance(characters, list) or not 1 <= len(characters) <= 16:
 ids = set()
 assets = set()
 for character in characters:
-    if not isinstance(character, dict) or set(character) != {
-        "id", "adapter", "actorClass", "packageAsset"
-    }:
+    expected_character_keys = {"id", "adapter", "actorClass", "packageAsset"}
+    if schema == 2:
+        expected_character_keys.add("cameraFramings")
+    if not isinstance(character, dict) or set(character) != expected_character_keys:
         raise SystemExit("invalid character manifest entry")
     character_id = character["id"]
     package_asset = character["packageAsset"]
@@ -111,6 +151,11 @@ for character in characters:
         raise SystemExit("duplicate character ID")
     if character["adapter"] != "UE58MetaHuman":
         raise SystemExit("unsupported packaged character adapter")
+    if schema == 2:
+        if character["cameraFramings"] != ["Portrait", "FullBody"]:
+            raise SystemExit("unsupported packaged camera framing contract")
+        if expected_camera_framing not in character["cameraFramings"]:
+            raise SystemExit("requested camera framing is not sealed for the character")
     if not isinstance(character["actorClass"], str) or not character[
         "actorClass"
     ].startswith("/Game/FayMetaHumans/Built/"):

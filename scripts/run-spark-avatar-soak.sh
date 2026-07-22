@@ -79,6 +79,7 @@ fi
 res_x=${FAY_SOAK_EXPECTED_RES_X:-1280}
 res_y=${FAY_SOAK_EXPECTED_RES_Y:-720}
 character=${FAY_SOAK_CHARACTER:-Ada}
+camera_framing=${FAY_SOAK_CAMERA_FRAMING:-Portrait}
 scene_only=${FAY_SOAK_SCENE_ONLY:-0}
 avatar_dormancy=${FAY_SOAK_AVATAR_DORMANCY:-0}
 avatar_dormancy_delay=${FAY_SOAK_AVATAR_DORMANCY_DELAY_SECONDS:-5}
@@ -108,6 +109,8 @@ max_start_gpu_utilization=${UE5_SPARK_MAX_START_GPU_UTILIZATION:-85}
     fail 'FAY_SOAK_EXPECTED_RES_X/Y must be positive integers'
 [[ $character == Ada || $character == Aoi ]] || \
     fail 'FAY_SOAK_CHARACTER must name a reviewed packaged profile'
+[[ $camera_framing == Portrait || $camera_framing == FullBody ]] || \
+    fail 'FAY_SOAK_CAMERA_FRAMING must be Portrait or FullBody'
 [[ $scene_only =~ ^[01]$ ]] || fail 'FAY_SOAK_SCENE_ONLY must be 0 or 1'
 if (( scene_only == 1 && turn_count != 0 )); then
     fail 'FAY_SOAK_SCENE_ONLY is restricted to zero-turn idle diagnostics'
@@ -263,8 +266,8 @@ fi
 for argument in "$@"; do
     classify_diagnostic_override "$argument"
     case "${argument,,}" in
-        -nullrhi|-resx=*|-resy=*|-csvcaptureframes=*|-csvcompression=*|-faysceneonly|-faysceneonly=*|-fayavatardormancy|-fayavatardormancy=*|-fayavatardormancydelay=*)
-            fail 'the soak runner owns RHI, resolution, CSV, scene-only, and dormancy arguments'
+        -nullrhi|-resx=*|-resy=*|-csvcaptureframes=*|-csvcompression=*|-faycameraframing=*|-faysceneonly|-faysceneonly=*|-fayavatardormancy|-fayavatardormancy=*|-fayavatardormancydelay=*)
+            fail 'the soak runner owns RHI, resolution, camera framing, CSV, scene-only, and dormancy arguments'
             ;;
     esac
 done
@@ -925,6 +928,7 @@ trap 'handle_signal TERM 143' TERM
 
 runtime_arguments=(
     "-FayCharacter=$character"
+    "-FayCameraFraming=$camera_framing"
     -FayResetSpeechCache=0
     -FayTrimSpeechMemory=1
     "-ResX=$res_x" "-ResY=$res_y" -Windowed -WinX=0 -WinY=0
@@ -1064,6 +1068,7 @@ for _ in $(seq 1 90); do
                 else
                     readiness_marker="Spawned character '$character'"
                 fi
+                camera_framing_marker="Selected reviewed character profile '$character' (adapter=UE58MetaHuman, camera_framing=$camera_framing)."
                 dormancy_ready=1
                 if [[ $avatar_dormancy == 1 ]]; then
                     dormancy_marker="MetaHuman idle dormancy: enabled (delay=${avatar_dormancy_delay}.00 seconds, neutral_prepare_frames=2)."
@@ -1080,6 +1085,7 @@ for _ in $(seq 1 90); do
                     grep -Fq 'Verified project-owned FayGameUserSettings runtime policy.' <<<"$current_launch_log" &&
                     grep -Fq 'Enforced reviewed runtime frame cap at 30.00 FPS after GameUserSettings initialization.' <<<"$current_launch_log" &&
                     grep -Fq "$readiness_marker" <<<"$current_launch_log" &&
+                    { [[ $scene_only == 1 ]] || grep -Fq "$camera_framing_marker" <<<"$current_launch_log"; } &&
                     (( dormancy_ready == 1 )); then
                     runtime_ready=1
                     break
@@ -1104,6 +1110,7 @@ export FAY_SOAK_EXPECTED_UNREAL_STARTTIME="$runtime_starttime"
 export FAY_SOAK_EXPECTED_FAY_EXE="$fay_exe"
 export FAY_SOAK_EXPECTED_FAY_STARTTIME="$fay_starttime"
 export FAY_SOAK_EXPECTED_CHARACTER="$character"
+export FAY_SOAK_EXPECTED_CAMERA_FRAMING="$camera_framing"
 export FAY_SOAK_EXPECTED_RES_X="$res_x"
 export FAY_SOAK_EXPECTED_RES_Y="$res_y"
 export FAY_SOAK_RUNTIME_LOG_START_LINE="$current_launch_start"

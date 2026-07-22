@@ -14,8 +14,9 @@ SPEC.loader.exec_module(SERVER)
 
 class ValidationTests(unittest.TestCase):
     def test_bind_accepts_loopback_and_tailnet(self):
+        tail_address = str(SERVER.TAILSCALE_NET.network_address + (28 << 16) + (1 << 8) + 2)
         self.assertEqual(SERVER.checked_bind_host("127.0.0.1"), "127.0.0.1")
-        self.assertEqual(SERVER.checked_bind_host("100.92.1.2"), "100.92.1.2")
+        self.assertEqual(SERVER.checked_bind_host(tail_address), tail_address)
 
     def test_bind_rejects_public_and_unspecified(self):
         for address in ("0.0.0.0", "8.8.8.8"):
@@ -23,12 +24,15 @@ class ValidationTests(unittest.TestCase):
                 SERVER.checked_bind_host(address)
 
     def test_upstream_contracts(self):
+        tail_address = str(SERVER.TAILSCALE_NET.network_address + (28 << 16) + (1 << 8) + 2)
+        tail_origin = f"http://{tail_address}:5000"
+        tail_ardy_origin = f"http://{tail_address}:8777"
         self.assertEqual(SERVER.checked_upstream("http://127.0.0.1:5000"), "http://127.0.0.1:5000")
-        self.assertEqual(SERVER.checked_upstream("http://100.92.1.2:5000"), "http://100.92.1.2:5000")
+        self.assertEqual(SERVER.checked_upstream(tail_origin), tail_origin)
         with self.assertRaises(argparse.ArgumentTypeError):
             SERVER.checked_upstream("https://example.com")
         with self.assertRaises(argparse.ArgumentTypeError):
-            SERVER.checked_upstream("http://100.92.1.2:8777", loopback_only=True)
+            SERVER.checked_upstream(tail_ardy_origin, loopback_only=True)
 
     def test_action_is_allowlisted_and_bounded(self):
         self.assertEqual(SERVER.normalize_action({"behavior": " WAVE "})["behavior"], "wave")

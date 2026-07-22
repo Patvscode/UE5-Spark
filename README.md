@@ -163,8 +163,11 @@ runner, see [reliability and private progress](docs/reliability-and-progress.md)
    ```
 
    The runtime selects only a reviewed packaged profile with
-   `-FayCharacter=Ada`. Unknown IDs and arbitrary asset paths fail closed to the
-   diagnostic avatar.
+   `-FayCharacter=Ada`. Camera framing defaults to the unchanged portrait view;
+   select the per-character full-body preset only with
+   `-FayCameraFraming=FullBody`. The exact framing IDs are `Portrait` and
+   `FullBody`. Unknown character/framing IDs and arbitrary asset or camera values
+   fail closed to the diagnostic avatar.
 
 6. Run the read-only Spark preflight and native packaged launcher:
 
