@@ -4,7 +4,7 @@
 #include "FayBodyMotionTypes.h"
 #include "FayCore27SourceAnimInstance.generated.h"
 
-class FAnimInstanceProxy;
+struct FAnimInstanceProxy;
 
 /** Thread-safe snapshot consumed by the hidden Core27 source AnimInstance. */
 struct FAYBODYMOTION_API FFayCore27SourcePoseSnapshot
@@ -44,4 +44,3 @@ private:
     mutable FCriticalSection PoseMutex;
     FFayCore27SourcePoseSnapshot PendingPose;
 };
-

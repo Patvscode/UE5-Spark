@@ -9,8 +9,8 @@
 
 namespace
 {
-constexpr int32 NeckJointIndex = 5;
-constexpr int32 HeadJointIndex = 6;
+constexpr int32 Core27SourceNeckJointIndex = 5;
+constexpr int32 Core27SourceHeadJointIndex = 6;
 }
 
 class FFayCore27SourceAnimProxy final : public FAnimInstanceProxy
@@ -51,7 +51,8 @@ protected:
         {
             // StreamingADA/input-pose ownership is preserved by defense in
             // depth: generated source neck/head remain at exact reference pose.
-            if (JointIndex == NeckJointIndex || JointIndex == HeadJointIndex)
+            if (JointIndex == Core27SourceNeckJointIndex ||
+                JointIndex == Core27SourceHeadJointIndex)
             {
                 continue;
             }
@@ -121,4 +122,3 @@ void UFayCore27SourceAnimInstance::DestroyAnimInstanceProxy(
 {
     delete InProxy;
 }
-

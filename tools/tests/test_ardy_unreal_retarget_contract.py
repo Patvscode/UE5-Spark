@@ -20,6 +20,7 @@ class ArdyUnrealRetargetContractTests(unittest.TestCase):
     def setUpClass(cls) -> None:
         cls.coordinate = read(PRIVATE / "FayArdyCoordinateConversion.cpp")
         cls.source_anim = read(PRIVATE / "FayCore27SourceAnimInstance.cpp")
+        cls.source_anim_header = read(PUBLIC / "FayCore27SourceAnimInstance.h")
         cls.skeleton = read(PRIVATE / "FayCore27Skeleton.cpp")
         cls.profile_header = read(PUBLIC / "FayArdyRetargetProfile.h")
         cls.profile_source = read(PRIVATE / "FayArdyRetargetProfile.cpp")
@@ -99,12 +100,15 @@ class ArdyUnrealRetargetContractTests(unittest.TestCase):
             "class FFayCore27SourceAnimProxy final : public FAnimInstanceProxy",
             "Output.ResetToRefPose();",
             "Output.Pose.NormalizeRotations();",
-            "JointIndex == NeckJointIndex || JointIndex == HeadJointIndex",
+            "JointIndex == Core27SourceNeckJointIndex ||",
+            "JointIndex == Core27SourceHeadJointIndex",
             "UFayCore27SourceAnimInstance::SubmitPose",
             "UFayCore27SourceAnimInstance::ResetPose",
             "FScopeLock Lock(&PoseMutex);",
         ):
             self.assertIn(marker, self.source_anim)
+        self.assertIn("struct FAnimInstanceProxy;", self.source_anim_header)
+        self.assertNotIn("class FAnimInstanceProxy;", self.source_anim_header)
 
     def test_unsafe_finalized_pose_mutation_and_first_frame_delta_are_absent(self) -> None:
         for forbidden in (
