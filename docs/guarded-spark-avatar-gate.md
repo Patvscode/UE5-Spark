@@ -90,3 +90,40 @@ Only `gate-result.txt` with `status=passed` is an outer-gate pass. The script
 does not print a success message until restoration and all post-run checks have
 completed. If the terminal disconnects, inspect these private files rather
 than reusing the directory.
+
+## Explicit ARDY recovery diagnostic
+
+`scripts/run-spark-ardy-recovery-gate.sh` is a separate diagnostic-only tool.
+Unlike the normal gate, it is allowed to stop one container, but only after it
+has repeatedly captured and matched the exact fixed-name real ARDY container,
+immutable image ID, host PID/start time, isolation settings, model mount,
+loopback port, and sealed health response. There is no container-name, image,
+port, service, behavior, or duration argument.
+
+The diagnostic starts a fixed Ada speech/action sequence, stops that one 64-hex
+container ID inside a bounded helper, verifies that both its name and port are
+unclaimed, and invokes the guarded activator while holding the project activation
+lock. An unknown name or port claimant is never stopped or replaced. Every exit
+path reconciles the fixed endpoint. Success requires the new real provider to
+pass main-path and cleanup validation; a failed activation may safely preserve
+only a verified sealed mock, in which case the diagnostic remains failed.
+
+Success requires this ordered runtime evidence:
+
+1. Speech and a generated ten-second `explain` action overlap.
+2. Unreal observes ARDY unavailable and completes bounded baked-idle fallback
+   while facial speech continues.
+3. A new real Horizon8 provider becomes ready.
+4. Generated `explain`, `idle`, and `listen` all start and complete.
+5. No rejected pose, unavailable, or fallback marker occurs between recovered
+   readiness and normal Unreal `PreExit`.
+
+The operational log audit stops at the first `LogInit: Display: PreExit Game.`
+after the final `listen` completion. This is deliberate: ARDY client `EndPlay`
+clears readiness and emits an unavailable message during normal teardown.
+Missing, stale, or early `PreExit` still fails closed, and final checks separately
+require the recovered ARDY identity/health, exact Unreal absence, Fay continuity,
+Voxtral restoration, and unchanged package seal.
+
+This tool cannot qualify production. Its `recovery-result.txt` is explicitly
+diagnostic; run a fresh normal production gate afterward.

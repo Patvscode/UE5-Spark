@@ -34,9 +34,11 @@ fallback marker is accepted so the gate follows the provider Unreal actually
 selected.
 
 That generated-provider marker proves Unreal transport and provider selection;
-it does not identify a checkpoint or qualify real prompt-conditioned Horizon8.
-The isolated deterministic Core27 test service is sufficient to exercise this
-route while the real prompt encoder remains credential-gated.
+checkpoint identity is qualified separately by the guarded ARDY service and
+container checks. The production endpoint now uses Horizon8 with three sealed
+cached embeddings. The text encoder and Hugging Face credential are absent from
+ordinary runtime, while the deterministic Core27 service remains useful for
+offline protocol and fault-injection tests.
 
 All new runtime-log lines and kernel-journal lines are preserved privately.
 Fatal/assertion/OOM/Vulkan failures, project error markers, queue overflow, new
@@ -151,7 +153,47 @@ samples above 95 percent. Preserve CSV timing and private beginning/midpoint/end
 media for the final visual review. A short 1080p gate follows the 720p endurance
 pass; do not substitute a 30-minute 1080p run for the qualification sequence.
 
-### Latest verified v28 result
+### Current verified v29 result
+
+The private native ARM64 v29 package is sealed with package-seal digest
+`592cd46a35a1a8708acaeb4cc072c772d031af9f0d34c4b1b8a3773156b4786a`;
+the AArch64 executable SHA-256 is
+`75b024c4867cc866511122b44de1ff89a82f459f134640a49b9449fd643cb9ee`.
+Ada and Aoi both passed five-turn rendered gates with the real Horizon8
+provider before the final recovery work. The retained Aoi bundle is
+`rendered-v29-aoi-real-ardy-5turn-20260722T0011Z`: five turns in 302 seconds,
+8.74 ms worst facial p95, 13,764 KiB tail RSS growth, five dormancy wakes with
+zero cancellations, and zero runtime/kernel/action failures.
+
+After the recovery verifier was hardened, a fresh Ada production qualification
+completed five turns in 303 seconds. All five facial summaries, normal audio
+playbacks, allocator releases, and delayed collections completed. Worst facial
+p95 was 7.85 ms. Unreal RSS moved from 2,189,848 KiB to 2,166,724 KiB, reached
+2,189,848 KiB maximum, and grew 2,892 KiB across the measured tail. Minimum
+`MemAvailable` was 53,552,328 KiB and GPU utilization peaked at 20 percent.
+Frame-policy, facial-frame, audio-watchdog, bridge, procedural-action, runtime,
+and kernel failure counts were zero. The package seal reverified, Fay and ARDY
+kept their exact identities, Voxtral restored, and no Unreal process remained.
+
+A separate earlier diagnostic proved the failure path rather than merely
+checking steady state. While a ten-second generated `explain` action and a 9.68-second
+speech turn overlapped, the guard stopped only the exact captured project ARDY
+container. Unreal observed the provider loss, entered and completed bounded
+baked-idle fallback, and completed facial speech at 7.46 ms p95. The guarded
+activator published a new sealed Horizon8 provider; Unreal requalified it and
+completed generated `explain`, `idle`, and `listen` actions. The audit counted
+zero rejected pose batches, unavailable transitions, generated fallbacks, or
+neutral-explain fallbacks between recovered readiness and normal Unreal
+`PreExit`. Cleanup validated the replacement provider twice, preserved Fay,
+restored Voxtral, rechecked the package, and left no Unreal process or cleanup
+error.
+
+V29 is therefore the latest Ada production-qualified package. This diagnostic
+is recovery evidence only; it does not replace the production or endurance gates.
+V28 remains the immediate rollback, long-endurance, and measured-frame-rate
+baseline.
+
+### Retained verified v28 result
 
 The private native ARM64 v28 package is sealed with package-seal digest
 `653d14a1205a25bbd7c5f434c998919c3d5284af40717d0c267294909b67139f`;

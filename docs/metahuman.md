@@ -96,11 +96,16 @@ audio-to-animation layer. The StreamingADA adapter is intended to provide that
 learned facial layer and now does so in the verified native package.
 
 The source contains conservative raw-control head mappings for `nod`, `shake`,
-`think`, and `warn`, but they have not been visually verified. No authored body
-animations or montages are included for `wave` or `invite`. A guarded private
-v27 diagnostic visually verifies the procedural wave while Ada speaks;
-receiving a Fay action event alone is still not evidence that any other gesture
-moved correctly.
+`think`, and `warn`, but they still need final visual tuning. No authored body
+animations or montages are required for `wave` or `invite`; the procedural
+fallbacks remain available. The real Horizon8 adapter drives nineteen reviewed
+body bones from pelvis through both leg/foot chains as well as the spine and
+arms, while face, neck, head, and sparse finger endpoints remain excluded.
+Private portrait media verifies procedural wave and generated upper-body
+`explain`, but the current camera crops the legs. A reviewed full-body camera
+preset plus wide front/side capture is required before lower-body visual quality
+is considered proven. Receiving a Fay action event alone is never sufficient
+motion evidence.
 
 ## Performance order
 

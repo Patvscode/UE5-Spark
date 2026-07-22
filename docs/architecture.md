@@ -15,14 +15,17 @@
                             |
                             +--> TTS --> WAV under HTTP :5000
                             |
-                            +--> avatar events over WebSocket :10002
+                            +--> allowlisted avatar intent over WebSocket :10002
                                              |
                                              v
                                   Packaged Unreal LinuxArm64
                                   - FayAvatarBridge
                                   - audio playback
                                   - FayMetaHumanRuntime
+                                  - FayBodyMotion
                                   - MetaHuman rendering
+                                             |
+                                             +--> ARDY health/poses :8777
 ```
 
 The x86 Editor/cooker is a development-time process on the Spark. The packaged
@@ -55,6 +58,8 @@ minimized-window 50 Hz solving, and cold relaunch checks pass.
 | MCP layer | Connections between Fay and external tools/systems |
 | FayAvatarBridge | Socket registration/reconnect, bounded JSON/audio queues, WAV download/decoding, normalized Blueprint events |
 | FayMetaHumanRuntime | Verified 16 kHz mono conversion, local StreamingADA solve, 251 raw-control conversion, `FayAudio` publishing, and Ada Live Link consumption in the native package |
+| FayBodyMotion | Behavior allowlist, provider selection, eight-frame interpolation, post-evaluation Core27-to-MetaHuman retarget, face/head mask, cached-pose fade, and baked fallback |
+| ARDY service | Token-free Horizon8 generation for the three sealed `idle`, `listen`, and `explain` embeddings on loopback |
 | Unreal runtime | Avatar, camera, lighting, rendering, audio output, facial curves, and LOD/performance |
 | x86-64 Editor/cooker through FEX | Asset editing plus LinuxArm64 shader/platform data for maps, textures, materials, meshes, rigs and MetaHumans |
 | Native ARM build/package tools | LinuxArm64 Game compilation, staging, Pak-only packaging, deep content verification, and immutable-file sealing |
@@ -65,12 +70,15 @@ yet visually tuned. The body-motion plugin supplies a character-neutral
 procedural fallback for `wave`, `invite`, `think`, `warn`, and `explain` when a
 compatible private montage or generated provider is unavailable. With a
 reviewed generated provider ready, conversational `explain` takes that route;
-timing-critical actions remain deterministic. Current v27 evidence used the
-isolated Core27 test provider; real prompt-conditioned Horizon8 still requires
-the gated Meta Llama encoder. Procedural motion applies only reviewed arm and
-wrist bones after ordinary body evaluation, leaving face, neck, and head
-ownership unchanged. Rendered tuning remains required before calling these
-paths a polished performance.
+timing-critical actions remain deterministic. The sealed production Horizon8
+provider now serves only the approved cached `idle`, `listen`, and `explain`
+embeddings; its runtime container has no Hugging Face credential or text
+encoder. The post-evaluation adapter maps pelvis/root, spine, shoulder/arm, and
+leg/foot chains across nineteen reviewed MetaHuman body bones. Face, neck,
+head, and sparse hand endpoints remain excluded so StreamingADA and reviewed
+hand/head controls retain ownership. The current portrait camera proves face
+and upper-body behavior; wide front/side full-body visual tuning remains a
+separate acceptance milestone.
 
 ## Why MCP does not belong inside the avatar plugin
 
@@ -90,6 +98,7 @@ When everything runs on the same Spark:
 |---|---|
 | Fay HTTP/API/audio | `http://127.0.0.1:5000` |
 | Fay avatar WebSocket | `ws://127.0.0.1:10002` |
+| ARDY health/pose service | `http://127.0.0.1:8777` |
 
 Loopback avoids LAN exposure and unnecessary audio/network latency. Remote
 renderers require a separately secured transport; do not change the bind host

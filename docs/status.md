@@ -1,7 +1,7 @@
 # Verified status
 
 This page separates measured results from planned work. The latest evidence was
-recorded on DGX Spark on 2026-07-21. The cooked package and all Epic-licensed
+recorded on DGX Spark through 2026-07-22. The cooked package and all Epic-licensed
 content remain private and are not part of this repository.
 
 ## Working end to end on DGX Spark
@@ -68,9 +68,10 @@ content remain private and are not part of this repository.
   six steady eight-frame generations in 59-153 ms with 132 ms p95, passing the
   400 ms buffer target after warmup. No TensorRT was installed or used.
 - The strict mock pose service passed schema, sequence, allowlist, Core27,
-  neck/head-exclusion, and coordinate-mapping tests. The real Horizon8 provider
-  loads without network/token access and fails closed because the account does
-  not yet have access to the separate gated Meta Llama text encoder.
+  neck/head-exclusion, and coordinate-mapping tests. Approved access to the
+  gated encoder was then used once in isolation to seal the `idle`, `listen`,
+  and `explain` embeddings. The real Horizon8 provider loads those three
+  embeddings without a runtime network request, credential, or text encoder.
 - The sealed Ada v12 package initialized the generated Core27-to-MetaHuman
   retargeter without replacing the Body's StreamingADA `ULiveLinkInstance`.
   Nineteen reviewed body bones are mapped after ordinary body evaluation;
@@ -232,7 +233,49 @@ content remain private and are not part of this repository.
   real playback markers, recorded no desktop or audio, and revalidated the
   media before it was allowlisted on the private progress hub.
 
-## Current verified v28 result
+## Current verified v29 result
+
+- The sealed dual-character v29 package has package-seal digest
+  `592cd46a35a1a8708acaeb4cc072c772d031af9f0d34c4b1b8a3773156b4786a`
+  and native AArch64 executable SHA-256
+  `75b024c4867cc866511122b44de1ff89a82f459f134640a49b9449fd643cb9ee`.
+  Ada and Aoi each passed earlier five-turn rendered runs against the real
+  Horizon8 provider. The retained Aoi bundle
+  `rendered-v29-aoi-real-ardy-5turn-20260722T0011Z` completed five turns in
+  302 seconds with 8.74 ms worst facial p95, 13,764 KiB tail RSS growth, five
+  dormancy wakes, zero cancellations, and zero runtime/kernel/action failures.
+  The same package then completed the guarded recovery and fresh Ada gates below.
+- The rendered diagnostic `rendered-v29-ardy-recovery-20260722T0313Z`
+  started a ten-second generated `explain` action during a speech turn, stopped
+  only the exact captured project ARDY container, observed service loss and a
+  completed bounded baked-idle fallback, and kept facial speech running at
+  7.46 ms p95. A new sealed real provider became ready, after which Unreal
+  completed generated `explain`, `idle`, and `listen` actions.
+- The post-recovery operational audit ended at the first normal Unreal
+  `PreExit` after the final `listen` completion. It recorded zero rejected pose
+  batches, unavailable transitions, generated fallbacks, or neutral-explain
+  fallbacks in that live window. The later teardown-only unavailable message is
+  expected because the ARDY client clears readiness during `EndPlay`; final
+  ARDY identity/health and Unreal absence are checked separately.
+- Recovery cleanup validated the replacement endpoint twice, preserved Fay's
+  exact process and listeners, restored the fixed Voxtral user unit, rechecked
+  the package, and reported zero cleanup errors. This is diagnostic recovery
+  evidence and is not labeled production qualification.
+- The independent production bundle
+  `rendered-v29-ada-fresh-production-20260722T031759Z` completed five Ada
+  turns in 303 seconds. All five facial summaries, normal audio completions,
+  allocator releases, and delayed collections passed. Worst facial p95 was
+  7.85 ms; Unreal RSS moved from 2,189,848 KiB to 2,166,724 KiB, reached a
+  2,189,848 KiB maximum, and grew 2,892 KiB across the tail. Minimum
+  `MemAvailable` was 53,552,328 KiB and peak GPU utilization was 20 percent.
+- Facial-frame, frame-policy, watchdog, bridge, procedural-action, runtime, and
+  kernel failure counts were zero. Owned teardown, Fay/ARDY continuity,
+  Voxtral restoration, package verification, and Unreal absence all passed.
+- V29 is the latest Ada production-passing package. V28 remains the retained
+  extended endurance, Aoi portability, measured-30-FPS baseline, and immediate
+  rollback until v29 accumulates matching long-run breadth.
+
+## Retained verified v28 result
 
 - The private v28 native ARM64 package is sealed. Its recorded package-seal
   digest is
@@ -275,9 +318,10 @@ content remain private and are not part of this repository.
   differed from metadata by only 0.0149 ms. The retained CSV SHA-256 is
   `d7ce10963ab418dc30ecbc090918795a55b6c77605d24e5dd4e873d569dad9b1`.
   Diagnostic teardown and the outer service-restoration checks passed cleanly.
-- V28 is therefore the current production-qualified package and measured 30 FPS
-  baseline. V27 remains intact as the prior production-qualified rollback, with
-  its known uncapped frame-rate limitation documented above.
+- V28 remains the retained 20-turn endurance, Aoi portability, and measured
+  30 FPS baseline, plus the immediate rollback for v29. V27 remains intact as
+  the older functional rollback, with its known uncapped frame-rate limitation
+  documented above.
 - A separate passing 90-second, one-turn diagnostic captured Ada's exact
   1280x720 client as a PNG and an eight-second, 30 FPS MP4 for the private
   progress hub. The outer gate still passed teardown, service restoration, and
@@ -334,8 +378,9 @@ deployable application.
   and conversational arm/wrist poses when no reviewed montage is configured;
   compatible private montages retain precedence. `nod` and `shake` remain
   owned by the face driver's bounded head curves.
-- Cache approved ARDY text embeddings after Meta Llama access is granted. The
-  real provider currently reports degraded and returns 503 without them.
+- The approved `idle`, `listen`, and `explain` embeddings are complete and
+  token-free at runtime. Any vocabulary expansion must use the isolated
+  credentialed cache path, pass review, and be hash-sealed before production.
 - Visually validate and tune the source-level semantic head-control mappings for
   `nod`, `shake`, `think`, and `warn`.
 - Add optional reviewed MetaHuman-compatible body montages for more polished
@@ -345,12 +390,13 @@ deployable application.
   presentation for a polished long-running character experience.
 - Assemble and validate a second reviewed female preset. Aoi already proves the
   no-character-specific-C++ portability requirement but is male in UE 5.8.
-- Repeat the isolated malformed-envelope, stale/out-of-order sequence, and ARDY
-  service kill/restart injections against sealed v28. Earlier
-  builds passed those recovery paths, but they remain separate from v28's
-  qualification and must not interrupt the externally managed Fay process.
-- Run the separate 1080p CSV diagnostic and retain side-view motion review plus
-  an updated Aoi comparison capture. CSV and capture overhead remain
+- Run a rendered malformed-envelope and stale/out-of-order injection against a
+  future sealed package if additional live fault evidence is needed. Unit and
+  protocol tests already cover those inputs, and v29 has passed the separate
+  exact-container live outage/fallback/recovery diagnostic without interrupting
+  externally managed Fay.
+- Add a reviewed full-body camera framing preset, then retain wide front/side
+  motion review plus an updated Aoi comparison capture. CSV and capture overhead remain
   diagnostic-only and cannot replace a production endurance qualification.
 - Keep the free modular Casual Girl Fab character as a deferred private
   compatibility target. Reliability, MCP control, deterministic motion, and

@@ -5,21 +5,18 @@ Unreal Engine 5.8 digital-human application natively on NVIDIA DGX Spark. It
 contains a minimal Unreal project, a Fay speech/event bridge, and source for a
 local MetaHuman facial-animation adapter.
 
-> **Engineering-preview status:** sealed v28 is the current production-qualified
-> native Linux ARM64 package on DGX Spark. Ada passed its 241-second four-turn
-> qualification and a separate 1,803-second / 20-turn endurance gate; Aoi passed
-> the same four-turn portability boundary. A guarded 6,000-frame diagnostic then
-> measured 30.001596 FPS after warm-up, confirming the project-owned frame-rate
-> policy. The guarded wrappers passed, including controlled teardown and the
-> applicable service-integrity checks. Sealed v27 remains the prior
-> production-qualified rollback, although a later 12,000-frame diagnostic
-> proved that its intended 30 FPS cap had been
-> reset and it averaged 170.125 FPS. The token-free real ARDY Horizon8 provider
-> is now production-active on loopback: a 30-batch canary, a second 30-batch
-> production qualification, and a five-turn rendered Ada gate all passed. The
-> rendered gate completed a 7.2-second generated `explain` action while
-> StreamingADA retained exclusive face/head control; deterministic gestures
-> remained the timing-safe fallback.
+> **Engineering-preview status:** sealed v29 is the latest Ada
+> production-qualified native Linux ARM64 package on DGX Spark. A fresh
+> 303-second / five-turn Ada gate completed with 7.85 ms worst facial p95,
+> 2,892 KiB tail RSS growth, zero
+> runtime/kernel/action failures, unchanged Fay/ARDY identities, restored
+> Voxtral, and no orphaned Unreal process. A separate guarded live-recovery
+> diagnostic stopped only the exact owned ARDY container during speech, observed
+> bounded baked fallback without interrupting the face or audio, activated a new
+> sealed Horizon8 provider, and completed generated `explain`, `idle`, and
+> `listen` actions before clean teardown. V28 remains the rollback, endurance,
+> and measured 30.001596 FPS baseline; v27 is the older functional rollback with
+> its documented uncapped-frame limitation.
 
 This repository does **not** redistribute Unreal Engine, MetaHuman assets,
 Marketplace plugins, cooked packages, or private Epic source patches.
@@ -58,13 +55,15 @@ required for this project.
 | Direct local StreamingADA facial adapter | Verified in the native package: 81 solver curves, 251 raw controls, `FayAudio` Live Link subject |
 | Free optimized Ada MetaHuman renders on Spark | Verified with skin, hair, clothing, and portrait lighting |
 | MetaHuman learned speech motion | Verified visibly and at the complete 50 Hz solve cadence |
-| Reviewed character profiles and repeatable profile-driven cooking | Verified with Ada and Aoi in sealed v28; unknown profiles fail closed |
+| Reviewed character profiles and repeatable profile-driven cooking | Verified with Ada and Aoi in sealed v29; unknown profiles fail closed |
 | Fay-driven motion routing | Real Horizon8 ARDY is production-active for sealed `idle`, `listen`, and `explain` embeddings; Ada completed generated `explain` and returned to baked idle, while wave/invite/think/warn retained deterministic fallbacks |
 | V28 frame-rate policy | Verified by an exact 6,000-frame diagnostic: 5,670 post-trim frames averaged 30.001596 FPS with 38.4833 ms p95 and complete duration accounting |
-| Rendered reliability | Ada passed 20 turns over 1,803 seconds with 6.56 ms worst facial p95, 6,328 KiB tail RSS growth, and clean teardown; Aoi passed its 241-second four-turn qualification |
+| Rendered reliability | V29 passed a fresh five-turn Ada production gate and a controlled live ARDY recovery diagnostic; v28 retains the 20-turn endurance and measured 30 FPS baselines |
 | Native ARM64 Unreal Editor/cooker | Not required; x86 Editor uses FEX |
 
-See [the detailed status](docs/status.md) for the exact boundary.
+See [the detailed status](docs/status.md) for the exact boundary and
+[the current handoff](docs/current-state-and-handoff.md) for the safest resume
+point, latest evidence, known limits, and next implementation order.
 
 ## How the Editor runs on Spark
 
@@ -119,6 +118,7 @@ scripts/verify-spark.sh                   Read-only Spark/Vulkan preflight
 scripts/run-cooked-package.sh             Guarded packaged-app launcher
 scripts/run-spark-digital-human.sh        Discover Fay/MCP and launch the stack
 scripts/run-spark-avatar-soak.sh          Own rendered launch, soak, and teardown
+scripts/run-spark-ardy-recovery-gate.sh   Diagnostic exact-container outage/recovery gate
 scripts/soak-spark-avatar.sh              Strict face/audio/body/GPU reliability gate
 scripts/capture-spark-avatar-window.sh    Guarded private window-only media capture
 scripts/build-ardy-container.sh           Build isolated ARM64 PyTorch service
@@ -249,21 +249,23 @@ count while the window was minimized. Semantic action events reach Unreal;
 wave and invite have rendered through the character-neutral procedural body
 fallback. Live control now also verifies think, warn, nod, and shake through
 the deterministic paths and routes conversational `explain` through the
-configured Core27 test provider. Nod and shake remain bounded face-driver head
+sealed real Horizon8 provider. Nod and shake remain bounded face-driver head
 curves, so body motion cannot fight StreamingADA. V27 retains the completed
-control-matrix rollback evidence; v28 has passed Ada's four-turn and 20-turn
-rendered gates, Aoi's four-turn portability gate, and the measured frame-rate
-diagnostic. Fresh private v28 media visually verifies Ada's wave during speech;
-think, warn, nod, shake, and the generated retarget route still need front/side
-visual tuning. Optional compatible montages retain precedence.
+control-matrix rollback evidence; v29 has passed Ada/Aoi five-turn gates and a
+controlled mid-speech ARDY recovery gate. V28 retains the 20-turn endurance and
+measured frame-rate evidence. Private media verifies Ada's wave and generated
+upper-body `explain`; wide front/side full-body retarget review remains pending.
+Optional compatible montages retain precedence.
 
 The `FayBodyMotion` plugin routes the same semantic intent through a strict
 allowlist and interchangeable baked/ARDY providers. Its ARDY client validates
 versioned Core27 batches from `127.0.0.1:8777`, buffers eight 20 FPS frames, and
 interpolates poses at render rate. The post-evaluation retargeter has run beside
 StreamingADA and recovered from service loss without interrupting facial
-speech. Live prompt-conditioned motion remains optional until approved cached
-text embeddings are available; deterministic gestures and baked idle remain
+speech. The production service uses three approved cached embeddings (`idle`,
+`listen`, and `explain`), so ordinary runtime receives neither a Hugging Face
+credential nor the text encoder. Arbitrary live prompts remain intentionally
+outside Unreal's public interface; deterministic gestures and baked idle remain
 the dependable fallback.
 
 The [MCP integration boundary](docs/mcp-integration.md) explains how Fay owns

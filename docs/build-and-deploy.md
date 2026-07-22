@@ -197,6 +197,21 @@ On a new package or machine, reconfirm:
 3. Audio output works.
 4. Repeated launch/exit is clean.
 
+For a promotion candidate, use `run-spark-avatar-gate.sh` around the rendered
+soak rather than launching it by hand. It owns the one packaged process,
+temporarily pauses only the fixed allowlisted Voxtral user unit when needed,
+observes (but does not manage) Fay and ARDY, verifies teardown and the package
+seal, and restores Voxtral on every exit path. A production result must declare
+`FAY_SOAK_EVIDENCE_MODE=production`.
+
+Use `run-spark-ardy-recovery-gate.sh` only as a separate diagnostic after a
+steady-state production gate. It can stop only the exact repeatedly captured
+project ARDY container and must publish a new sealed real provider, prove
+bounded fallback/recovery, preserve Fay, restore Voxtral, and leave no Unreal
+process. Its result is always diagnostic and cannot replace production or
+endurance qualification. See
+[the guarded gate contract](guarded-spark-avatar-gate.md).
+
 ## 10. Validate Fay separately
 
 Install the smoke-test-only dependency in an isolated Python environment:
