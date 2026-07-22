@@ -29,9 +29,10 @@ such a package to a public GitHub release.
 The optional second female test character is the free Fab listing
 [Free Casual Girl Sample (Modular)](https://www.fab.com/listings/1da38c7b-c197-4cc4-a02f-9f63f480e300).
 It uses the Fab Standard License and carries Fab's `NoAI` tag. The asset is
-acquired into the user's private Epic library, is never committed here, and is
-not used as generative-model training or conditioning data. See
-[the isolated integration gate](docs/fab-casual-girl.md).
+acquired into the user's private Epic library and is never committed here.
+The license and tag are documented for information; the user is responsible
+for deciding which optional AI-control capabilities to enable and for complying
+with the terms that apply to their use. See [the isolated integration gate](docs/fab-casual-girl.md).
 
 ## Fay
 

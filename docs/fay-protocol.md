@@ -58,6 +58,7 @@ interrupt speech that is already playing:
       "code": "mcp.wave",
       "behavior": "wave",
       "affect": "neutral",
+      "provider": "baked",
       "intensity": 0.7,
       "priority": 50,
       "sentimentHint": 0.0
@@ -70,6 +71,13 @@ interrupt speech that is already playing:
 The body-motion component independently revalidates the behavior allowlist and
 bounds intensity and duration. Arbitrary prompts and pose arrays are rejected
 at this public boundary.
+
+`Action.provider` is optional and accepts only `baked` or `hybrid`. `baked`
+forces the renderer to use its local deterministic provider and never fall
+through to ARDY for that action. `hybrid` keeps normal ARDY-first routing with
+the baked fallback. Omitting the field preserves the pre-switch behavior and
+is treated as `hybrid`, so older callers remain compatible. Any other value or
+type is rejected by Fay and again by the Unreal bridge.
 
 ## Blueprint events
 

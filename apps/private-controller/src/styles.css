@@ -584,6 +584,35 @@ h2 { margin: 0; font-family: "Cormorant Garamond", Georgia, serif; font-size: 28
   cursor: pointer;
 }
 .vision-copy button:disabled { opacity: .55; cursor: wait; }
+.ai-control-options { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
+.ai-control-options button {
+  min-height: 44px;
+  padding: 5px 7px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: var(--raised);
+  color: #cfd5da;
+  font-size: 8px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.ai-control-options button.is-selected { border-color: #3f7567; background: var(--mint-soft); color: #e9fff9; }
+.ai-control-options button:disabled { opacity: .42; cursor: not-allowed; }
+.ai-control-description { margin: 8px 1px 10px; color: var(--quiet); font-size: 9px; line-height: 1.4; }
+.asset-context-opt-in {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 9px;
+  border: 1px solid #4b4038;
+  border-radius: 10px;
+  background: #1c1815;
+  cursor: pointer;
+}
+.asset-context-opt-in input { flex: 0 0 auto; width: 20px; height: 20px; margin: 2px 0 0; accent-color: var(--warm); }
+.asset-context-opt-in > span { display: grid; gap: 2px; }
+.asset-context-opt-in strong { color: #d7cec8; font-size: 9px; font-weight: 600; }
+.asset-context-opt-in small { color: #96887f; font-size: 8px; line-height: 1.4; }
 .wardrobe-pending { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; padding: 10px; border: 1px dashed #614530; border-radius: 12px; background: #1e1713; color: var(--warm); }
 .wardrobe-pending > span { display: grid; gap: 2px; }
 .wardrobe-pending strong { color: #e6d9cf; font-size: 10px; font-weight: 600; }

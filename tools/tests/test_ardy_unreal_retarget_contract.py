@@ -192,9 +192,10 @@ class ArdyUnrealRetargetContractTests(unittest.TestCase):
             dispatch,
         )
         self.assertIn(
-            "bReviewedGeneratedAction && ArdyProvider != nullptr &&",
+            "!bDeterministicOnly && bReviewedGeneratedAction &&",
             dispatch,
         )
+        self.assertIn("ArdyProvider != nullptr &&", dispatch)
         self.assertNotIn("bReviewedMontageWins", dispatch)
         self.assertIn("bUsedBakedFailureFallback", dispatch)
         self.assertIn("strict ARDY v2 or the reviewed retarget was unavailable", dispatch)

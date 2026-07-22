@@ -10,6 +10,14 @@ enum class EFayBodyMotionProvider : uint8
     Ardy
 };
 
+/** Requested routing mode. Hybrid is the backward-compatible default. */
+UENUM(BlueprintType)
+enum class EFayBodyMotionRoutingMode : uint8
+{
+    Hybrid,
+    Deterministic
+};
+
 UENUM(BlueprintType)
 enum class EFayBodyMotionState : uint8
 {
@@ -36,6 +44,9 @@ struct FAYBODYMOTION_API FFayBodyMotionRequest
 
     UPROPERTY(BlueprintReadOnly, Category = "Fay|Body Motion")
     int32 Priority = 0;
+
+    UPROPERTY(BlueprintReadOnly, Category = "Fay|Body Motion")
+    EFayBodyMotionRoutingMode RoutingMode = EFayBodyMotionRoutingMode::Hybrid;
 };
 
 /** Normalized ARDY pose before the one reviewed conversion into Unreal coordinates. */

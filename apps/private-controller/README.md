@@ -14,9 +14,12 @@ The current prototype provides:
 - a separate free-text movement director backed by the shared reviewed catalog;
 - deterministic movement duration, intensity, root mode, and renderer routing even
   when the optional local LLM supplies the catalog classification;
+- a local, character-neutral AI-control selector: deterministic catalog matching,
+  generic AI motion (the restart-safe default), or explicitly opted-in asset-aware
+  architecture mode;
 - honest `staged` results for jumping jacks, jogging/running in place, stretching,
   and relaxed dance until those ARDY motions are packaged in Unreal;
-- disabled Casual Girl outfit/garment controls using sealed IDs while the licensed
+- disabled Casual Girl outfit/garment controls using sealed IDs while the
   asset profile and complete base body remain unreviewed;
 - a private same-origin live-frame endpoint when the packaged renderer and
   guarded JPEG producer are both active;
@@ -35,6 +38,26 @@ reviewed model can be A/B tested with `--motion-planner-model` without changing
 chat. Its output is advisory: the server accepts only one catalog ID from
 `config/motion-catalog.json` and never accepts model-provided timing, joints,
 paths, URLs, or root behavior.
+
+The mode contract is sealed by `config/character-ai-control.json` and its public
+schema. `deterministic` adds `provider: "baked"` to each action and bypasses the
+motion classifier. `ai_motion` sends user-authored intent to the classifier and
+adds `provider: "hybrid"`. The controller-wide `asset_aware_ai` transition
+requires explicit UI/API acknowledgement, uses the same hybrid renderer route,
+and may additionally send
+one versioned runtime-context object containing only the selected profile ID,
+wardrobe preset ID, camera framing, bounded stage zoom, and renderer state.
+Other modes reject that context object. The current v1 adapter does not contain
+mesh, texture, skeleton, morph, image, animation, arbitrary asset path, or raw
+renderer data; future adapters can expand the capability through a new
+versioned, validated schema. A caller that omits `provider` keeps the historical
+hybrid behavior. The switch resets to `ai_motion` when the controller restarts
+and is character-neutral. Every connected phone or desktop reflects the same
+selection, and disabling asset-aware mode from any client changes the shared
+controller back to `ai_motion`:
+license and tag information remains informational, the local user chooses which
+capability to enable and is responsible for that use, and the runtime has no
+character-specific license allowlist.
 
 Wardrobe state is loaded fail-closed from
 `config/wardrobe-profiles/CasualGirl.pending.json`. The API exposes only the

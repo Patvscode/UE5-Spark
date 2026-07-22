@@ -82,6 +82,20 @@ const PENDING_WARDROBE = {
   fullyUnclothed: { enabled: false, reason: "Complete base-body geometry has not been audited." },
 };
 
+const DEFAULT_AI_CONTROL = {
+  schemaVersion: 1,
+  controlConfigId: "ue5-spark-local-ai-control-v1",
+  defaultMode: "ai_motion",
+  selectedMode: "ai_motion",
+  assetAwareEnabled: false,
+  assetAwareNotice: "Asset-aware mode can share selected context with configured AI services as a controller-wide setting.",
+  modes: [
+    { id: "deterministic", label: "Deterministic", description: "Reviewed catalog matching only.", requiresExplicitLocalOptIn: false },
+    { id: "ai_motion", label: "AI motion", description: "Generic motion intent without character asset input.", requiresExplicitLocalOptIn: false },
+    { id: "asset_aware_ai", label: "Asset-aware AI", description: "Local asset context after explicit opt-in.", requiresExplicitLocalOptIn: true },
+  ],
+};
+
 export function App() {
   const [character, setCharacter] = useState("ada");
   const [motion, setMotion] = useState("explain");
@@ -107,12 +121,15 @@ export function App() {
   const [showZoom, setShowZoom] = useState(false);
   const [directingMotion, setDirectingMotion] = useState(false);
   const [motionPlan, setMotionPlan] = useState(null);
+  const [aiControl, setAiControl] = useState(DEFAULT_AI_CONTROL);
+  const [aiControlSaving, setAiControlSaving] = useState(false);
+  const [assetContextAcknowledged, setAssetContextAcknowledged] = useState(false);
   const [wardrobe, setWardrobe] = useState(PENDING_WARDROBE);
   const [wardrobeSelection, setWardrobeSelection] = useState({
     preset: "casual",
     slots: { top: "tank", bottom: "pants", feet: "shoes_socks", hair: "style_1" },
   });
-  const [wardrobeNotice, setWardrobeNotice] = useState("Licensed asset profile not installed");
+  const [wardrobeNotice, setWardrobeNotice] = useState("Asset profile not installed");
   const [notice, setNotice] = useState("Connecting to the live renderer…");
   const [health, setHealth] = useState({ fay: false, ardy: false, renderer: false, stream: false, checked: false });
   const [statusFresh, setStatusFresh] = useState(false);
@@ -132,6 +149,7 @@ export function App() {
   const liveStage = streamRequested && streamState === "live" && Boolean(liveFrameUrl);
   const liveLabel = !health.checked ? "Checking" : liveStage ? "Stage live" : streamRequested && streamState === "error" ? "Replay fallback" : streamRequested ? "Stream connecting" : health.renderer ? "Renderer linked" : systemsReady ? "Systems ready" : "Limited preview";
   const characterName = character === "ada" ? "Ada" : "Aoi";
+  const selectedAiControl = aiControl.modes.find((item) => item.id === aiControl.selectedMode) || aiControl.modes[1];
   const stageMediaStyle = { "--stage-zoom": stageZoom };
   const sheetMeta = activeSheet === "conversation"
     ? { eyebrow: "Live Fay conversation", title: `Talk with ${characterName}`, label: "Conversation" }
@@ -176,6 +194,32 @@ export function App() {
       })
       .catch(() => { /* The sealed pending manifest remains visible in static preview. */ });
     return () => { cancelled = true; };
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    const refresh = () => fetch("/api/ai-control", { cache: "no-store" })
+      .then((response) => {
+        if (!response.ok) throw new Error();
+        return response.json();
+      })
+      .then((payload) => {
+        if (
+          !cancelled
+          && payload?.controlConfigId === "ue5-spark-local-ai-control-v1"
+          && Array.isArray(payload.modes)
+        ) {
+          setAiControl(payload);
+          setAssetContextAcknowledged(payload.selectedMode === "asset_aware_ai");
+        }
+      })
+      .catch(() => { /* Static preview retains the safe ai_motion default. */ });
+    refresh();
+    const timer = window.setInterval(refresh, 5000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
   }, []);
 
   useEffect(() => {
@@ -450,10 +494,25 @@ export function App() {
   }, [activeSheet]);
 
   async function requestMovement(command) {
+    const request = { command };
+    if (aiControl.selectedMode === "asset_aware_ai" && assetContextAcknowledged) {
+      request.context = {
+        schemaVersion: 1,
+        characterProfile: character,
+        wardrobePreset: character === "fab-candidate"
+          ? wardrobeSelection.preset
+          : "not-applicable",
+        cameraFraming: camera,
+        stageZoom: Number(stageZoom.toFixed(2)),
+        rendererState: liveStage
+          ? "live-preview"
+          : health.renderer ? "renderer-unstreamed" : "verified-replay",
+      };
+    }
     const response = await fetch("/api/motion-command", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ command }),
+      body: JSON.stringify(request),
     });
     const payload = await response.json().catch(() => ({}));
     if (!response.ok) {
@@ -579,6 +638,36 @@ export function App() {
     }
   }
 
+  async function selectAiControlMode(mode) {
+    if (aiControlSaving || mode === aiControl.selectedMode) return;
+    const selected = aiControl.modes.find((item) => item.id === mode);
+    if (!selected) return;
+    if (selected.requiresExplicitLocalOptIn && !assetContextAcknowledged) {
+      setNotice("Confirm controller-wide asset context before enabling asset-aware AI");
+      return;
+    }
+    setAiControlSaving(true);
+    try {
+      const body = mode === "asset_aware_ai"
+        ? { mode, acknowledgeAssetContext: true }
+        : { mode };
+      const response = await fetch("/api/ai-control", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(payload.detail || payload.error || "AI-control mode was not changed.");
+      setAiControl(payload);
+      if (mode !== "asset_aware_ai") setAssetContextAcknowledged(false);
+      setNotice(`${selected.label} mode active`);
+    } catch (error) {
+      setNotice(error.message || "AI-control mode was not changed");
+    } finally {
+      setAiControlSaving(false);
+    }
+  }
+
   function speak(text) {
     if (!deviceVoice || !window.speechSynthesis || !text) return;
     window.speechSynthesis.cancel();
@@ -682,7 +771,7 @@ export function App() {
   function chooseCharacter(id) {
     const candidate = CHARACTERS.find((item) => item.id === id);
     if (!candidate?.ready) {
-      setNotice("Free Casual Girl saved for compatibility and license review");
+      setNotice("Free Casual Girl saved for compatibility review");
       return;
     }
     if (health.renderer && id !== "ada") {
@@ -868,7 +957,7 @@ export function App() {
               </>
             ) : activeSheet === "motion" ? (
               <div className="motion-director-content">
-                <div className="sheet-truth"><span className={`status-dot ${health.ardy ? "is-ready" : ""}`} />{health.ardy ? "ARDY online" : "Catalog preview"}<span aria-hidden="true">·</span><span>Fixed safe parameters</span></div>
+                <div className="sheet-truth"><span className={`status-dot ${health.ardy ? "is-ready" : ""}`} />{health.ardy ? "ARDY online" : "Catalog preview"}<span aria-hidden="true">·</span><span>{selectedAiControl?.label || "AI motion"}</span></div>
                 <div className="motion-quick-actions" aria-label="Quick movements">
                   {MOTIONS.map(({ id, label, Icon }) => (
                     <button className={motion === id ? "is-active" : ""} key={id} onClick={() => playMotion(id)} type="button" aria-pressed={motion === id}>
@@ -931,6 +1020,39 @@ export function App() {
                     </div>
                   </div>
                 </section>
+                <section className="sheet-section ai-control-section">
+                  <div className="panel-heading"><span>Motion control</span><span className="section-meta">Controller-wide · resets to AI motion</span></div>
+                  <div className="ai-control-options" role="radiogroup" aria-label="AI motion control mode">
+                    {aiControl.modes.map((item) => (
+                      <button
+                        className={aiControl.selectedMode === item.id ? "is-selected" : ""}
+                        key={item.id}
+                        onClick={() => selectAiControlMode(item.id)}
+                        type="button"
+                        role="radio"
+                        aria-checked={aiControl.selectedMode === item.id}
+                        disabled={aiControlSaving || (item.requiresExplicitLocalOptIn && !assetContextAcknowledged)}
+                      >
+                        {item.label}
+                      </button>
+                    ))}
+                  </div>
+                  <p className="ai-control-description">{selectedAiControl?.description}</p>
+                  <label className="asset-context-opt-in">
+                    <input
+                      type="checkbox"
+                      checked={assetContextAcknowledged}
+                      onChange={(event) => {
+                        const checked = event.target.checked;
+                        setAssetContextAcknowledged(checked);
+                        if (!checked && aiControl.selectedMode === "asset_aware_ai") {
+                          selectAiControlMode("ai_motion");
+                        }
+                      }}
+                    />
+                    <span><strong>Enable asset-aware mode for this controller</strong><small>{aiControl.assetAwareNotice} This shared setting is reflected on every connected client. The current v1 adapter sends the selected profile, applicable outfit preset, framing, zoom, and renderer state. Future adapters can add other explicitly selected context through a new validated version.</small></span>
+                  </label>
+                </section>
                 <section className="sheet-section">
                   <div className="panel-heading"><span>Character</span><span className="section-meta">Reviewed profiles only</span></div>
                   <div className="character-list">
@@ -965,7 +1087,7 @@ export function App() {
                     ))}
                   </div>
                   <button className="wardrobe-apply" onClick={applyWardrobe} type="button" disabled={!wardrobe.installed}>Apply reviewed outfit</button>
-                  <div className="wardrobe-audit-note"><Info size={15} weight="fill" /><span><strong>Full undress unavailable.</strong> {wardrobe.fullyUnclothed.reason} We will not claim a complete body mesh until the licensed asset is installed and inspected.</span></div>
+                  <div className="wardrobe-audit-note"><Info size={15} weight="fill" /><span><strong>Full undress unavailable.</strong> {wardrobe.fullyUnclothed.reason} We will not claim a complete body mesh until the asset profile is installed and inspected.</span></div>
                 </section>
                 <div className="prototype-note"><Info size={15} weight="fill" /><span>{liveStage ? "The visible stage is the live renderer stream." : "Conversation is live. The visible stage is using the measured private replay fallback."}</span></div>
               </div>

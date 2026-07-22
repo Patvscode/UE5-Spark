@@ -1042,7 +1042,8 @@ void UFayBodyMotionComponent::StopGeneratedActionImmediately()
 bool UFayBodyMotionComponent::PerformAction(
     const FName Behavior,
     const float Intensity,
-    const float DurationSeconds)
+    const float DurationSeconds,
+    const EFayBodyMotionRoutingMode RoutingMode)
 {
     FFayBodyMotionRequest Request;
     Request.Behavior = NormalizeBehavior(Behavior);
@@ -1052,6 +1053,7 @@ bool UFayBodyMotionComponent::PerformAction(
     Request.DurationSeconds = FMath::IsFinite(DurationSeconds)
         ? FMath::Clamp(DurationSeconds, 0.2f, 10.0f)
         : 1.0f;
+    Request.RoutingMode = RoutingMode;
     return Dispatch(Request);
 }
 
@@ -1089,6 +1091,22 @@ void UFayBodyMotionComponent::HandleAvatarMessage(const FFayAvatarMessage& Messa
         ? FMath::Clamp(Message.DurationHintSeconds, 0.2f, 10.0f)
         : 1.0f;
     Request.Priority = FMath::Clamp(Message.Action.Priority, -100, 100);
+    if (Message.Action.Provider.IsEmpty() ||
+        Message.Action.Provider == TEXT("hybrid"))
+    {
+        Request.RoutingMode = EFayBodyMotionRoutingMode::Hybrid;
+    }
+    else if (Message.Action.Provider == TEXT("baked"))
+    {
+        Request.RoutingMode = EFayBodyMotionRoutingMode::Deterministic;
+    }
+    else
+    {
+        UE_LOG(LogFayBodyMotion, Warning,
+            TEXT("Rejected unsupported avatar motion provider hint '%s'."),
+            *Message.Action.Provider);
+        return;
+    }
     Dispatch(Request);
 }
 
@@ -1109,8 +1127,11 @@ bool UFayBodyMotionComponent::Dispatch(const FFayBodyMotionRequest& Request)
 
     const bool bReviewedGeneratedAction =
         ReviewedGeneratedBehaviors().Contains(Request.Behavior);
+    const bool bDeterministicOnly =
+        Request.RoutingMode == EFayBodyMotionRoutingMode::Deterministic;
     IFayBodyMotionProvider* Preferred = BakedProvider.Get();
-    if (bReviewedGeneratedAction && ArdyProvider != nullptr &&
+    if (!bDeterministicOnly && bReviewedGeneratedAction &&
+        ArdyProvider != nullptr &&
         ArdyProvider->CanPerform(Request))
     {
         Preferred = ArdyProvider.Get();
@@ -1132,7 +1153,7 @@ bool UFayBodyMotionComponent::Dispatch(const FFayBodyMotionRequest& Request)
                 StopGeneratedActionImmediately();
             }
         }
-        const bool bUsedBakedFailureFallback =
+        const bool bUsedBakedFailureFallback = !bDeterministicOnly &&
             bReviewedGeneratedAction && Preferred == BakedProvider.Get();
         SetState(
             bUsedBakedFailureFallback
@@ -1153,7 +1174,8 @@ bool UFayBodyMotionComponent::Dispatch(const FFayBodyMotionRequest& Request)
         return true;
     }
 
-    if (Preferred == BakedProvider.Get() && ArdyProvider != nullptr &&
+    if (!bDeterministicOnly && Preferred == BakedProvider.Get() &&
+        ArdyProvider != nullptr &&
         ArdyProvider->CanPerform(Request) && ArdyProvider->Perform(Request))
     {
         StartGeneratedAction(Request);
@@ -1174,9 +1196,9 @@ bool UFayBodyMotionComponent::Dispatch(const FFayBodyMotionRequest& Request)
         return true;
     }
 
-    EnterBakedIdle(
-        Request.Behavior,
-        TEXT("no compatible generated, reviewed montage, or safe procedural motion"));
+    EnterBakedIdle(Request.Behavior, bDeterministicOnly
+        ? TEXT("deterministic motion was unavailable")
+        : TEXT("no compatible generated, reviewed montage, or safe procedural motion"));
     return false;
 }
 

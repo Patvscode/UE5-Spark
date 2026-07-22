@@ -107,6 +107,9 @@ class ValidationTests(unittest.TestCase):
 
     def test_staged_motion_is_never_dispatched_and_packaged_motion_is_normalized(self):
         handler = object.__new__(SERVER.ControllerHandler)
+        handler.server = SimpleNamespace(
+            ai_control=SERVER.LocalAiControlState(SERVER.CHARACTER_AI_CONTROL_CONFIG)
+        )
         responses = []
         dispatched = []
         handler._motion_planner_suggestion = lambda _command: None
@@ -127,7 +130,8 @@ class ValidationTests(unittest.TestCase):
         self.assertEqual(responses[-1][0], SERVER.HTTPStatus.OK)
         self.assertEqual(responses[-1][1]["status"], "routed")
         self.assertEqual(dispatched[-1], {
-            "behavior": "wave", "duration": 2.4, "intensity": 0.65, "user": "User",
+            "behavior": "wave", "duration": 2.4, "intensity": 0.65,
+            "user": "User", "provider": "hybrid",
         })
 
     def test_motion_planner_can_use_a_model_independent_from_chat(self):

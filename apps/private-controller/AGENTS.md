@@ -18,8 +18,12 @@ Durable framing feedback: mobile must default to `object-fit: contain` so the en
 
 Durable agency feedback: the default companion may run a bounded Alive loop that autonomously selects only packaged, allowlisted ARDY behaviors with small timing and intensity variation. It must pause during direct user speech or explicit direction, never improvise arbitrary joint data, and never label a replay or staged behavior as live motion.
 
+Durable AI-control feedback: expose one controller-wide, character-neutral mode selector with `deterministic`, `ai_motion`, and `asset_aware_ai`. Default to `ai_motion`; it uses user intent without character or scene context. `asset_aware_ai` may additionally use explicitly selected context after an explicit transition and neutral responsibility notice. Every connected client reflects the shared mode, and disabling it anywhere returns the controller to `ai_motion`. Do not encode character-specific licensing, license allowlists, permission receipts, or Casual Girl exceptions in runtime control.
+
+The first asset-aware adapter is deliberately structured: selected profile ID, applicable wardrobe preset ID, camera framing, bounded stage zoom, and renderer state. Send it only while the controller-wide mode is `asset_aware_ai`, report whether the planner received it, and version/validate any future adapter extension. Describe raw meshes, textures, images, morphs, animations, or arbitrary asset paths as unsupported by v1, not as a permanent project prohibition.
+
 Durable vision feedback: front-camera access is always explicit opt-in. Until a reviewed gaze bridge actually consumes frames and drives Unreal, expose at most a local browser preview and state plainly that the character cannot see or track the user yet.
 
-Durable wardrobe feedback: expose only sealed Casual Girl preset and garment IDs. Keep the whole wardrobe disabled until the licensed profile is installed, and keep full undress unavailable until an asset audit proves that the base body is complete. Never expose arbitrary Unreal asset paths through the controller.
+Durable wardrobe feedback: expose only sealed Casual Girl preset and garment IDs. Keep the whole wardrobe disabled until the profile is installed, and keep full undress unavailable until an asset audit proves that the base body is complete. Never expose arbitrary Unreal asset paths through the controller.
 
 Build app UI in `src/`. Keep `.openai/hosting.json`, `worker/index.js`, `scripts/prepare-sites-build.mjs`, and `tests/sites-worker.test.mjs` intact so the same local prototype can be handed to Sites. Before a Sites handoff, run `npm run build` and `npm run test:sites`; the build must leave `dist/client/index.html`, `dist/server/index.js`, and `dist/.openai/hosting.json`.

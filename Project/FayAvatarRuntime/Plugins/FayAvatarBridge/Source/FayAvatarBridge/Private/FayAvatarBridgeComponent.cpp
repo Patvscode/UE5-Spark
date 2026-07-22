@@ -891,6 +891,16 @@ bool UFayAvatarBridgeComponent::ParseAvatarMessage(
         Action->TryGetStringField(TEXT("code"), OutMessage.Action.Code);
         Action->TryGetStringField(TEXT("behavior"), OutMessage.Action.Behavior);
         Action->TryGetStringField(TEXT("affect"), OutMessage.Action.Affect);
+        if (Action->HasField(TEXT("provider")))
+        {
+            if (!Action->TryGetStringField(TEXT("provider"), OutMessage.Action.Provider) ||
+                (OutMessage.Action.Provider != TEXT("baked") &&
+                    OutMessage.Action.Provider != TEXT("hybrid")))
+            {
+                OutError = TEXT("A Fay action contained an unsupported motion provider hint.");
+                return false;
+            }
+        }
         Action->TryGetNumberField(TEXT("intensity"), OutMessage.Action.Intensity);
         Action->TryGetNumberField(TEXT("priority"), OutMessage.Action.Priority);
         Action->TryGetNumberField(TEXT("sentimentHint"), OutMessage.Action.SentimentHint);

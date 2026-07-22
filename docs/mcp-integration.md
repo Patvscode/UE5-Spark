@@ -23,14 +23,15 @@ text that resembles a command.
 The companion Fay branch exposes one renderer-control tool:
 
 ```text
-avatar_perform_action(behavior, intensity=0.5, duration=1.0)
+avatar_perform_action(behavior, intensity=0.5, duration=1.0, provider=None)
 ```
 
 `behavior` is restricted to `idle`, `listen`, `wave`, `invite`, `think`,
 `warn`, `nod`, `shake`, or `explain`. Intensity is bounded to 0–1 and duration
 to 0.2–10 seconds. Fay converts the request to a normalized action-only avatar
 event; credentials, arbitrary ARDY prompts, and high-frequency pose data never
-cross this interface.
+cross this interface. The optional provider is restricted to `baked` or
+`hybrid`; leaving it out preserves the existing hybrid renderer behavior.
 
 ## Companion Fay deployment
 
@@ -74,6 +75,16 @@ tailnet address instead of loopback, set both `FAY_BROADCAST_API` and
 HTTP origin. The loopback defaults must not be assumed to work when no
 loopback HTTP listener exists. Validate the path with a real MCP tool call and
 registered avatar socket; listing the tool alone is not an end-to-end test.
+
+For the AI-control switch, that Fay branch is part of the deployment contract.
+Its `core/avatar_action.py`, `/api/avatar/action` handler, MCP tool, and bundled
+Unreal bridge carry the optional `provider` field unchanged. The authoritative
+renderer implementation is this repository's `Project/FayAvatarRuntime`: it
+maps `baked` to deterministic-only routing and maps missing/`hybrid` to the
+normal ARDY-plus-fallback route. An older Fay deployment remains compatible,
+but cannot honor deterministic selection end to end because it omits the hint.
+The reviewed companion revision is
+[`Patvscode/Fay@8214c3d`](https://github.com/Patvscode/Fay/commit/8214c3d).
 
 ## Guarded Spark stack launch
 

@@ -58,7 +58,11 @@ public:
 
     /** Public constrained action boundary used by Fay and the future MCP tool. */
     UFUNCTION(BlueprintCallable, Category = "Fay|Body Motion")
-    bool PerformAction(FName Behavior, float Intensity = 0.5f, float DurationSeconds = 1.0f);
+    bool PerformAction(
+        FName Behavior,
+        float Intensity = 0.5f,
+        float DurationSeconds = 1.0f,
+        EFayBodyMotionRoutingMode RoutingMode = EFayBodyMotionRoutingMode::Hybrid);
 
     UFUNCTION(BlueprintPure, Category = "Fay|Body Motion")
     static bool IsBehaviorAllowed(FName Behavior);

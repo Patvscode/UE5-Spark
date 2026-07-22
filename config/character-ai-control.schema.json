@@ -1,0 +1,158 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ue5-spark.local/schema/character-ai-control-v1.json",
+  "title": "UE5-Spark local character AI-control modes",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "$schema",
+    "schemaVersion",
+    "controlConfigId",
+    "defaultMode",
+    "assetAwareNotice",
+    "modes"
+  ],
+  "properties": {
+    "$schema": {
+      "const": "./character-ai-control.schema.json"
+    },
+    "schemaVersion": {
+      "const": 1
+    },
+    "controlConfigId": {
+      "const": "ue5-spark-local-ai-control-v1"
+    },
+    "defaultMode": {
+      "const": "ai_motion"
+    },
+    "assetAwareNotice": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 240
+    },
+    "modes": {
+      "type": "array",
+      "minItems": 3,
+      "maxItems": 3,
+      "prefixItems": [
+        {
+          "$ref": "#/$defs/deterministicMode"
+        },
+        {
+          "$ref": "#/$defs/aiMotionMode"
+        },
+        {
+          "$ref": "#/$defs/assetAwareMode"
+        }
+      ],
+      "items": false
+    }
+  },
+  "$defs": {
+    "modeBase": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "label",
+        "description",
+        "usesGenerativeMotion",
+        "acceptsCharacterAssetContext",
+        "requiresExplicitLocalOptIn"
+      ],
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "label": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 32
+        },
+        "description": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 180
+        },
+        "usesGenerativeMotion": {
+          "type": "boolean"
+        },
+        "acceptsCharacterAssetContext": {
+          "type": "boolean"
+        },
+        "requiresExplicitLocalOptIn": {
+          "type": "boolean"
+        }
+      }
+    },
+    "deterministicMode": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/modeBase"
+        },
+        {
+          "properties": {
+            "id": {
+              "const": "deterministic"
+            },
+            "usesGenerativeMotion": {
+              "const": false
+            },
+            "acceptsCharacterAssetContext": {
+              "const": false
+            },
+            "requiresExplicitLocalOptIn": {
+              "const": false
+            }
+          }
+        }
+      ]
+    },
+    "aiMotionMode": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/modeBase"
+        },
+        {
+          "properties": {
+            "id": {
+              "const": "ai_motion"
+            },
+            "usesGenerativeMotion": {
+              "const": true
+            },
+            "acceptsCharacterAssetContext": {
+              "const": false
+            },
+            "requiresExplicitLocalOptIn": {
+              "const": false
+            }
+          }
+        }
+      ]
+    },
+    "assetAwareMode": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/modeBase"
+        },
+        {
+          "properties": {
+            "id": {
+              "const": "asset_aware_ai"
+            },
+            "usesGenerativeMotion": {
+              "const": true
+            },
+            "acceptsCharacterAssetContext": {
+              "const": true
+            },
+            "requiresExplicitLocalOptIn": {
+              "const": true
+            }
+          }
+        }
+      ]
+    }
+  }
+}

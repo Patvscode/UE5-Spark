@@ -37,6 +37,10 @@ struct FAYAVATARBRIDGE_API FFayAvatarAction
     UPROPERTY(BlueprintReadOnly, Category = "Fay|Action")
     FString Affect;
 
+    /** Empty preserves the legacy hybrid route; otherwise baked or hybrid. */
+    UPROPERTY(BlueprintReadOnly, Category = "Fay|Action")
+    FString Provider;
+
     UPROPERTY(BlueprintReadOnly, Category = "Fay|Action")
     float Intensity = 0.0f;
 

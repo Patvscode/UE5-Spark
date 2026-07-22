@@ -6,11 +6,13 @@ from __future__ import annotations
 import argparse
 import ipaddress
 import json
+import math
 import mimetypes
 import os
 import re
 import socket
 import stat
+import threading
 import time
 import urllib.error
 import urllib.parse
@@ -27,7 +29,7 @@ MAX_MESSAGE_CHARS = 2_000
 MAX_MOTION_COMMAND_CHARS = 160
 MAX_LIVE_FRAME_BYTES = 2 * 1024 * 1024
 MAX_LIVE_FRAME_AGE_SECONDS = 2.0
-SERVER_VERSION = "prototype-3"
+SERVER_VERSION = "prototype-4"
 THINK_BLOCK_PATTERN = re.compile(r"<think>.*?(?:</think>|$)", re.IGNORECASE | re.DOTALL)
 LLM_MODEL_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}")
 CHAT_SYSTEM_PROMPT = (
@@ -39,6 +41,37 @@ ALLOWED_BEHAVIORS = frozenset({
     "idle", "listen", "wave", "invite", "think", "warn", "nod", "shake", "explain",
 })
 MOTION_CATALOG_PATH = Path(__file__).resolve().parents[3] / "config" / "motion-catalog.json"
+CHARACTER_AI_CONTROL_PATH = (
+    Path(__file__).resolve().parents[3] / "config" / "character-ai-control.json"
+)
+AI_CONTROL_MODES = ("deterministic", "ai_motion", "asset_aware_ai")
+MOTION_PROVIDER_HINTS = frozenset({"baked", "hybrid"})
+MOTION_CONTEXT_FIELDS = frozenset({
+    "schemaVersion", "characterProfile", "wardrobePreset",
+    "cameraFraming", "stageZoom", "rendererState",
+})
+MOTION_CONTEXT_CHARACTER_PROFILES = frozenset({"ada", "aoi", "fab-candidate"})
+MOTION_CONTEXT_CAMERA_FRAMINGS = frozenset({"fit", "portrait", "custom"})
+MOTION_CONTEXT_RENDERER_STATES = frozenset({
+    "live-preview", "renderer-unstreamed", "verified-replay",
+})
+AI_CONTROL_CONFIG_FIELDS = frozenset({
+    "$schema", "schemaVersion", "controlConfigId", "defaultMode", "assetAwareNotice", "modes",
+})
+AI_CONTROL_MODE_FIELDS = frozenset({
+    "id", "label", "description", "usesGenerativeMotion",
+    "acceptsCharacterAssetContext", "requiresExplicitLocalOptIn",
+})
+AI_CONTROL_SEMANTICS = {
+    "deterministic": (False, False, False),
+    "ai_motion": (True, False, False),
+    "asset_aware_ai": (True, True, True),
+}
+AI_CONTROL_MOTION_PROVIDERS = {
+    "deterministic": "baked",
+    "ai_motion": "hybrid",
+    "asset_aware_ai": "hybrid",
+}
 MOTION_CATALOG_IDS = frozenset({
     "idle", "listen", "explain", "wave", "jog_in_place", "run_in_place",
     "jumping_jacks", "stretch", "dance_relaxed",
@@ -47,6 +80,149 @@ MOTION_ITEM_FIELDS = frozenset({
     "label", "aliases", "prompt", "duration", "intensity", "rootMode",
     "routeBehavior", "rendererPackaged",
 })
+
+
+class AssetAwareOptInRequired(ValueError):
+    """Raised when the controller-wide asset-aware mode was not explicitly enabled."""
+
+
+def _strict_json_object(text: str, label: str) -> dict[str, object]:
+    def reject_duplicates(pairs: list[tuple[str, object]]) -> dict[str, object]:
+        value: dict[str, object] = {}
+        for key, item in pairs:
+            if key in value:
+                raise RuntimeError(f"{label} contains a duplicate JSON key: {key}")
+            value[key] = item
+        return value
+
+    try:
+        payload = json.loads(text, object_pairs_hook=reject_duplicates)
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise RuntimeError(f"{label} is invalid JSON") from exc
+    if not isinstance(payload, dict):
+        raise RuntimeError(f"{label} must contain one JSON object")
+    return payload
+
+
+def load_character_ai_control(path: Path) -> dict[str, object]:
+    if path.is_symlink():
+        raise RuntimeError("character AI-control config must not be a symlink")
+    try:
+        metadata = path.stat()
+        if not path.is_file() or not 1 <= metadata.st_size <= 64 * 1024:
+            raise RuntimeError("character AI-control config must be one bounded file")
+        payload = _strict_json_object(
+            path.read_text(encoding="utf-8"), "character AI-control config"
+        )
+    except (OSError, UnicodeError) as exc:
+        raise RuntimeError("character AI-control config is unavailable") from exc
+    if (
+        set(payload) != AI_CONTROL_CONFIG_FIELDS
+        or payload.get("$schema") != "./character-ai-control.schema.json"
+        or type(payload.get("schemaVersion")) is not int
+        or payload.get("schemaVersion") != 1
+        or payload.get("controlConfigId") != "ue5-spark-local-ai-control-v1"
+        or payload.get("defaultMode") != "ai_motion"
+        or not isinstance(payload.get("assetAwareNotice"), str)
+        or not 1 <= len(payload["assetAwareNotice"]) <= 240
+        or not isinstance(payload.get("modes"), list)
+        or len(payload["modes"]) != len(AI_CONTROL_MODES)
+    ):
+        raise RuntimeError("character AI-control config contract is invalid")
+
+    normalized_modes: list[dict[str, object]] = []
+    for expected_id, mode in zip(AI_CONTROL_MODES, payload["modes"]):
+        if not isinstance(mode, dict) or set(mode) != AI_CONTROL_MODE_FIELDS:
+            raise RuntimeError(f"character AI-control mode {expected_id} is invalid")
+        if mode.get("id") != expected_id:
+            raise RuntimeError("character AI-control modes are not in their sealed order")
+        if (
+            not isinstance(mode.get("label"), str)
+            or not 1 <= len(mode["label"]) <= 32
+            or not isinstance(mode.get("description"), str)
+            or not 1 <= len(mode["description"]) <= 180
+        ):
+            raise RuntimeError(f"character AI-control mode {expected_id} text is invalid")
+        semantic_values = (
+            mode.get("usesGenerativeMotion"),
+            mode.get("acceptsCharacterAssetContext"),
+            mode.get("requiresExplicitLocalOptIn"),
+        )
+        if (
+            any(type(value) is not bool for value in semantic_values)
+            or semantic_values != AI_CONTROL_SEMANTICS[expected_id]
+        ):
+            raise RuntimeError(f"character AI-control mode {expected_id} boundary is invalid")
+        normalized_modes.append(dict(mode))
+    return {
+        "$schema": payload["$schema"],
+        "schemaVersion": payload["schemaVersion"],
+        "controlConfigId": payload["controlConfigId"],
+        "defaultMode": payload["defaultMode"],
+        "assetAwareNotice": payload["assetAwareNotice"],
+        "modes": normalized_modes,
+    }
+
+
+def normalize_ai_control_request(
+    payload: object, allowed_modes: frozenset[str] = frozenset(AI_CONTROL_MODES)
+) -> tuple[str, bool]:
+    if not isinstance(payload, dict) or "mode" not in payload:
+        raise ValueError("AI-control request must contain one mode")
+    mode = payload.get("mode")
+    if not isinstance(mode, str) or mode not in allowed_modes:
+        raise ValueError("AI-control mode is not supported")
+    if mode == "asset_aware_ai":
+        if set(payload) != {"mode", "acknowledgeAssetContext"}:
+            raise AssetAwareOptInRequired(
+                "asset-aware AI requires explicit controller-wide context acknowledgement"
+            )
+        acknowledgement = payload.get("acknowledgeAssetContext")
+        if type(acknowledgement) is not bool or acknowledgement is not True:
+            raise AssetAwareOptInRequired(
+                "asset-aware AI requires explicit controller-wide context acknowledgement"
+            )
+        return mode, True
+    if set(payload) != {"mode"}:
+        raise ValueError("non-asset AI-control requests must contain only mode")
+    return mode, False
+
+
+class LocalAiControlState:
+    """Thread-safe, process-local control mode; restart returns to ai_motion."""
+
+    def __init__(self, config: dict[str, object]):
+        self._config = config
+        self._allowed_modes = frozenset(
+            str(mode["id"]) for mode in config["modes"]
+        )
+        self._selected_mode = str(config["defaultMode"])
+        self._lock = threading.Lock()
+
+    def selected_mode(self) -> str:
+        with self._lock:
+            return self._selected_mode
+
+    def motion_planner_enabled(self) -> bool:
+        return self.selected_mode() != "deterministic"
+
+    def select(self, payload: object) -> dict[str, object]:
+        mode, _acknowledged = normalize_ai_control_request(payload, self._allowed_modes)
+        with self._lock:
+            self._selected_mode = mode
+        return self.snapshot()
+
+    def snapshot(self) -> dict[str, object]:
+        selected = self.selected_mode()
+        return {
+            "schemaVersion": self._config["schemaVersion"],
+            "controlConfigId": self._config["controlConfigId"],
+            "defaultMode": self._config["defaultMode"],
+            "selectedMode": selected,
+            "assetAwareEnabled": selected == "asset_aware_ai",
+            "assetAwareNotice": self._config["assetAwareNotice"],
+            "modes": [dict(mode) for mode in self._config["modes"]],
+        }
 
 
 def load_motion_catalog(path: Path) -> dict[str, dict[str, object]]:
@@ -111,13 +287,24 @@ def load_motion_catalog(path: Path) -> dict[str, dict[str, object]]:
     return catalog
 
 
+CHARACTER_AI_CONTROL_CONFIG = load_character_ai_control(CHARACTER_AI_CONTROL_PATH)
 MOTION_CATALOG = load_motion_catalog(MOTION_CATALOG_PATH)
 MOTION_PLANNER_SYSTEM_PROMPT = (
     f"Classify one movement request into this closed catalog: {', '.join(MOTION_CATALOG)}. "
+    "This mode supplies user-authored movement intent without character or scene context. "
     "Return exactly one JSON object "
     "with exactly one key: {\"catalogId\":\"one_allowed_id\"}. Use "
     "{\"catalogId\":\"unknown\"} when none fits. Never return timing, intensity, root "
     "motion, joints, paths, URLs, prose, Markdown, or instructions."
+)
+ASSET_AWARE_MOTION_PLANNER_SYSTEM_PROMPT = (
+    f"Classify one movement request into this closed catalog: {', '.join(MOTION_CATALOG)}. "
+    "The request includes version-1 structured local runtime context. Use its selected "
+    "character, wardrobe, framing, zoom, and renderer metadata when it helps classify "
+    "the intended movement. Return exactly one JSON object with exactly one key: "
+    "{\"catalogId\":\"one_allowed_id\"}. Use {\"catalogId\":\"unknown\"} when none fits. "
+    "Never return timing, intensity, root motion, joints, paths, URLs, prose, Markdown, "
+    "or instructions."
 )
 WARDROBE_PROFILE_PATH = (
     Path(__file__).resolve().parents[3]
@@ -252,7 +439,18 @@ def checked_upstream(value: str, *, loopback_only: bool = False) -> str:
     return value.rstrip("/")
 
 
-def normalize_action(payload: object) -> dict[str, object]:
+def motion_provider_for_ai_control_mode(mode: object) -> str:
+    if not isinstance(mode, str) or mode not in AI_CONTROL_MOTION_PROVIDERS:
+        raise ValueError("AI-control mode has no reviewed motion provider")
+    provider = AI_CONTROL_MOTION_PROVIDERS[mode]
+    if provider not in MOTION_PROVIDER_HINTS:
+        raise RuntimeError("AI-control motion-provider mapping is invalid")
+    return provider
+
+
+def normalize_action(
+    payload: object, *, provider_hint: str | None = None
+) -> dict[str, object]:
     if not isinstance(payload, dict) or not set(payload).issubset({"behavior", "intensity", "duration"}):
         raise ValueError("action must be a small JSON object")
     behavior = str(payload.get("behavior", "")).strip().lower()
@@ -265,7 +463,17 @@ def normalize_action(payload: object) -> dict[str, object]:
         raise ValueError("intensity and duration must be numbers") from exc
     if not 0 <= intensity <= 1 or not 0.2 <= duration <= 10:
         raise ValueError("action values are outside the reviewed bounds")
-    return {"behavior": behavior, "intensity": intensity, "duration": duration, "user": "User"}
+    action: dict[str, object] = {
+        "behavior": behavior,
+        "intensity": intensity,
+        "duration": duration,
+        "user": "User",
+    }
+    if provider_hint is not None:
+        if not isinstance(provider_hint, str) or provider_hint not in MOTION_PROVIDER_HINTS:
+            raise ValueError("motion provider hint is not supported")
+        action["provider"] = provider_hint
+    return action
 
 
 def normalize_motion_command(payload: object) -> str:
@@ -282,6 +490,56 @@ def normalize_motion_command(payload: object) -> str:
     if "/" in command or "\\" in command or re.search(r"\b(?:https?|www)\s*[:.]", command, re.I):
         raise ValueError("movement command must not contain a path or URL")
     return command
+
+
+def normalize_motion_context(payload: object) -> dict[str, object]:
+    if not isinstance(payload, dict) or set(payload) != MOTION_CONTEXT_FIELDS:
+        raise ValueError("runtime context does not match the bounded context adapter")
+    if type(payload.get("schemaVersion")) is not int or payload["schemaVersion"] != 1:
+        raise ValueError("runtime context schema version is not supported")
+    if payload.get("characterProfile") not in MOTION_CONTEXT_CHARACTER_PROFILES:
+        raise ValueError("runtime context character profile is not supported")
+    if payload.get("wardrobePreset") not in WARDROBE_PRESETS | {"not-applicable"}:
+        raise ValueError("runtime context wardrobe preset is not supported")
+    if (
+        payload.get("characterProfile") != "fab-candidate"
+        and payload.get("wardrobePreset") != "not-applicable"
+    ):
+        raise ValueError("runtime context wardrobe preset does not match the character")
+    if payload.get("cameraFraming") not in MOTION_CONTEXT_CAMERA_FRAMINGS:
+        raise ValueError("runtime context camera framing is not supported")
+    if payload.get("rendererState") not in MOTION_CONTEXT_RENDERER_STATES:
+        raise ValueError("runtime context renderer state is not supported")
+    zoom = payload.get("stageZoom")
+    if (
+        isinstance(zoom, bool)
+        or not isinstance(zoom, (int, float))
+        or not math.isfinite(float(zoom))
+        or not 0.75 <= float(zoom) <= 3.0
+    ):
+        raise ValueError("runtime context stage zoom is outside the reviewed bounds")
+    return {
+        "schemaVersion": 1,
+        "characterProfile": payload["characterProfile"],
+        "wardrobePreset": payload["wardrobePreset"],
+        "cameraFraming": payload["cameraFraming"],
+        "stageZoom": round(float(zoom), 2),
+        "rendererState": payload["rendererState"],
+    }
+
+
+def normalize_motion_request(
+    payload: object,
+) -> tuple[str, dict[str, object] | None]:
+    if not isinstance(payload, dict) or not set(payload).issubset({"command", "context"}):
+        raise ValueError("movement request contains unsupported fields")
+    command = normalize_motion_command({"command": payload.get("command")})
+    context = (
+        normalize_motion_context(payload["context"])
+        if "context" in payload
+        else None
+    )
+    return command, context
 
 
 def direct_motion_catalog_id(command: str) -> str | None:
@@ -454,6 +712,7 @@ class ControllerServer(ThreadingHTTPServer):
         self.llm_base = llm_base
         self.llm_model = llm_model
         self.motion_planner_model = motion_planner_model
+        self.ai_control = LocalAiControlState(CHARACTER_AI_CONTROL_CONFIG)
 
 
 class ControllerHandler(BaseHTTPRequestHandler):
@@ -463,6 +722,8 @@ class ControllerHandler(BaseHTTPRequestHandler):
         path = urllib.parse.urlparse(self.path).path
         if path == "/api/status":
             self._status()
+        elif path == "/api/ai-control":
+            self._json(HTTPStatus.OK, self.server.ai_control.snapshot())
         elif path == "/api/wardrobe":
             self._json(HTTPStatus.OK, WARDROBE_PROFILE)
         elif path == "/live/frame.jpg":
@@ -495,6 +756,8 @@ class ControllerHandler(BaseHTTPRequestHandler):
                 self._action(payload)
             elif path == "/api/motion-command":
                 self._motion_command(payload)
+            elif path == "/api/ai-control":
+                self._ai_control(payload)
             elif path == "/api/wardrobe":
                 self._wardrobe(payload)
             else:
@@ -613,9 +876,25 @@ class ControllerHandler(BaseHTTPRequestHandler):
         return normalize_reply(response["choices"][0]["message"]["content"]), True
 
     def _action(self, payload: object) -> None:
-        action = normalize_action(payload)
+        action = normalize_action(
+            payload,
+            provider_hint=motion_provider_for_ai_control_mode(
+                self.server.ai_control.selected_mode()
+            ),
+        )
         status, response = self._dispatch_action(action)
         self._json(status, response)
+
+    def _ai_control(self, payload: object) -> None:
+        try:
+            snapshot = self.server.ai_control.select(payload)
+        except AssetAwareOptInRequired as exc:
+            self._json(HTTPStatus.CONFLICT, {
+                "error": "asset_aware_opt_in_required",
+                "detail": str(exc),
+            })
+            return
+        self._json(HTTPStatus.OK, snapshot)
 
     def _dispatch_action(self, action: dict[str, object]) -> tuple[HTTPStatus, dict[str, object]]:
         try:
@@ -637,11 +916,20 @@ class ControllerHandler(BaseHTTPRequestHandler):
         }
 
     def _motion_command(self, payload: object) -> None:
-        command = normalize_motion_command(payload)
+        command, runtime_context = normalize_motion_request(payload)
+        ai_control_mode = self.server.ai_control.selected_mode()
+        if runtime_context is not None and ai_control_mode != "asset_aware_ai":
+            raise ValueError("runtime context requires asset_aware_ai mode")
         direct_catalog_id = direct_motion_catalog_id(command)
-        planner_catalog_id = (
-            None if direct_catalog_id is not None else self._motion_planner_suggestion(command)
-        )
+        asset_context_used = False
+        if direct_catalog_id is not None or ai_control_mode == "deterministic":
+            planner_catalog_id = None
+        elif runtime_context is not None:
+            planner_catalog_id, asset_context_used = (
+                self._motion_planner_suggestion_with_context(command, runtime_context)
+            )
+        else:
+            planner_catalog_id = self._motion_planner_suggestion(command)
         plan = resolve_motion_command(command, planner_catalog_id)
         if plan is None:
             self._json(HTTPStatus.UNPROCESSABLE_ENTITY, {
@@ -658,6 +946,8 @@ class ControllerHandler(BaseHTTPRequestHandler):
             for key in ("catalogId", "label", "duration", "intensity", "rootMode", "rendererPackaged")
         }
         public_plan["plannerAdvisoryUsed"] = direct_catalog_id is None and planner_catalog_id is not None
+        public_plan["aiControlMode"] = ai_control_mode
+        public_plan["assetContextUsed"] = asset_context_used
         if not plan["rendererPackaged"] or not plan["routeBehavior"]:
             self._json(HTTPStatus.ACCEPTED, {
                 "ok": True,
@@ -676,7 +966,7 @@ class ControllerHandler(BaseHTTPRequestHandler):
             "behavior": plan["routeBehavior"],
             "duration": plan["duration"],
             "intensity": plan["intensity"],
-        })
+        }, provider_hint=motion_provider_for_ai_control_mode(ai_control_mode))
         status, response = self._dispatch_action(action)
         if status != HTTPStatus.OK:
             self._json(status, response)
@@ -684,16 +974,40 @@ class ControllerHandler(BaseHTTPRequestHandler):
         self._json(HTTPStatus.OK, {"status": "routed", **response, **public_plan})
 
     def _motion_planner_suggestion(self, command: str) -> str | None:
+        suggestion, _context_used = self._motion_planner_suggestion_with_context(
+            command, None
+        )
+        return suggestion
+
+    def _motion_planner_suggestion_with_context(
+        self,
+        command: str,
+        runtime_context: dict[str, object] | None,
+    ) -> tuple[str | None, bool]:
         if not self.server.llm_base or not self.server.motion_planner_model:
-            return None
+            return None, False
+        context_used = runtime_context is not None
+        user_content = command
+        if runtime_context is not None:
+            user_content = json.dumps(
+                {"command": command, "runtimeContext": runtime_context},
+                ensure_ascii=True,
+                sort_keys=True,
+                separators=(",", ":"),
+            )
+        system_prompt = (
+            ASSET_AWARE_MOTION_PLANNER_SYSTEM_PROMPT
+            if runtime_context is not None
+            else MOTION_PLANNER_SYSTEM_PROMPT
+        )
         try:
             response = self._upstream_json(
                 f"{self.server.llm_base}/v1/chat/completions",
                 {
                     "model": self.server.motion_planner_model,
                     "messages": [
-                        {"role": "system", "content": MOTION_PLANNER_SYSTEM_PROMPT},
-                        {"role": "user", "content": command},
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": user_content},
                     ],
                     "chat_template_kwargs": {"enable_thinking": False},
                     "max_tokens": 32,
@@ -701,9 +1015,12 @@ class ControllerHandler(BaseHTTPRequestHandler):
                 },
                 timeout=30,
             )
-            return parse_planner_catalog_id(response["choices"][0]["message"]["content"])
+            return (
+                parse_planner_catalog_id(response["choices"][0]["message"]["content"]),
+                context_used,
+            )
         except (KeyError, IndexError, TypeError, ValueError, OSError, urllib.error.URLError, socket.timeout):
-            return None
+            return None, context_used
 
     def _wardrobe(self, payload: object) -> None:
         selection = normalize_wardrobe(payload)
@@ -713,8 +1030,8 @@ class ControllerHandler(BaseHTTPRequestHandler):
                 "error": "wardrobe_profile_not_installed",
                 "profileId": selection["profileId"],
                 "detail": (
-                    "The sealed Casual Girl wardrobe controls are ready, but the licensed "
-                    "asset profile has not been installed or body-audited. Nothing changed."
+                    "The sealed Casual Girl wardrobe controls are ready, but the asset "
+                    "profile has not been installed or body-audited. Nothing changed."
                 ),
             })
             return
