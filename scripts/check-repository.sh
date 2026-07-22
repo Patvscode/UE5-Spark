@@ -815,7 +815,7 @@ for marker in (
     "runner_release_in_progress=1",
     "runner_start_released=1",
     'docker_stop_exact_bounded "$old_container_id"',
-    'run_bounded_isolated 30 docker stop --time 20 "$container_id"',
+    'run_bounded_isolated 30 docker stop --time 2 "$container_id"',
     "setsid --wait timeout --foreground",
     "ardy_stop_in_progress=1",
     "exact-original-real-stable",
@@ -852,7 +852,7 @@ for marker in (
 ):
     if marker not in ardy_recovery_gate:
         reject(f"the guarded ARDY recovery diagnostic is missing its safety contract: {marker}")
-if ardy_recovery_gate.count('docker stop --time 20 "$container_id"') != 1:
+if ardy_recovery_gate.count('docker stop --time 2 "$container_id"') != 1:
     reject("the ARDY recovery diagnostic must have exactly one captured-ID stop site")
 if re.search(
     r"\bdocker\s+(?:rm|kill|prune|restart|start|pause|unpause|update|exec)\b",

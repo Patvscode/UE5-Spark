@@ -156,7 +156,10 @@ run_bounded_isolated() {
 docker_stop_exact_bounded() {
     local container_id=$1
     [[ $container_id =~ ^[0-9a-f]{64}$ ]] || return 1
-    run_bounded_isolated 30 docker stop --time 20 "$container_id"
+    # The generated action is capped at ten seconds. This stateless, sealed,
+    # auto-removed inference container therefore gets a short graceful window
+    # so the diagnostic can observe service loss while that action is active.
+    run_bounded_isolated 30 docker stop --time 2 "$container_id"
 }
 
 capture_process_record() {

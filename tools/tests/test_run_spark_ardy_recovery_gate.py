@@ -82,13 +82,13 @@ class ArdyRecoveryGateStaticTests(unittest.TestCase):
 
     def test_only_exact_captured_container_can_be_stopped(self) -> None:
         stop_calls = re.findall(r"docker\s+stop[^\n]*", self.source)
-        self.assertEqual(stop_calls, ['docker stop --time 20 "$container_id"'])
+        self.assertEqual(stop_calls, ['docker stop --time 2 "$container_id"'])
         stop_helper = function_source(
             self.source, "docker_stop_exact_bounded", "capture_process_record"
         )
         self.assertIn('[[ $container_id =~ ^[0-9a-f]{64}$ ]]', stop_helper)
         self.assertIn(
-            'run_bounded_isolated 30 docker stop --time 20 "$container_id"',
+            'run_bounded_isolated 30 docker stop --time 2 "$container_id"',
             stop_helper,
         )
         bounded_helper = function_source(
@@ -722,7 +722,7 @@ class ArdyRecoveryGateDecisionTests(unittest.TestCase):
             docker() {{ printf '%s\\n' "$*" >>{root / 'docker.log'}; }}
             docker_stop_exact_bounded() {{
                 [[ $1 =~ ^[0-9a-f]{{64}}$ ]] || return 1
-                docker stop --time 20 "$1"
+                docker stop --time 2 "$1"
             }}
             handle_signal() {{ return 99; }}
             {self.stop_function}
@@ -830,7 +830,7 @@ class ArdyRecoveryGateDecisionTests(unittest.TestCase):
             self.assertIn("performed=1", result.stdout)
             self.assertEqual(
                 (root / "docker.log").read_text(encoding="utf-8").strip(),
-                f"stop --time 20 {'a' * 64}",
+                f"stop --time 2 {'a' * 64}",
             )
 
     def test_failed_stop_accepts_original_real_only_after_five_stable_samples(self) -> None:
@@ -1206,7 +1206,7 @@ class ArdyRecoveryGateDecisionTests(unittest.TestCase):
                     import time
 
                     args = sys.argv[1:]
-                    expected = ["stop", "--time", "20", os.environ["EXPECTED_ID"]]
+                    expected = ["stop", "--time", "2", os.environ["EXPECTED_ID"]]
                     if args != expected:
                         pathlib.Path(os.environ["FOREIGN_TOUCH"]).write_text(
                             " ".join(args), encoding="utf-8"
@@ -1335,7 +1335,7 @@ class ArdyRecoveryGateDecisionTests(unittest.TestCase):
             self.assertIn("stop_in_progress=0", final)
             self.assertEqual(
                 docker_log.read_text(encoding="utf-8").strip(),
-                f"stop --time 20 {old_id}",
+                f"stop --time 2 {old_id}",
             )
             self.assertFalse(foreign_touch.exists())
 
