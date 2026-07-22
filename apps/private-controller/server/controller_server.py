@@ -10,6 +10,8 @@ import mimetypes
 import os
 import re
 import socket
+import stat
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -22,7 +24,10 @@ from typing import Any
 TAILSCALE_NET = ipaddress.ip_network("100.64.0.0/10")
 MAX_REQUEST_BYTES = 8 * 1024
 MAX_MESSAGE_CHARS = 2_000
-SERVER_VERSION = "prototype-1"
+MAX_LIVE_FRAME_BYTES = 2 * 1024 * 1024
+MAX_LIVE_FRAME_AGE_SECONDS = 2.0
+SERVER_VERSION = "prototype-2"
+THINK_BLOCK_PATTERN = re.compile(r"<think>.*?(?:</think>|$)", re.IGNORECASE | re.DOTALL)
 ALLOWED_BEHAVIORS = frozenset({
     "idle", "listen", "wave", "invite", "think", "warn", "nod", "shake", "explain",
 })
@@ -90,6 +95,16 @@ def normalize_message(payload: object) -> str:
     return message
 
 
+def normalize_reply(value: object) -> str:
+    if not isinstance(value, str):
+        raise ValueError("invalid reply")
+    reply = THINK_BLOCK_PATTERN.sub("", value)
+    reply = re.sub(r"</?think>", "", reply, flags=re.IGNORECASE)
+    reply = re.sub(r"[ \t]+", " ", reply)
+    reply = re.sub(r"\n{3,}", "\n\n", reply).strip()
+    return reply or "I’m ready—please try that again."
+
+
 def safe_root(path: Path, label: str) -> Path:
     if path.is_symlink():
         raise ValueError(f"{label} must not be a symlink")
@@ -99,14 +114,60 @@ def safe_root(path: Path, label: str) -> Path:
     return resolved
 
 
+def safe_private_root(path: Path, label: str) -> Path:
+    resolved = safe_root(path, label)
+    metadata = resolved.stat()
+    if metadata.st_uid != os.geteuid():
+        raise ValueError(f"{label} must be owned by the current user")
+    if stat.S_IMODE(metadata.st_mode) & 0o077:
+        raise ValueError(f"{label} must not be accessible by group or other users")
+    return resolved
+
+
+def read_live_frame(live_root: Path, *, now_ns: int | None = None) -> bytes | None:
+    """Read one fresh, private JPEG without following a replaceable symlink."""
+    frame_path = live_root / "frame.jpg"
+    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        descriptor = os.open(frame_path, flags)
+    except (FileNotFoundError, OSError):
+        return None
+    try:
+        metadata = os.fstat(descriptor)
+        if not stat.S_ISREG(metadata.st_mode):
+            return None
+        if metadata.st_uid != os.geteuid() or stat.S_IMODE(metadata.st_mode) & 0o077:
+            return None
+        if not 4 <= metadata.st_size <= MAX_LIVE_FRAME_BYTES:
+            return None
+        current_ns = time.time_ns() if now_ns is None else now_ns
+        age_ns = current_ns - metadata.st_mtime_ns
+        if age_ns < 0 or age_ns > int(MAX_LIVE_FRAME_AGE_SECONDS * 1_000_000_000):
+            return None
+        with os.fdopen(descriptor, "rb", closefd=False) as stream:
+            payload = stream.read(MAX_LIVE_FRAME_BYTES + 1)
+        if len(payload) != metadata.st_size:
+            return None
+        if not payload.startswith(b"\xff\xd8") or not payload.endswith(b"\xff\xd9"):
+            return None
+        return payload
+    finally:
+        os.close(descriptor)
+
+
+def live_stream_ready(renderer: bool, live_root: Path) -> bool:
+    return renderer and read_live_frame(live_root) is not None
+
+
 class ControllerServer(ThreadingHTTPServer):
     daemon_threads = True
 
     def __init__(self, address: tuple[str, int], dist: Path, media_root: Path,
-                 fay_base: str, ardy_base: str):
+                 live_root: Path, fay_base: str, ardy_base: str):
         super().__init__(address, ControllerHandler)
         self.dist = dist
         self.media_root = media_root
+        self.live_root = live_root
         self.fay_base = fay_base
         self.ardy_base = ardy_base
 
@@ -118,18 +179,22 @@ class ControllerHandler(BaseHTTPRequestHandler):
         path = urllib.parse.urlparse(self.path).path
         if path == "/api/status":
             self._status()
+        elif path == "/live/frame.jpg":
+            self._live_frame()
         elif path.startswith("/media/"):
             self._media(path.removeprefix("/media/"))
-        elif path.startswith("/api/"):
+        elif path.startswith("/api/") or path.startswith("/live/"):
             self._json(HTTPStatus.NOT_FOUND, {"error": "not_found"})
         else:
             self._static(path)
 
     def do_HEAD(self) -> None:  # noqa: N802
         path = urllib.parse.urlparse(self.path).path
-        if path.startswith("/media/"):
+        if path == "/live/frame.jpg":
+            self._live_frame(head_only=True)
+        elif path.startswith("/media/"):
             self._media(path.removeprefix("/media/"), head_only=True)
-        elif not path.startswith("/api/"):
+        elif not path.startswith("/api/") and not path.startswith("/live/"):
             self._static(path, head_only=True)
         else:
             self._json(HTTPStatus.NOT_FOUND, {"error": "not_found"}, head_only=True)
@@ -181,24 +246,50 @@ class ControllerHandler(BaseHTTPRequestHandler):
             ardy = status.get("status") == "ready"
         except (OSError, ValueError, urllib.error.URLError):
             pass
+        stream = live_stream_ready(renderer, self.server.live_root)
         self._json(HTTPStatus.OK, {
-            "fay": fay, "ardy": ardy, "renderer": renderer,
-            "mode": "live" if renderer else "verified-replay", "version": SERVER_VERSION,
+            "fay": fay, "ardy": ardy, "renderer": renderer, "stream": stream,
+            "mode": (
+                "live-preview" if stream else
+                "renderer-unstreamed" if renderer else
+                "verified-replay"
+            ),
+            "version": SERVER_VERSION,
         })
+
+    def _live_frame(self, head_only: bool = False) -> None:
+        payload = read_live_frame(self.server.live_root)
+        if payload is None:
+            self._json(HTTPStatus.SERVICE_UNAVAILABLE, {"error": "live_frame_unavailable"},
+                       head_only=head_only)
+            return
+        self.send_response(HTTPStatus.OK)
+        self._security_headers("image/jpeg", {"Content-Length": str(len(payload))})
+        self.end_headers()
+        if not head_only:
+            self.wfile.write(payload)
 
     def _chat(self, payload: object) -> None:
         message = normalize_message(payload)
         upstream_payload = {
             "model": "fay", "user": "User",
-            "messages": [{"role": "user", "content": message}],
+            "messages": [
+                {
+                    "role": "system",
+                    "content": (
+                        "Reply in concise, natural English. Never expose hidden reasoning, "
+                        "analysis, or <think> tags. Do not claim the avatar performed an "
+                        "action unless the user used an available movement control."
+                    ),
+                },
+                {"role": "user", "content": message},
+            ],
         }
         try:
             response = self._upstream_json(
                 f"{self.server.fay_base}/v1/chat/completions", upstream_payload, timeout=180,
             )
-            reply = response["choices"][0]["message"]["content"]
-            if not isinstance(reply, str):
-                raise ValueError("invalid reply")
+            reply = normalize_reply(response["choices"][0]["message"]["content"])
         except urllib.error.HTTPError as exc:
             self._json(HTTPStatus.BAD_GATEWAY, {"error": f"Fay returned HTTP {exc.code}"})
             return
@@ -357,6 +448,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--port", type=int, default=8475)
     parser.add_argument("--dist", required=True, type=Path)
     parser.add_argument("--media-root", required=True, type=Path)
+    parser.add_argument("--live-root", required=True, type=Path)
     parser.add_argument("--fay-base", required=True)
     parser.add_argument("--ardy-base", default="http://127.0.0.1:8777")
     return parser
@@ -369,6 +461,7 @@ def main() -> int:
     try:
         dist = safe_root(args.dist, "dist")
         media_root = safe_root(args.media_root, "media root")
+        live_root = safe_private_root(args.live_root, "live root")
         fay_base = checked_upstream(args.fay_base)
         ardy_base = checked_upstream(args.ardy_base, loopback_only=True)
     except (ValueError, argparse.ArgumentTypeError) as exc:
@@ -376,7 +469,9 @@ def main() -> int:
     missing = [relative for relative in MEDIA_MAP.values() if not (media_root / relative).is_file()]
     if missing:
         raise SystemExit(f"missing private media: {', '.join(missing)}")
-    server = ControllerServer((args.host, args.port), dist, media_root, fay_base, ardy_base)
+    server = ControllerServer(
+        (args.host, args.port), dist, media_root, live_root, fay_base, ardy_base,
+    )
     try:
         server.serve_forever(poll_interval=0.25)
     except KeyboardInterrupt:

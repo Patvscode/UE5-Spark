@@ -1,6 +1,9 @@
 import argparse
 import importlib.util
 import ipaddress
+import os
+import tempfile
+import time
 import unittest
 from pathlib import Path
 
@@ -51,10 +54,77 @@ class ValidationTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 SERVER.normalize_message(payload)
 
+    def test_reply_removes_hidden_reasoning(self):
+        self.assertEqual(
+            SERVER.normalize_reply(
+                "One moment. <think>执行耗时: 3.1s</think>\n\nHello from Ada."
+            ),
+            "One moment. \n\nHello from Ada.",
+        )
+        self.assertEqual(
+            SERVER.normalize_reply("<think>unfinished private reasoning"),
+            "I’m ready—please try that again.",
+        )
+        with self.assertRaises(ValueError):
+            SERVER.normalize_reply({"reply": "no"})
+
     def test_media_paths_are_relative(self):
         for path in SERVER.MEDIA_MAP.values():
             self.assertFalse(Path(path).is_absolute())
             self.assertNotIn("..", Path(path).parts)
+
+    def test_live_frame_requires_fresh_private_jpeg(self):
+        with tempfile.TemporaryDirectory() as directory:
+            live_root = Path(directory)
+            live_root.chmod(0o700)
+            frame = live_root / "frame.jpg"
+            payload = b"\xff\xd8private-preview\xff\xd9"
+            frame.write_bytes(payload)
+            frame.chmod(0o600)
+            now_ns = time.time_ns()
+            os.utime(frame, ns=(now_ns, now_ns))
+            self.assertEqual(SERVER.read_live_frame(live_root, now_ns=now_ns), payload)
+
+            stale_ns = now_ns + int((SERVER.MAX_LIVE_FRAME_AGE_SECONDS + 0.1) * 1e9)
+            self.assertIsNone(SERVER.read_live_frame(live_root, now_ns=stale_ns))
+            frame.write_bytes(b"not-a-jpeg")
+            frame.chmod(0o600)
+            os.utime(frame, ns=(now_ns, now_ns))
+            self.assertIsNone(SERVER.read_live_frame(live_root, now_ns=now_ns))
+
+    def test_live_frame_rejects_symlink_and_nonprivate_mode(self):
+        with tempfile.TemporaryDirectory() as directory:
+            live_root = Path(directory)
+            live_root.chmod(0o700)
+            target = live_root / "target.jpg"
+            target.write_bytes(b"\xff\xd8frame\xff\xd9")
+            target.chmod(0o600)
+            frame = live_root / "frame.jpg"
+            frame.symlink_to(target.name)
+            self.assertIsNone(SERVER.read_live_frame(live_root))
+            frame.unlink()
+            target.rename(frame)
+            frame.chmod(0o644)
+            self.assertIsNone(SERVER.read_live_frame(live_root))
+
+    def test_stream_requires_renderer_and_fresh_frame(self):
+        with tempfile.TemporaryDirectory() as directory:
+            live_root = Path(directory)
+            live_root.chmod(0o700)
+            frame = live_root / "frame.jpg"
+            frame.write_bytes(b"\xff\xd8frame\xff\xd9")
+            frame.chmod(0o600)
+            self.assertFalse(SERVER.live_stream_ready(False, live_root))
+            self.assertTrue(SERVER.live_stream_ready(True, live_root))
+
+    def test_private_live_root_rejects_shared_permissions(self):
+        with tempfile.TemporaryDirectory() as directory:
+            live_root = Path(directory)
+            live_root.chmod(0o755)
+            with self.assertRaises(ValueError):
+                SERVER.safe_private_root(live_root, "live root")
+            live_root.chmod(0o700)
+            self.assertEqual(SERVER.safe_private_root(live_root, "live root"), live_root.resolve())
 
 
 if __name__ == "__main__":

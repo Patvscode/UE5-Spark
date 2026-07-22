@@ -6,21 +6,26 @@ fail() {
     exit 1
 }
 
-if (( $# != 2 )); then
-    printf 'Usage: %s /private/media-root /path/to/built/dist/client\n' "${0##*/}" >&2
+if (( $# != 3 )); then
+    printf 'Usage: %s /private/media-root /path/to/built/dist/client /run/user/UID/live-root\n' \
+        "${0##*/}" >&2
     exit 64
 fi
 
 [[ $(uname -s) == Linux ]] || fail 'run the private controller on the Spark'
 (( ${EUID:-$(id -u)} != 0 )) || fail 'run as the normal workspace user'
-for command_name in python3 tailscale; do
+for command_name in python3 stat tailscale; do
     command -v "$command_name" >/dev/null 2>&1 || fail "missing command: $command_name"
 done
 
 media_root=$1
 dist_root=$2
+live_root=$3
 [[ -d $media_root && ! -L $media_root ]] || fail 'media root must be a real directory'
 [[ -d $dist_root && ! -L $dist_root ]] || fail 'built client must be a real directory'
+[[ -d $live_root && ! -L $live_root && -O $live_root ]] || \
+    fail 'live root must be a real directory owned by this user'
+[[ $(stat -c '%a' "$live_root") == 700 ]] || fail 'live root must have mode 0700'
 
 tailnet_ip=$(tailscale ip -4 | head -n1)
 [[ -n $tailnet_ip ]] || fail 'no Tailscale IPv4 address is available'
@@ -31,5 +36,6 @@ exec python3 "$script_dir/../apps/private-controller/server/controller_server.py
     --port 8475 \
     --dist "$dist_root" \
     --media-root "$media_root" \
+    --live-root "$live_root" \
     --fay-base "http://$tailnet_ip:5000" \
     --ardy-base http://127.0.0.1:8777

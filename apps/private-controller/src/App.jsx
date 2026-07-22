@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import {
   ArrowRight, ArrowsInSimple, Camera, ChatCircleDots, Check, CircleNotch,
   Ear, HandWaving, Info, Microphone, Pause, Person, Play, SlidersHorizontal,
-  Sparkle, UserCircle,
+  Sparkle, UserCircle, X,
 } from "@phosphor-icons/react";
 
 const MOTIONS = [
@@ -33,41 +33,57 @@ const MEDIA = {
 export function App() {
   const [character, setCharacter] = useState("ada");
   const [motion, setMotion] = useState("explain");
-  const [camera, setCamera] = useState("full-body");
+  const [camera, setCamera] = useState("portrait");
   const [messages, setMessages] = useState([{
     id: "welcome", role: "assistant",
-    content: "Hello, I’m Ada. This trial uses the live Fay brain with verified movement replays while the full-body camera package is prepared.",
+    content: "Hello, I’m Ada. Talk to me or try one of the real-time movement controls.",
   }]);
   const [draft, setDraft] = useState("");
   const [sending, setSending] = useState(false);
   const [listening, setListening] = useState(false);
   const [playing, setPlaying] = useState(true);
   const [deviceVoice, setDeviceVoice] = useState(true);
-  const [notice, setNotice] = useState("Verified replay · real Ada capture");
-  const [health, setHealth] = useState({ fay: false, ardy: false, renderer: false, checked: false });
+  const [activeSheet, setActiveSheet] = useState(null);
+  const [notice, setNotice] = useState("Connecting to the live renderer…");
+  const [health, setHealth] = useState({ fay: false, ardy: false, renderer: false, stream: false, checked: false });
+  const [statusFresh, setStatusFresh] = useState(false);
+  const [liveFrameUrl, setLiveFrameUrl] = useState(null);
+  const [streamState, setStreamState] = useState("replay");
   const videoRef = useRef(null);
   const inputRef = useRef(null);
   const recognitionRef = useRef(null);
+  const statusStaleTimerRef = useRef(null);
   const media = MEDIA[character];
   const videoSource = media[motion] || media.idle;
   const systemsReady = health.fay && health.ardy;
-  const liveLabel = !health.checked ? "Checking" : health.renderer ? "Renderer live" : systemsReady ? "Systems ready" : "Limited preview";
+  const streamRequested = health.renderer && health.stream && statusFresh;
+  const liveStage = streamRequested && streamState === "live" && Boolean(liveFrameUrl);
+  const liveLabel = !health.checked ? "Checking" : liveStage ? "Stage live" : streamRequested && streamState === "error" ? "Replay fallback" : streamRequested ? "Stream connecting" : health.renderer ? "Renderer linked" : systemsReady ? "Systems ready" : "Limited preview";
+  const stageModeLabel = liveStage ? "Live Unreal preview" : health.renderer && health.stream ? "Live preview connecting" : health.renderer ? "Renderer live · preview unavailable" : "Verified replay";
 
   const refreshHealth = useCallback(async () => {
     try {
       const response = await fetch("/api/status", { cache: "no-store" });
       if (!response.ok) throw new Error();
       const payload = await response.json();
-      setHealth({ fay: Boolean(payload.fay), ardy: Boolean(payload.ardy), renderer: Boolean(payload.renderer), checked: true });
+      setHealth({ fay: Boolean(payload.fay), ardy: Boolean(payload.ardy), renderer: Boolean(payload.renderer), stream: Boolean(payload.stream), checked: true });
+      setStatusFresh(true);
+      window.clearTimeout(statusStaleTimerRef.current);
+      statusStaleTimerRef.current = window.setTimeout(() => setStatusFresh(false), 12000);
     } catch {
-      setHealth({ fay: false, ardy: false, renderer: false, checked: true });
+      setHealth({ fay: false, ardy: false, renderer: false, stream: false, checked: true });
+      setStatusFresh(false);
+      window.clearTimeout(statusStaleTimerRef.current);
     }
   }, []);
 
   useEffect(() => {
     refreshHealth();
-    const timer = window.setInterval(refreshHealth, 15000);
-    return () => window.clearInterval(timer);
+    const timer = window.setInterval(refreshHealth, 5000);
+    return () => {
+      window.clearInterval(timer);
+      window.clearTimeout(statusStaleTimerRef.current);
+    };
   }, [refreshHealth]);
 
   useEffect(() => {
@@ -77,23 +93,168 @@ export function App() {
     video.play().catch(() => setPlaying(false));
   }, [videoSource]);
 
+  useEffect(() => {
+    if (!liveFrameUrl) return undefined;
+    return () => URL.revokeObjectURL(liveFrameUrl);
+  }, [liveFrameUrl]);
+
+  useEffect(() => {
+    if (!streamRequested) {
+      setStreamState("replay");
+      setLiveFrameUrl(null);
+      return undefined;
+    }
+
+    let cancelled = false;
+    let frameSequence = 0;
+    let frameTimer = null;
+    let activeController = null;
+    let pendingImage = null;
+    let pendingUrl = null;
+    let inFlight = false;
+
+    const discardPending = () => {
+      if (pendingImage) {
+        pendingImage.onload = null;
+        pendingImage.onerror = null;
+        pendingImage.src = "";
+        pendingImage = null;
+      }
+      if (pendingUrl) {
+        URL.revokeObjectURL(pendingUrl);
+        pendingUrl = null;
+      }
+    };
+
+    const scheduleNext = (delay = 100) => {
+      window.clearTimeout(frameTimer);
+      if (cancelled || document.hidden) return;
+      frameTimer = window.setTimeout(requestFrame, delay);
+    };
+
+    const fallBackAndRetry = () => {
+      inFlight = false;
+      discardPending();
+      if (cancelled || document.hidden) return;
+      setStreamState("error");
+      setLiveFrameUrl(null);
+      scheduleNext(350);
+    };
+
+    async function requestFrame() {
+      if (cancelled || document.hidden || inFlight) return;
+      inFlight = true;
+      setStreamState((current) => current === "live" ? current : "connecting");
+      activeController = new AbortController();
+      try {
+        const response = await fetch(`/live/frame.jpg?sequence=${frameSequence++}&t=${Date.now()}`, {
+          cache: "no-store",
+          signal: activeController.signal,
+        });
+        if (!response.ok) throw new Error(`Frame request failed: ${response.status}`);
+        const frameBlob = await response.blob();
+        if (!frameBlob.size || (frameBlob.type && !frameBlob.type.startsWith("image/"))) {
+          throw new Error("Frame response was not an image");
+        }
+        if (cancelled || document.hidden) {
+          inFlight = false;
+          return;
+        }
+
+        pendingUrl = URL.createObjectURL(frameBlob);
+        pendingImage = new Image();
+        pendingImage.onload = () => {
+          if (cancelled || document.hidden) {
+            inFlight = false;
+            discardPending();
+            return;
+          }
+          const decodedUrl = pendingUrl;
+          pendingUrl = null;
+          pendingImage = null;
+          inFlight = false;
+          setLiveFrameUrl(decodedUrl);
+          setStreamState("live");
+          scheduleNext(100);
+        };
+        pendingImage.onerror = fallBackAndRetry;
+        pendingImage.src = pendingUrl;
+      } catch (error) {
+        inFlight = false;
+        if (cancelled || document.hidden) return;
+        if (error?.name === "AbortError") {
+          scheduleNext(0);
+          return;
+        }
+        fallBackAndRetry();
+      } finally {
+        activeController = null;
+      }
+    }
+
+    const handleVisibility = () => {
+      window.clearTimeout(frameTimer);
+      if (document.hidden) {
+        activeController?.abort();
+        discardPending();
+        inFlight = false;
+        return;
+      }
+      scheduleNext(0);
+    };
+
+    document.addEventListener("visibilitychange", handleVisibility);
+    setStreamState("connecting");
+    scheduleNext(0);
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(frameTimer);
+      activeController?.abort();
+      discardPending();
+      document.removeEventListener("visibilitychange", handleVisibility);
+    };
+  }, [streamRequested]);
+
+  useEffect(() => {
+    if (liveStage) setNotice("Live Unreal preview · real-time motion");
+  }, [liveStage]);
+
   useEffect(() => () => {
     recognitionRef.current?.abort?.();
     window.speechSynthesis?.cancel?.();
   }, []);
 
+  useEffect(() => {
+    if (!activeSheet) return undefined;
+    const closeOnEscape = (event) => {
+      if (event.key === "Escape") setActiveSheet(null);
+    };
+    window.addEventListener("keydown", closeOnEscape);
+    if (activeSheet === "conversation") {
+      window.setTimeout(() => inputRef.current?.focus(), 120);
+    }
+    return () => window.removeEventListener("keydown", closeOnEscape);
+  }, [activeSheet]);
+
   async function playMotion(nextMotion) {
     const selected = MOTIONS.find((item) => item.id === nextMotion);
     setMotion(nextMotion);
     setPlaying(true);
-    setNotice(`${selected?.label || "Motion"} · verified ${character === "ada" ? "Ada" : "Aoi"} replay`);
+    setNotice(health.renderer
+      ? `Sending ${selected?.label || "motion"} to the live renderer…`
+      : `${selected?.label || "Motion"} · verified ${character === "ada" ? "Ada" : "Aoi"} replay`);
     try {
       const response = await fetch("/api/action", {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ behavior: nextMotion, intensity: 0.65, duration: selected?.duration || 2 }),
       });
       const payload = await response.json().catch(() => ({}));
-      if (response.ok && payload.live) setNotice(`${selected?.label || "Motion"} sent to the live renderer`);
+      if (response.ok && payload.live) {
+        setNotice(liveStage
+          ? `${selected?.label || "Motion"} · moving live now`
+          : `${selected?.label || "Motion"} sent live · preview connecting`);
+      }
     } catch { /* Replay remains available with Unreal offline. */ }
   }
 
@@ -138,7 +299,7 @@ export function App() {
     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
     if (!SpeechRecognition) {
       setNotice("Voice capture is not available here · type below instead");
-      inputRef.current?.focus();
+      setActiveSheet("conversation");
       return;
     }
     const recognition = new SpeechRecognition();
@@ -162,6 +323,10 @@ export function App() {
       setNotice("Free Casual Girl saved for compatibility and license review");
       return;
     }
+    if (health.renderer && id !== "ada") {
+      setNotice(`${candidate.name} needs a reviewed renderer restart · keeping Ada live`);
+      return;
+    }
     setCharacter(id);
     setMotion(id === "ada" ? "explain" : "idle");
     setNotice(`${candidate.name} · verified private replay`);
@@ -181,74 +346,107 @@ export function App() {
 
   return (
     <main className="app-shell">
-      <aside className="control-rail" aria-label="Character and motion controls">
-        <div className="brand-row">
-          <div><p className="eyebrow">Private digital human</p><h1>ADA</h1></div>
-          <div className={`live-indicator ${systemsReady ? "is-ready" : ""}`}><span />{liveLabel}</div>
-        </div>
-        <section className="rail-section motion-section">
-          <div className="section-heading"><span>Motion</span><span className="section-meta">ARDY + baked</span></div>
-          <div className="motion-list">
-            {MOTIONS.map(({ id, label, Icon }) => (
-              <button className={`motion-button ${motion === id ? "is-active" : ""}`} key={id} onClick={() => playMotion(id)} type="button">
-                <Icon size={22} weight="light" /><span>{label}</span>{motion === id && <Check className="motion-check" size={16} weight="bold" />}
-              </button>
-            ))}
-          </div>
-        </section>
-        <section className="rail-section character-section">
-          <div className="section-heading"><span>Character</span><SlidersHorizontal size={16} weight="light" /></div>
-          <div className="character-list">
-            {CHARACTERS.map((item) => (
-              <button className={`character-button ${character === item.id ? "is-active" : ""} ${!item.ready ? "is-pending" : ""}`} key={item.id} onClick={() => chooseCharacter(item.id)} type="button">
-                <UserCircle size={29} weight="light" /><span><strong>{item.name}</strong><small>{item.detail}</small></span>
-              </button>
-            ))}
-          </div>
-        </section>
-      </aside>
-
       <section className="avatar-stage" aria-label={`${character === "ada" ? "Ada" : "Aoi"} avatar stage`}>
         <div className="stage-topbar">
-          <div className="stage-mode"><Sparkle size={16} weight="fill" /><span>{health.renderer ? "Live renderer" : "Verified replay"}</span></div>
-          <button className="icon-button" onClick={togglePlayback} type="button" aria-label={playing ? "Pause avatar replay" : "Play avatar replay"}>{playing ? <Pause size={18} weight="fill" /> : <Play size={18} weight="fill" />}</button>
+          <div className="stage-identity">
+            <span className="stage-name">{character === "ada" ? "Ada" : "Aoi"}</span>
+            <span className={`status-dot ${systemsReady ? "is-ready" : ""}`} aria-hidden="true" />
+            <span className="stage-status">{liveLabel}</span>
+          </div>
+          <div className="stage-actions">
+            <div className="stage-mode"><Sparkle size={14} weight="fill" /><span>{stageModeLabel}</span></div>
+            {!liveStage && <button className="icon-button" onClick={togglePlayback} type="button" aria-label={playing ? "Pause avatar replay" : "Play avatar replay"}>{playing ? <Pause size={17} weight="fill" /> : <Play size={17} weight="fill" />}</button>}
+          </div>
         </div>
-        <video ref={videoRef} className="avatar-video" key={videoSource} autoPlay muted loop playsInline poster={media.poster} onPlay={() => setPlaying(true)} onPause={() => setPlaying(false)}>
+        <video ref={videoRef} className={`avatar-video ${liveStage ? "is-behind-live" : ""}`} key={videoSource} autoPlay muted loop playsInline poster={media.poster} aria-hidden={liveStage} onPlay={() => setPlaying(true)} onPause={() => setPlaying(false)}>
           <source src={videoSource} type="video/mp4" />
         </video>
-        <div className="stage-caption"><span>{notice}</span><span className="camera-readout"><Camera size={14} />{camera === "full-body" ? "Full-body target" : "Portrait capture"}</span></div>
-        <button className={`talk-button ${listening ? "is-listening" : ""}`} onClick={toggleListening} type="button" aria-label={listening ? "Stop listening" : "Talk to Ada"}>
-          {listening ? <CircleNotch size={27} weight="bold" className="spin" /> : <Microphone size={27} weight="fill" />}<span>{listening ? "Listening" : "Talk"}</span>
-        </button>
+        {liveStage && <img className="avatar-live-frame" src={liveFrameUrl} alt={`${character === "ada" ? "Ada" : "Aoi"} live renderer stream`} draggable="false" />}
+        <div className="stage-caption" aria-live="polite">
+          <span>{notice}</span>
+          <span className="camera-readout"><Camera size={13} />{camera === "full-body" ? "Full-body target" : "Portrait capture"}</span>
+        </div>
+
+        <section className="motion-shelf" aria-label="Motion controls">
+          <span className="motion-mode">{health.renderer ? "Real-time · ARDY + baked" : "Replay"}</span>
+          <div className="motion-list">
+            {MOTIONS.map(({ id, label, Icon }) => (
+              <button className={`motion-button ${motion === id ? "is-active" : ""}`} key={id} onClick={() => playMotion(id)} type="button" aria-pressed={motion === id}>
+                <Icon size={20} weight="light" /><span>{label}</span>{motion === id && <Check className="motion-check" size={13} weight="bold" />}
+              </button>
+            ))}
+          </div>
+        </section>
+
+        <nav className="stage-dock" aria-label="Avatar controls">
+          <button className={`dock-button ${activeSheet === "conversation" ? "is-active" : ""}`} onClick={() => setActiveSheet("conversation")} type="button" aria-label="Open conversation" aria-expanded={activeSheet === "conversation"}>
+            <ChatCircleDots size={23} weight="light" /><span>Chat</span>
+          </button>
+          <button className={`talk-button ${listening ? "is-listening" : ""}`} onClick={toggleListening} type="button" aria-label={listening ? "Stop listening" : `Talk to ${character === "ada" ? "Ada" : "Aoi"}`}>
+            {listening ? <CircleNotch size={25} weight="bold" className="spin" /> : <Microphone size={25} weight="fill" />}<span>{listening ? "Listening" : "Talk"}</span>
+          </button>
+          <button className={`dock-button ${activeSheet === "settings" ? "is-active" : ""}`} onClick={() => setActiveSheet("settings")} type="button" aria-label="Open camera and character settings" aria-expanded={activeSheet === "settings"}>
+            <SlidersHorizontal size={23} weight="light" /><span>Setup</span>
+          </button>
+        </nav>
       </section>
 
-      <aside className="conversation-panel" aria-label="Conversation and camera controls">
-        <section className="caption-panel">
-          <div className="panel-heading"><span>Conversation</span><span className={`compact-status ${systemsReady ? "is-ready" : ""}`}><span /> {liveLabel}</span></div>
-          <div className="transcript" aria-live="polite">
-            {messages.map((message) => (
-              <article className={`message ${message.role}`} key={message.id}><small>{message.role === "assistant" ? (character === "ada" ? "Ada" : "Aoi") : message.role === "user" ? "You" : "System"}</small><p>{message.content}</p></article>
-            ))}
-            {sending && <div className="thinking" aria-label="Ada is thinking"><span /><span /><span /></div>}
-          </div>
-        </section>
-        <section className="camera-panel">
-          <div className="panel-heading"><span>Camera</span><span className="camera-note">Full body next</span></div>
-          <div className="camera-options">
-            <button className={camera === "full-body" ? "is-selected" : ""} onClick={() => { setCamera("full-body"); setNotice("Full-body framing selected · new runtime package in progress"); }} type="button"><Person size={21} /><span><strong>Full body</strong><small>Target framing</small></span></button>
-            <button className={camera === "portrait" ? "is-selected" : ""} onClick={() => { setCamera("portrait"); setNotice("Portrait · current verified capture"); }} type="button"><UserCircle size={21} /><span><strong>Portrait</strong><small>Available now</small></span></button>
-            <button onClick={recenter} type="button"><ArrowsInSimple size={21} /><span><strong>Recenter</strong><small>Restart view</small></span></button>
-          </div>
-        </section>
-        <section className="composer-panel">
-          <button className={`voice-preview ${deviceVoice ? "is-on" : ""}`} onClick={() => setDeviceVoice((value) => !value)} type="button"><span className="toggle-track"><span /></span>Device voice preview</button>
-          <form className="composer" onSubmit={(event) => { event.preventDefault(); sendMessage(); }}>
-            <ChatCircleDots size={20} /><input ref={inputRef} value={draft} onChange={(event) => setDraft(event.target.value)} placeholder="Type a message" maxLength={2000} aria-label="Message Ada" />
-            <button type="submit" disabled={!draft.trim() || sending} aria-label="Send message">{sending ? <CircleNotch className="spin" size={18} /> : <ArrowRight size={18} weight="bold" />}</button>
-          </form>
-          <div className="prototype-note"><Info size={15} weight="fill" /><span>Conversation is live. Stage video is a measured private replay until streaming and full-body framing land.</span></div>
-        </section>
-      </aside>
+      {activeSheet && (
+        <div className="sheet-layer">
+          <button className="sheet-backdrop" onClick={() => setActiveSheet(null)} type="button" aria-label="Close panel" />
+          <aside className={`bottom-sheet ${activeSheet}-sheet`} role="dialog" aria-modal="true" aria-label={activeSheet === "conversation" ? "Conversation" : "Camera and character settings"}>
+            <div className="sheet-handle" aria-hidden="true" />
+            <header className="sheet-header">
+              <div>
+                <p className="eyebrow">{activeSheet === "conversation" ? "Live Fay conversation" : "Stage setup"}</p>
+                <h2>{activeSheet === "conversation" ? `Talk with ${character === "ada" ? "Ada" : "Aoi"}` : "Camera & character"}</h2>
+              </div>
+              <button className="sheet-close" onClick={() => setActiveSheet(null)} type="button" aria-label="Close panel"><X size={20} /></button>
+            </header>
+
+            {activeSheet === "conversation" ? (
+              <>
+                <div className="sheet-truth"><span className={`status-dot ${systemsReady ? "is-ready" : ""}`} />{health.fay ? "Fay conversation live" : "Conversation limited"}<span aria-hidden="true">·</span><span>{liveStage ? "Stage stream live" : "Stage is replay"}</span></div>
+                <div className="transcript" aria-live="polite">
+                  {messages.map((message) => (
+                    <article className={`message ${message.role}`} key={message.id}><small>{message.role === "assistant" ? (character === "ada" ? "Ada" : "Aoi") : message.role === "user" ? "You" : "System"}</small><p>{message.content}</p></article>
+                  ))}
+                  {sending && <div className="thinking" aria-label={`${character === "ada" ? "Ada" : "Aoi"} is thinking`}><span /><span /><span /></div>}
+                </div>
+                <div className="sheet-composer">
+                  <button className={`voice-preview ${deviceVoice ? "is-on" : ""}`} onClick={() => setDeviceVoice((value) => !value)} type="button"><span className="toggle-track"><span /></span>Device voice preview</button>
+                  <form className="composer" onSubmit={(event) => { event.preventDefault(); sendMessage(); }}>
+                    <ChatCircleDots size={20} /><input ref={inputRef} value={draft} onChange={(event) => setDraft(event.target.value)} placeholder="Type a message" maxLength={2000} aria-label={`Message ${character === "ada" ? "Ada" : "Aoi"}`} />
+                    <button type="submit" disabled={!draft.trim() || sending} aria-label="Send message">{sending ? <CircleNotch className="spin" size={18} /> : <ArrowRight size={18} weight="bold" />}</button>
+                  </form>
+                </div>
+              </>
+            ) : (
+              <div className="settings-content">
+                <section className="sheet-section">
+                  <div className="panel-heading"><span>Camera</span><span className="camera-note">Full body is the next runtime package</span></div>
+                  <div className="camera-options">
+                    <button className={camera === "full-body" ? "is-selected" : ""} onClick={() => { setCamera("full-body"); setNotice("Full-body framing selected · new runtime package in progress"); }} type="button"><Person size={21} /><span><strong>Full body</strong><small>Target framing</small></span></button>
+                    <button className={camera === "portrait" ? "is-selected" : ""} onClick={() => { setCamera("portrait"); setNotice("Portrait · current verified capture"); }} type="button"><UserCircle size={21} /><span><strong>Portrait</strong><small>Available now</small></span></button>
+                    <button onClick={recenter} type="button"><ArrowsInSimple size={21} /><span><strong>Recenter</strong><small>Restart replay</small></span></button>
+                  </div>
+                </section>
+                <section className="sheet-section">
+                  <div className="panel-heading"><span>Character</span><span className="section-meta">Reviewed profiles only</span></div>
+                  <div className="character-list">
+                    {CHARACTERS.map((item) => (
+                      <button className={`character-button ${character === item.id ? "is-active" : ""} ${!item.ready ? "is-pending" : ""}`} key={item.id} onClick={() => chooseCharacter(item.id)} type="button" aria-pressed={character === item.id}>
+                        <UserCircle size={29} weight="light" /><span><strong>{item.name}</strong><small>{item.detail}</small></span>{character === item.id && <Check size={16} weight="bold" />}
+                      </button>
+                    ))}
+                  </div>
+                </section>
+                <div className="prototype-note"><Info size={15} weight="fill" /><span>{liveStage ? "The visible stage is the live renderer stream." : "Conversation is live. The visible stage is using the measured private replay fallback."}</span></div>
+              </div>
+            )}
+          </aside>
+        </div>
+      )}
     </main>
   );
 }
