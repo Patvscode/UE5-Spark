@@ -249,7 +249,6 @@ UBlendProfile* UFayArdyRetargetAssetLibrary::EnsureBodyOnlyBlendMask(
             return nullptr;
         }
         Mask->Mode = EBlendProfileMode::BlendMask;
-        Mask->ClearEntries();
         for (int32 Index = 0; Index < SkeletonReference.GetNum(); ++Index)
         {
             const FName BoneName = SkeletonReference.GetBoneName(Index);

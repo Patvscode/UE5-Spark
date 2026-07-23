@@ -136,6 +136,11 @@ class ArdyEditorAssetBuilderContractTests(unittest.TestCase):
             "CountBindingsInBlueprintHierarchy(CandidateBlueprint, LocalTemplate) != 1",
         ):
             self.assertIn(marker, self.source)
+        self.assertNotIn(
+            "ClearEntries()",
+            self.source,
+            "UBlendProfile::ClearEntries is not exported from UE 5.8's Engine module",
+        )
 
     def test_postprocess_v2_contact_contract_is_sealed_but_not_faked(self) -> None:
         for marker in (
