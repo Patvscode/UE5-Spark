@@ -50,7 +50,7 @@
       "intensity": 0.58,
       "rootMode": "locked",
       "routeBehavior": "jog_in_place",
-      "rendererPackaged": false
+      "rendererPackaged": true
     },
     "run_in_place": {
       "label": "Run in place",
@@ -60,7 +60,7 @@
       "intensity": 0.76,
       "rootMode": "locked",
       "routeBehavior": "run_in_place",
-      "rendererPackaged": false
+      "rendererPackaged": true
     },
     "jumping_jacks": {
       "label": "Jumping jacks",
@@ -70,7 +70,7 @@
       "intensity": 0.72,
       "rootMode": "locked",
       "routeBehavior": "jumping_jacks",
-      "rendererPackaged": false
+      "rendererPackaged": true
     },
     "stretch": {
       "label": "Stretch",
@@ -80,7 +80,7 @@
       "intensity": 0.48,
       "rootMode": "locked",
       "routeBehavior": "stretch",
-      "rendererPackaged": false
+      "rendererPackaged": true
     },
     "dance_relaxed": {
       "label": "Relaxed dance",
@@ -90,7 +90,7 @@
       "intensity": 0.6,
       "rootMode": "locked",
       "routeBehavior": "dance_relaxed",
-      "rendererPackaged": false
+      "rendererPackaged": true
     }
   }
 }

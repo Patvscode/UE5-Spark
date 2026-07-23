@@ -42,6 +42,7 @@ CHAT_SYSTEM_PROMPT = (
 )
 ALLOWED_BEHAVIORS = frozenset({
     "idle", "listen", "wave", "invite", "think", "warn", "nod", "shake", "explain",
+    "jog_in_place", "run_in_place", "jumping_jacks", "stretch", "dance_relaxed",
 })
 MOTION_CATALOG_PATH = Path(__file__).resolve().parents[3] / "config" / "motion-catalog.json"
 CHARACTER_AI_CONTROL_PATH = (
