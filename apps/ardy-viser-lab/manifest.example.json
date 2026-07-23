@@ -1,0 +1,26 @@
+{
+  "schema_version": 1,
+  "character_id": "casual-girl",
+  "display_name": "Casual Girl",
+  "defaults": {
+    "body": "body",
+    "underwear": "underwear",
+    "hair": "hair_1",
+    "top": "top_1",
+    "bottom": "pants",
+    "feet": "shoes_socks"
+  },
+  "parts": [
+    {"id": "body", "label": "Body", "category": "body", "file": "body.npz", "color": [204, 158, 136]},
+    {"id": "underwear", "label": "Underwear", "category": "underwear", "file": "underwear.npz", "color": [42, 42, 46]},
+    {"id": "hair_1", "label": "Hair Style 1", "category": "hair", "file": "hair_1.npz", "color": [53, 37, 30]},
+    {"id": "hair_2", "label": "Hair Style 2", "category": "hair", "file": "hair_2.npz", "color": [53, 37, 30]},
+    {"id": "top_1", "label": "Tank Top", "category": "top", "file": "top_1.npz", "color": [196, 174, 146]},
+    {"id": "top_3", "label": "Crop Hoodie", "category": "top", "file": "top_3.npz", "color": [64, 68, 78]},
+    {"id": "top_4", "label": "Sweater", "category": "top", "file": "top_4.npz", "color": [132, 91, 78]},
+    {"id": "shorts", "label": "Shorts", "category": "bottom", "file": "shorts.npz", "color": [38, 42, 50]},
+    {"id": "pants", "label": "Pants", "category": "bottom", "file": "pants.npz", "color": [39, 42, 47]},
+    {"id": "shoes", "label": "Shoes", "category": "feet", "file": "shoes.npz", "color": [210, 205, 189]},
+    {"id": "shoes_socks", "label": "Shoes + Socks", "category": "feet", "file": "shoes_socks.npz", "color": [210, 205, 189]}
+  ]
+}

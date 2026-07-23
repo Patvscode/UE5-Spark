@@ -56,10 +56,10 @@ this lab.
 ## Private storage
 
 The standalone server stores model files and profiles under
-`RIG_LAB_DATA_ROOT`. On the Spark this is:
+`RIG_LAB_DATA_ROOT`. A typical private location is:
 
 ```text
-/home/pmello/Workspace/02_Experiments/ue5-spark-cooker/models-private/rig-lab
+<private-data-root>/rig-lab
 ```
 
 The directory and stored files are private and excluded from Git. Profile JSON
