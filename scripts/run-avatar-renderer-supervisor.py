@@ -323,6 +323,7 @@ class Supervisor:
             f"-FayWardrobeCommandRoot={self.live_root}",
             "-FayResetSpeechCache=0", "-FayTrimSpeechMemory=1",
             "-DefaultViewportMouseCaptureMode=NoCapture",
+            "-DefaultViewportMouseLockMode=DoNotLock",
             "-ResX=1280", "-ResY=720", "-Windowed", "-WinX=0", "-WinY=0",
         ]
         renderer = subprocess.Popen(
