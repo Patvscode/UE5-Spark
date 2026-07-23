@@ -47,6 +47,7 @@ class WardrobeUnrealContractTests(unittest.TestCase):
             "SetSkeletalMesh",
         ):
             self.assertNotIn(forbidden, SOURCE)
+        self.assertIn("Text.ToLowerInline();", SOURCE)
 
     def test_configuration_is_transactional_and_reset_restores_visibility(self) -> None:
         configure = SOURCE[

@@ -449,7 +449,12 @@ bool UFayWardrobeComponent::IsReviewedId(const FName Value)
     {
         return false;
     }
-    const FString Text = Value.ToString();
+    FString Text = Value.ToString();
+    // FName identity is case-insensitive and its displayed spelling can come
+    // from an earlier engine name-table entry (for example "Top"). Validate a
+    // stable lowercase copy so reviewed lowercase IDs do not depend on load
+    // order while all comparisons remain normal FName comparisons.
+    Text.ToLowerInline();
     if (Text.IsEmpty() || Text.Len() > 32 || !FChar::IsLower(Text[0]) ||
         !FChar::IsAlpha(Text[0]))
     {
