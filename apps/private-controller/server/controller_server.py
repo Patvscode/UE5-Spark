@@ -380,28 +380,33 @@ class ProjectServiceManager:
         if action == "status":
             return
         if action in {"start", "restart"}:
-            reset_command = [
-                str(self.systemctl_path),
-                "--user",
-                "reset-failed",
-                *PROJECT_SERVICE_UNITS.values(),
+            failed_units = [
+                unit for unit in PROJECT_SERVICE_UNITS.values()
+                if self._unit_status(unit)["status"] == "failed"
             ]
-            try:
-                reset = self._runner(
-                    reset_command,
-                    check=False,
-                    capture_output=True,
-                    text=True,
-                    timeout=8,
-                )
-            except (OSError, subprocess.SubprocessError) as exc:
-                raise ProjectServiceControlError(
-                    "project service failure state could not be cleared"
-                ) from exc
-            if reset.returncode != 0:
-                raise ProjectServiceControlError(
-                    "project service failure state could not be cleared"
-                )
+            if failed_units:
+                reset_command = [
+                    str(self.systemctl_path),
+                    "--user",
+                    "reset-failed",
+                    *failed_units,
+                ]
+                try:
+                    reset = self._runner(
+                        reset_command,
+                        check=False,
+                        capture_output=True,
+                        text=True,
+                        timeout=8,
+                    )
+                except (OSError, subprocess.SubprocessError) as exc:
+                    raise ProjectServiceControlError(
+                        "project service failure state could not be cleared"
+                    ) from exc
+                if reset.returncode != 0:
+                    raise ProjectServiceControlError(
+                        "project service failure state could not be cleared"
+                    )
         command = [
             str(self.systemctl_path),
             "--user",

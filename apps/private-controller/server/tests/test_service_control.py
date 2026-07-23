@@ -57,23 +57,22 @@ class ServiceControlTests(unittest.TestCase):
                 SERVER.normalize_service_control_request(payload)
 
     def test_systemctl_mutation_has_fixed_argv_and_never_names_fay(self):
-        runner = FakeSystemctl()
+        runner = FakeSystemctl({"ue5-spark-ardy.service": "failed"})
         manager = SERVER.ProjectServiceManager(
             enabled=True,
             systemctl_path=Path("/fixed/systemctl"),
             runner=runner,
         )
         manager.request("restart")
+        mutations = [call for call in runner.calls if "show" not in call]
         self.assertEqual(
-            runner.calls,
+            mutations,
             [
                 [
                     "/fixed/systemctl",
                     "--user",
                     "reset-failed",
                     "ue5-spark-ardy.service",
-                    "ue5-spark-ardy-ready.service",
-                    "ue5-spark-avatar.service",
                 ],
                 [
                     "/fixed/systemctl",
