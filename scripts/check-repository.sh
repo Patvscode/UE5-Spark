@@ -1401,7 +1401,7 @@ if re.search(
 
 ignore_probes = (
     "Project/FayAvatarRuntime/Content/FayMetaHumans/Built/AdaFay/BP_AdaFay.uasset",
-    "Project/FayAvatarRuntime/Content/FayFab/CasualGirl/Runtime/BP_CasualGirlFay.uasset",
+    "Project/FayAvatarRuntime/Content/Sample/Meshes/SK_Complete.uasset",
     "Project/FayAvatarRuntime/Content/AnyProjectAsset.uasset",
     "Project/FayAvatarRuntime/Plugins/FayMetaHumanRuntime/Content/Model.uasset",
     "secrets-private/hf-ardy-device/token",
@@ -1434,6 +1434,7 @@ if [[ -n $python_bin ]] && ! "$python_bin" -m unittest \
     tools.tests.test_ardy_editor_asset_builder_contract \
     tools.tests.test_ardy_unreal_contract \
     tools.tests.test_capture_spark_avatar_window \
+    tools.tests.test_casual_girl_native_actor_contract \
     tools.tests.test_character_camera_framing \
     tools.tests.test_fab_auth_relay \
     tools.tests.test_fab_module_metadata \

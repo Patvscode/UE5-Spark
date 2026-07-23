@@ -8,6 +8,7 @@
 #include "FayArdyCoordinateConversion.h"
 #include "FayArdyPoseClientComponent.h"
 #include "FayCore27Skeleton.h"
+#include "FayCore27EpicAnimInstance.h"
 #include "FayCore27SourceAnimInstance.h"
 #include "FayBodyMotionProvider.h"
 #include "GameFramework/Actor.h"
@@ -408,7 +409,8 @@ bool UFayBodyMotionComponent::ConfigureAvatar(
             StopProceduralGesture();
         });
     bGeneratedRetargetReady = ConfigureGeneratedRetarget();
-    bSafeProceduralReady = bGeneratedRetargetReady;
+    bSafeProceduralReady = bGeneratedRetargetReady &&
+        !bGeneratedRetargetUsesEpicNative;
     ArdyProvider = MakeUnique<FArdyMotionProvider>(ArdyClient, &bGeneratedRetargetReady);
     SetState(EFayBodyMotionState::Idle, EFayBodyMotionProvider::Baked);
     UE_LOG(LogFayBodyMotion, Display,
@@ -425,6 +427,20 @@ bool UFayBodyMotionComponent::ConfigureGeneratedRetarget()
     }
 
     TInlineComponentArray<UFayArdyRetargetBindingComponent*> Bindings(Avatar);
+    if (Bindings.Num() == 0)
+    {
+        FString EpicFailureReason;
+        if (ConfigureEpicNativeRetarget(EpicFailureReason))
+        {
+            UE_LOG(LogFayBodyMotion, Display,
+                TEXT("Validated native Core27 -> UE5 Epic skeleton adapter; neck/head/fingers remain outside generated motion."));
+            return true;
+        }
+        UE_LOG(LogFayBodyMotion, Warning,
+            TEXT("Generated retarget disabled: no reviewed binding was present and the native UE5 Epic adapter rejected the body (%s)."),
+            *EpicFailureReason);
+        return false;
+    }
     if (Bindings.Num() != 1 || !IsValid(Bindings[0]))
     {
         UE_LOG(LogFayBodyMotion, Warning,
@@ -600,8 +616,47 @@ bool UFayBodyMotionComponent::ConfigureGeneratedRetarget()
     return true;
 }
 
+bool UFayBodyMotionComponent::ConfigureEpicNativeRetarget(FString& OutReason)
+{
+    OutReason.Reset();
+    if (!IsValid(BodyMesh) ||
+        !UFayCore27EpicAnimInstance::SupportsExactEpicSkeleton(
+            BodyMesh->GetSkeletalMeshAsset(), OutReason))
+    {
+        return false;
+    }
+
+    OriginalBodyAnimClass = BodyMesh->GetAnimClass();
+    BodyMesh->SetAnimInstanceClass(UFayCore27EpicAnimInstance::StaticClass());
+    EpicTargetAnimation = Cast<UFayCore27EpicAnimInstance>(
+        BodyMesh->GetAnimInstance());
+    if (!IsValid(EpicTargetAnimation) ||
+        BodyMesh->GetAnimClass() != UFayCore27EpicAnimInstance::StaticClass())
+    {
+        BodyMesh->SetAnimInstanceClass(OriginalBodyAnimClass);
+        EpicTargetAnimation = nullptr;
+        OriginalBodyAnimClass = nullptr;
+        OutReason = TEXT(
+            "the Body component rejected the native UE5 Epic AnimInstance");
+        return false;
+    }
+
+    bGeneratedRetargetUsesEpicNative = true;
+    EpicTargetAnimation->ResetPose();
+    return true;
+}
+
 void UFayBodyMotionComponent::TearDownGeneratedRetarget()
 {
+    if (IsValid(EpicTargetAnimation))
+    {
+        EpicTargetAnimation->ResetPose();
+    }
+    if (bGeneratedRetargetUsesEpicNative && IsValid(BodyMesh) &&
+        BodyMesh->GetAnimClass() == UFayCore27EpicAnimInstance::StaticClass())
+    {
+        BodyMesh->SetAnimInstanceClass(OriginalBodyAnimClass);
+    }
     if (IsValid(TargetPostProcessAnimation))
     {
         SetTargetFloatInput(ArdyBlendWeightProperty, 0.0f);
@@ -627,6 +682,7 @@ void UFayBodyMotionComponent::TearDownGeneratedRetarget()
     }
     ArdySourceAnimation = nullptr;
     ArdySourceMesh = nullptr;
+    EpicTargetAnimation = nullptr;
     TargetPostProcessAnimation = nullptr;
     OriginalBodyAnimClass = nullptr;
     RetargetProfile = nullptr;
@@ -634,10 +690,18 @@ void UFayBodyMotionComponent::TearDownGeneratedRetarget()
     ContactStabilizer.Reset();
     bGeneratedRetargetReady = false;
     bSafeProceduralReady = false;
+    bGeneratedRetargetUsesEpicNative = false;
 }
 
 bool UFayBodyMotionComponent::IsGeneratedRetargetBindingIntact() const
 {
+    if (bGeneratedRetargetUsesEpicNative)
+    {
+        return IsValid(BodyMesh) && IsValid(EpicTargetAnimation) &&
+            BodyMesh->GetAnimClass() ==
+                UFayCore27EpicAnimInstance::StaticClass() &&
+            BodyMesh->GetAnimInstance() == EpicTargetAnimation;
+    }
     return IsValid(BodyMesh) && IsValid(RetargetBinding) &&
         IsValid(RetargetProfile) && IsValid(ArdySourceMesh) &&
         IsValid(ArdySourceAnimation) && IsValid(TargetPostProcessAnimation) &&
@@ -678,44 +742,75 @@ void UFayBodyMotionComponent::UpdateGeneratedRetarget(const float DeltaSeconds)
     FFayArdyFootContactOutput ContactOutput;
     if (!bHasFreshPose)
     {
-        ContactStabilizer.FadeOut(DeltaSeconds, ContactOutput);
-        if (!ApplyFootContactOutput(ContactOutput))
+        if (bGeneratedRetargetUsesEpicNative)
         {
-            bGeneratedRetargetReady = false;
-            bSafeProceduralReady = false;
-            GeneratedBlendWeight = 0.0f;
-            SetTargetFloatInput(ArdyBlendWeightProperty, 0.0f);
-            return;
+            GeneratedBlendWeight = FMath::Max(
+                0.0f,
+                GeneratedBlendWeight - DeltaSeconds / GeneratedBlendInSeconds);
+            if (!bHasLastGeneratedPose || GeneratedBlendWeight <= 0.0f)
+            {
+                EpicTargetAnimation->ResetPose();
+                return;
+            }
+            Pose = LastGeneratedPose;
         }
-        GeneratedBlendWeight = FMath::Max(
-            0.0f,
-            GeneratedBlendWeight - DeltaSeconds / GeneratedBlendInSeconds);
-        if (!bHasLastGeneratedPose || GeneratedBlendWeight <= 0.0f)
+        else
         {
-            SetTargetFloatInput(ArdyBlendWeightProperty, 0.0f);
-            return;
+            ContactStabilizer.FadeOut(DeltaSeconds, ContactOutput);
+            if (!ApplyFootContactOutput(ContactOutput))
+            {
+                bGeneratedRetargetReady = false;
+                bSafeProceduralReady = false;
+                GeneratedBlendWeight = 0.0f;
+                SetTargetFloatInput(ArdyBlendWeightProperty, 0.0f);
+                return;
+            }
+            GeneratedBlendWeight = FMath::Max(
+                0.0f,
+                GeneratedBlendWeight - DeltaSeconds / GeneratedBlendInSeconds);
+            if (!bHasLastGeneratedPose || GeneratedBlendWeight <= 0.0f)
+            {
+                SetTargetFloatInput(ArdyBlendWeightProperty, 0.0f);
+                return;
+            }
+            Pose = LastGeneratedPose;
         }
-        Pose = LastGeneratedPose;
     }
     else
     {
-        if (!ContactStabilizer.Update(Pose, DeltaSeconds, ContactOutput) ||
-            !ApplyFootContactOutput(ContactOutput))
+        if (bGeneratedRetargetUsesEpicNative)
         {
-            bGeneratedRetargetReady = false;
-            bSafeProceduralReady = false;
-            GeneratedBlendWeight = 0.0f;
-            SetTargetFloatInput(ArdyBlendWeightProperty, 0.0f);
-            ClearFootContactOutput();
-            UE_LOG(LogFayBodyMotion, Error,
-                TEXT("Generated contact stabilizer rejected a pose; ARDY retarget failed closed."));
-            return;
+            ContactStabilizer.Reset();
+        }
+        else
+        {
+            if (!ContactStabilizer.Update(Pose, DeltaSeconds, ContactOutput) ||
+                !ApplyFootContactOutput(ContactOutput))
+            {
+                bGeneratedRetargetReady = false;
+                bSafeProceduralReady = false;
+                GeneratedBlendWeight = 0.0f;
+                SetTargetFloatInput(ArdyBlendWeightProperty, 0.0f);
+                ClearFootContactOutput();
+                UE_LOG(LogFayBodyMotion, Error,
+                    TEXT("Generated contact stabilizer rejected a pose; ARDY retarget failed closed."));
+                return;
+            }
         }
         LastGeneratedPose = Pose;
         bHasLastGeneratedPose = true;
         GeneratedBlendWeight = FMath::Min(
             1.0f,
             GeneratedBlendWeight + DeltaSeconds / GeneratedBlendInSeconds);
+    }
+
+    if (bGeneratedRetargetUsesEpicNative)
+    {
+        EpicTargetAnimation->SubmitPose(
+            Pose,
+            ComputeBoundedRootOffset(Pose),
+            GeneratedBlendWeight);
+        return;
     }
 
     ArdySourceAnimation->SubmitPose(Pose, ComputeBoundedRootOffset(Pose));
@@ -932,8 +1027,15 @@ void UFayBodyMotionComponent::ResetGeneratedRetargetState()
     {
         ArdySourceAnimation->ResetPose();
     }
-    SetTargetFloatInput(ArdyBlendWeightProperty, 0.0f);
-    ClearFootContactOutput();
+    if (IsValid(EpicTargetAnimation))
+    {
+        EpicTargetAnimation->ResetPose();
+    }
+    if (!bGeneratedRetargetUsesEpicNative)
+    {
+        SetTargetFloatInput(ArdyBlendWeightProperty, 0.0f);
+        ClearFootContactOutput();
+    }
 }
 
 void UFayBodyMotionComponent::StartGeneratedAction(

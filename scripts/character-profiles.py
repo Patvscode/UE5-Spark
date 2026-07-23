@@ -41,17 +41,11 @@ METAHUMAN_PACKAGE_ASSET_PATTERN = re.compile(
 )
 METAHUMAN_ADAPTER = "UE58MetaHuman"
 EPIC_ARKIT_ADAPTER = "UE5EpicArkit"
-EPIC_ARKIT_ACTOR_CLASS = (
-    "/Game/FayFab/CasualGirl/Runtime/"
-    "BP_CasualGirlFay.BP_CasualGirlFay_C"
-)
-EPIC_ARKIT_COOK_ROOT = "/Game/FayFab/CasualGirl"
-EPIC_ARKIT_PROJECT_ASSET = (
-    "Content/FayFab/CasualGirl/Runtime/BP_CasualGirlFay.uasset"
-)
+EPIC_ARKIT_ACTOR_CLASS = "/Script/FayAvatarRuntime.FayCasualGirlActor"
+EPIC_ARKIT_COOK_ROOT = "/Game/Sample"
+EPIC_ARKIT_PROJECT_ASSET = "Content/Sample/Meshes/SK_Complete.uasset"
 EPIC_ARKIT_PACKAGE_ASSET = (
-    "FayAvatarRuntime/Content/FayFab/CasualGirl/Runtime/"
-    "BP_CasualGirlFay.uasset"
+    "FayAvatarRuntime/Content/Sample/Meshes/SK_Complete.uasset"
 )
 
 
@@ -181,9 +175,14 @@ def load_profiles(config_path: Path) -> tuple[str, dict[str, CharacterProfile], 
             )
         face_component = require_simple_name(required("FaceComponent"), "FaceComponent")
         body_component = require_simple_name(required("BodyComponent"), "BodyComponent")
-        if (face_component, body_component) != ("Face", "Body"):
+        expected_components = (
+            ("Face", "Body")
+            if adapter == METAHUMAN_ADAPTER
+            else ("Body", "Body")
+        )
+        if (face_component, body_component) != expected_components:
             raise ProfileError(
-                f"[{section}] {adapter} requires exact Face and Body components"
+                f"[{section}] {adapter} requires exact reviewed face/body components"
             )
         spawn_location = require_unreal_vector(
             required("SpawnLocation"), f"[{section}] SpawnLocation"

@@ -35,7 +35,7 @@ constexpr TCHAR FullBodyCameraFramingId[] = TEXT("FullBody");
 constexpr TCHAR MetaHumanAdapter[] = TEXT("UE58MetaHuman");
 constexpr TCHAR EpicArkitAdapter[] = TEXT("UE5EpicArkit");
 constexpr TCHAR ReviewedEpicArkitActorClass[] =
-    TEXT("/Game/FayFab/CasualGirl/Runtime/BP_CasualGirlFay.BP_CasualGirlFay_C");
+    TEXT("/Script/FayAvatarRuntime.FayCasualGirlActor");
 constexpr float ReviewedMaximumFramesPerSecond = 30.0f;
 constexpr float FrameRateLimitTolerance = 0.01f;
 constexpr double FrameRatePolicyAuditIntervalSeconds = 5.0;
@@ -674,8 +674,12 @@ bool AFayAvatarBootstrapGameMode::LoadCharacterProfile()
     const bool bReviewedAdapter =
         Adapter.Equals(MetaHumanAdapter, ESearchCase::CaseSensitive) ||
         Adapter.Equals(EpicArkitAdapter, ESearchCase::CaseSensitive);
-    if (!bReviewedAdapter || FaceComponent != TEXT("Face") ||
-        BodyComponent != TEXT("Body") ||
+    const bool bReviewedComponents =
+        (Adapter.Equals(MetaHumanAdapter, ESearchCase::CaseSensitive) &&
+            FaceComponent == TEXT("Face") && BodyComponent == TEXT("Body")) ||
+        (Adapter.Equals(EpicArkitAdapter, ESearchCase::CaseSensitive) &&
+            FaceComponent == TEXT("Body") && BodyComponent == TEXT("Body"));
+    if (!bReviewedAdapter || !bReviewedComponents ||
         !IsReviewedActorClassPath(ActorClassPath, Adapter))
     {
         UE_LOG(LogFayAvatarRuntime, Error,

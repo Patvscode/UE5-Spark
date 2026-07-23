@@ -47,14 +47,8 @@ def casual_girl() -> dict[str, object]:
     return {
         "id": "CasualGirl",
         "adapter": "UE5EpicArkit",
-        "actorClass": (
-            "/Game/FayFab/CasualGirl/Runtime/"
-            "BP_CasualGirlFay.BP_CasualGirlFay_C"
-        ),
-        "packageAsset": (
-            "FayAvatarRuntime/Content/FayFab/CasualGirl/Runtime/"
-            "BP_CasualGirlFay.uasset"
-        ),
+        "actorClass": "/Script/FayAvatarRuntime.FayCasualGirlActor",
+        "packageAsset": "FayAvatarRuntime/Content/Sample/Meshes/SK_Complete.uasset",
         "cameraFramings": ["Portrait", "FullBody"],
     }
 
@@ -151,8 +145,7 @@ class PackageManifestCompatibilityTests(unittest.TestCase):
         self.assertEqual(
             result.stdout,
             "CasualGirl\tUE5EpicArkit\t"
-            "FayAvatarRuntime/Content/FayFab/CasualGirl/Runtime/"
-            "BP_CasualGirlFay.uasset\n",
+            "FayAvatarRuntime/Content/Sample/Meshes/SK_Complete.uasset\n",
         )
 
     def test_epic_arkit_rejects_unreviewed_ids_and_cross_adapter_paths(self) -> None:
@@ -232,7 +225,7 @@ class PackageManifestCompatibilityTests(unittest.TestCase):
             "if (( requires_metahuman == 1 )); then",
             "if (( requires_epic_arkit == 1 )); then",
             "if (( requires_streaming_ada == 1 )); then",
-            "FayAvatarRuntime/Content/FayFab/CasualGirl/",
+            "FayAvatarRuntime/Content/Sample/",
             "current sealed UE5EpicArkit contract deliberately keeps",
         ):
             self.assertIn(marker, source)

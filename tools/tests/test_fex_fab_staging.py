@@ -201,11 +201,13 @@ class FexFabStagingContractTests(unittest.TestCase):
             "--cap-drop ALL",
             "--security-opt no-new-privileges",
             '--user "$container_user"',
+            '--mount "type=bind,src=$project_ddc,dst=$engine_root/Engine/DerivedDataCache"',
             '--entrypoint /usr/bin/env',
             'fab_phase_lock_exec_without_fd "${docker_base[@]}"',
             "FAY_FAB_INVENTORY_COMPLETE=OK",
             "systemctl --user is-active ue5-spark-avatar-live.service",
             '-nullrhi',
+            '-DDC-ForceMemoryCache',
             '>"$log" 2>&1',
         ):
             self.assertIn(marker, source)

@@ -13,6 +13,7 @@ class IFayBodyMotionProvider;
 class UAnimMontage;
 class UAnimInstance;
 class UFayArdyPoseClientComponent;
+class UFayCore27EpicAnimInstance;
 class UFayCore27SourceAnimInstance;
 class UFayAvatarBridgeComponent;
 class USkeletalMeshComponent;
@@ -96,6 +97,7 @@ private:
     void EnterBakedIdle(FName FailedBehavior, const FString& Reason);
     void ResetProviders();
     bool ConfigureGeneratedRetarget();
+    bool ConfigureEpicNativeRetarget(FString& OutReason);
     void TearDownGeneratedRetarget();
     void ResetGeneratedRetargetState();
     void UpdateGeneratedRetarget(float DeltaSeconds);
@@ -139,6 +141,10 @@ private:
     UPROPERTY(Transient)
     TObjectPtr<UFayCore27SourceAnimInstance> ArdySourceAnimation;
 
+    /** Native Core27 adapter used only by an exact UE5 Epic skeleton. */
+    UPROPERTY(Transient)
+    TObjectPtr<UFayCore27EpicAnimInstance> EpicTargetAnimation;
+
     UPROPERTY(Transient)
     TObjectPtr<UAnimInstance> TargetPostProcessAnimation;
 
@@ -150,6 +156,7 @@ private:
     EFayBodyMotionState MotionState = EFayBodyMotionState::Unconfigured;
     EFayBodyMotionProvider ActiveProvider = EFayBodyMotionProvider::Baked;
     bool bGeneratedRetargetReady = false;
+    bool bGeneratedRetargetUsesEpicNative = false;
     bool bSafeProceduralReady = false;
     bool bHasGeneratedRootOrigin = false;
     FVector3f GeneratedRootOriginMetres = FVector3f::ZeroVector;

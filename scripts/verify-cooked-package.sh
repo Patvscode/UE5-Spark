@@ -147,13 +147,9 @@ metahuman_package_pattern = re.compile(
     r"(?P<blueprint>BP_[A-Za-z][A-Za-z0-9_-]{0,63})\.uasset$"
 )
 casual_girl_id = "CasualGirl"
-casual_girl_actor = (
-    "/Game/FayFab/CasualGirl/Runtime/"
-    "BP_CasualGirlFay.BP_CasualGirlFay_C"
-)
+casual_girl_actor = "/Script/FayAvatarRuntime.FayCasualGirlActor"
 casual_girl_package = (
-    "FayAvatarRuntime/Content/FayFab/CasualGirl/Runtime/"
-    "BP_CasualGirlFay.uasset"
+    "FayAvatarRuntime/Content/Sample/Meshes/SK_Complete.uasset"
 )
 for character in characters:
     expected_character_keys = {"id", "adapter", "actorClass", "packageAsset"}
@@ -340,7 +336,7 @@ verify_deep_content() {
             "$temporary_listing" || fail 'the sealed package does not contain the reviewed MetaHuman garment material dependency'
     fi
     if (( requires_epic_arkit == 1 )); then
-        grep -Fq 'FayAvatarRuntime/Content/FayFab/CasualGirl/' \
+        grep -Fq 'FayAvatarRuntime/Content/Sample/' \
             "$temporary_listing" || fail 'the sealed package does not contain the reviewed Casual Girl content root'
     fi
     if (( requires_streaming_ada == 1 )); then

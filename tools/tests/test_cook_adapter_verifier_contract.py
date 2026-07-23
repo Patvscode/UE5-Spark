@@ -47,15 +47,9 @@ def casual_girl_profile() -> dict[str, object]:
     return {
         "id": "CasualGirl",
         "adapter": "UE5EpicArkit",
-        "actor_class": (
-            "/Game/FayFab/CasualGirl/Runtime/"
-            "BP_CasualGirlFay.BP_CasualGirlFay_C"
-        ),
-        "package_asset": (
-            "FayAvatarRuntime/Content/FayFab/CasualGirl/Runtime/"
-            "BP_CasualGirlFay.uasset"
-        ),
-        "cook_directories": ["/Game/FayFab/CasualGirl", "/StreamingADA"],
+        "actor_class": "/Script/FayAvatarRuntime.FayCasualGirlActor",
+        "package_asset": "FayAvatarRuntime/Content/Sample/Meshes/SK_Complete.uasset",
+        "cook_directories": ["/Game/Sample", "/StreamingADA"],
     }
 
 
@@ -82,14 +76,13 @@ class CookAdapterVerifierContractTests(unittest.TestCase):
                 "FayAvatarRuntime/Content/FayMetaHumans/Built/"
                 "AdaFay/BP_AdaFay.uasset",
                 "CasualGirl\tUE5EpicArkit\t"
-                "FayAvatarRuntime/Content/FayFab/CasualGirl/Runtime/"
-                "BP_CasualGirlFay.uasset",
+                "FayAvatarRuntime/Content/Sample/Meshes/SK_Complete.uasset",
             ],
         )
 
     def test_casual_girl_contract_requires_streaming_ada_for_this_schema(self) -> None:
         profile = casual_girl_profile()
-        profile["cook_directories"] = ["/Game/FayFab/CasualGirl"]
+        profile["cook_directories"] = ["/Game/Sample"]
         result = validate([profile])
         self.assertNotEqual(result.returncode, 0)
         self.assertIn(
@@ -151,7 +144,7 @@ class CookAdapterVerifierContractTests(unittest.TestCase):
             "if (( requires_metahuman == 1 )); then",
             "if (( requires_epic_arkit == 1 )); then",
             "if (( requires_streaming_ada == 1 )); then",
-            "FayAvatarRuntime/Content/FayFab/CasualGirl/",
+            "FayAvatarRuntime/Content/Sample/",
             "FayAvatarRuntime/Content/FayMetaHumans/Common_UE58/",
         ):
             self.assertIn(marker, source)

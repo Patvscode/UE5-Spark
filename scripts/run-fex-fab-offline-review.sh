@@ -228,6 +228,7 @@ docker_mounts=(
     --mount "type=bind,src=$fex_root,dst=$fex_root,readonly"
     --mount "type=bind,src=$rootfs_root,dst=$rootfs_root,readonly"
     --mount "type=bind,src=$engine_root,dst=$engine_root,readonly"
+    --mount "type=bind,src=$project_ddc,dst=$engine_root/Engine/DerivedDataCache"
     --mount "type=bind,src=$project_dir,dst=$project_dir,readonly"
     --mount "type=bind,src=$project_saved,dst=$project_saved"
     --mount "type=bind,src=$project_intermediate,dst=$project_intermediate"
@@ -489,6 +490,7 @@ editor_args=(
     -NoSourceControl
     -NoCompile
     -NoCompileEditor
+    -DDC-ForceMemoryCache
     -corelimit=2
     -onethread
     -norhithread

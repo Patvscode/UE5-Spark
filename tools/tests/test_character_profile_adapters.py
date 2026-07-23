@@ -12,17 +12,13 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 PROFILE_TOOL = REPO_ROOT / "scripts" / "character-profiles.py"
 PROFILE_CONFIG = REPO_ROOT / "Project/FayAvatarRuntime/Config/DefaultGame.ini"
 
-CASUAL_GIRL_ACTOR_CLASS = (
-    "/Game/FayFab/CasualGirl/Runtime/"
-    "BP_CasualGirlFay.BP_CasualGirlFay_C"
-)
-CASUAL_GIRL_PROJECT_ASSET = (
-    "Content/FayFab/CasualGirl/Runtime/BP_CasualGirlFay.uasset"
-)
+CASUAL_GIRL_ACTOR_CLASS = "/Script/FayAvatarRuntime.FayCasualGirlActor"
+CASUAL_GIRL_PROJECT_ASSET = "Content/Sample/Meshes/SK_Complete.uasset"
 CASUAL_GIRL_PACKAGE_ASSET = (
-    "FayAvatarRuntime/Content/FayFab/CasualGirl/Runtime/"
-    "BP_CasualGirlFay.uasset"
+    "FayAvatarRuntime/Content/Sample/Meshes/SK_Complete.uasset"
 )
+
+
 def run_profile(config: Path, *arguments: str) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         (sys.executable, str(PROFILE_TOOL), "--config", str(config), *arguments),
@@ -79,11 +75,11 @@ class CharacterProfileAdapterTests(unittest.TestCase):
         self.assertEqual(
             profiles["CasualGirl"]["actor_class"], CASUAL_GIRL_ACTOR_CLASS
         )
-        self.assertEqual(profiles["CasualGirl"]["face_component"], "Face")
+        self.assertEqual(profiles["CasualGirl"]["face_component"], "Body")
         self.assertEqual(profiles["CasualGirl"]["body_component"], "Body")
         self.assertEqual(
             profiles["CasualGirl"]["cook_directories"],
-            ["/Game/FayFab/CasualGirl", "/StreamingADA"],
+            ["/Game/Sample", "/StreamingADA"],
         )
         self.assertEqual(
             profiles["CasualGirl"]["project_asset"], CASUAL_GIRL_PROJECT_ASSET
@@ -94,8 +90,8 @@ class CharacterProfileAdapterTests(unittest.TestCase):
 
     def test_epic_arkit_streaming_ada_cook_root_is_optional(self) -> None:
         without_streaming_ada = self.reviewed_config.replace(
-            "CookDirectories=/Game/FayFab/CasualGirl;/StreamingADA",
-            "CookDirectories=/Game/FayFab/CasualGirl",
+            "CookDirectories=/Game/Sample;/StreamingADA",
+            "CookDirectories=/Game/Sample",
             1,
         )
         result = self.run_config(without_streaming_ada, "validate")
@@ -116,8 +112,7 @@ class CharacterProfileAdapterTests(unittest.TestCase):
             ),
             "alternate actor": (
                 f"ActorClass={CASUAL_GIRL_ACTOR_CLASS}",
-                "ActorClass=/Game/FayFab/CasualGirl/Runtime/"
-                "BP_Unreviewed.BP_Unreviewed_C",
+                "ActorClass=/Script/FayAvatarRuntime.UnreviewedActor",
                 "ActorClass",
             ),
             "actor traversal": (
@@ -127,45 +122,44 @@ class CharacterProfileAdapterTests(unittest.TestCase):
                 "ActorClass",
             ),
             "wrong face component": (
-                "FaceComponent=Face",
+                "FaceComponent=Body",
                 "FaceComponent=UnreviewedFace",
-                "exact Face and Body",
+                "exact reviewed face/body",
             ),
             "wrong body component": (
                 "BodyComponent=Body",
                 "BodyComponent=UnreviewedBody",
-                "exact Face and Body",
+                "exact reviewed face/body",
             ),
             "nested cook root": (
-                "CookDirectories=/Game/FayFab/CasualGirl;/StreamingADA",
-                "CookDirectories=/Game/FayFab/CasualGirl/Runtime;/StreamingADA",
-                "requires /Game/FayFab/CasualGirl",
+                "CookDirectories=/Game/Sample;/StreamingADA",
+                "CookDirectories=/Game/Sample/Meshes;/StreamingADA",
+                "requires /Game/Sample",
             ),
             "extra cook root": (
-                "CookDirectories=/Game/FayFab/CasualGirl;/StreamingADA",
-                "CookDirectories=/Game/FayFab/CasualGirl;/Game/Unreviewed",
+                "CookDirectories=/Game/Sample;/StreamingADA",
+                "CookDirectories=/Game/Sample;/Game/Unreviewed",
                 "cook directory is outside",
             ),
             "missing primary cook root": (
-                "CookDirectories=/Game/FayFab/CasualGirl;/StreamingADA",
+                "CookDirectories=/Game/Sample;/StreamingADA",
                 "CookDirectories=/StreamingADA",
-                "requires /Game/FayFab/CasualGirl",
+                "requires /Game/Sample",
             ),
             "alternate project asset": (
                 f"ProjectAsset={CASUAL_GIRL_PROJECT_ASSET}",
-                "ProjectAsset=Content/FayFab/CasualGirl/Runtime/Unreviewed.uasset",
+                "ProjectAsset=Content/Sample/Meshes/Unreviewed.uasset",
                 "ProjectAsset",
             ),
             "project asset traversal": (
                 f"ProjectAsset={CASUAL_GIRL_PROJECT_ASSET}",
-                "ProjectAsset=Content/FayFab/CasualGirl/../Private/"
-                "BP_CasualGirlFay.uasset",
+                "ProjectAsset=Content/Sample/../Private/SK_Complete.uasset",
                 "ProjectAsset",
             ),
             "alternate package asset": (
                 f"PackageAsset={CASUAL_GIRL_PACKAGE_ASSET}",
-                "PackageAsset=FayAvatarRuntime/Content/FayFab/CasualGirl/"
-                "Runtime/Unreviewed.uasset",
+                "PackageAsset=FayAvatarRuntime/Content/Sample/Meshes/"
+                "Unreviewed.uasset",
                 "PackageAsset",
             ),
         }

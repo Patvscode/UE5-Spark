@@ -87,14 +87,8 @@ meta_package = re.compile(
     r"(?P<blueprint>BP_[A-Za-z][A-Za-z0-9_-]{0,63})\.uasset$"
 )
 casual_id = "CasualGirl"
-casual_actor = (
-    "/Game/FayFab/CasualGirl/Runtime/"
-    "BP_CasualGirlFay.BP_CasualGirlFay_C"
-)
-casual_package = (
-    "FayAvatarRuntime/Content/FayFab/CasualGirl/Runtime/"
-    "BP_CasualGirlFay.uasset"
-)
+casual_actor = "/Script/FayAvatarRuntime.FayCasualGirlActor"
+casual_package = "FayAvatarRuntime/Content/Sample/Meshes/SK_Complete.uasset"
 seen_ids = set()
 seen_assets = set()
 for profile in profiles:
@@ -135,8 +129,8 @@ for profile in profiles:
             raise SystemExit("unreviewed UE5EpicArkit character ID")
         if actor_class != casual_actor or package_asset != casual_package:
             raise SystemExit("unsafe selected UE5EpicArkit profile paths")
-        if "/Game/FayFab/CasualGirl" not in cook_directories:
-            raise SystemExit("UE5EpicArkit cook contract omits the Casual Girl root")
+        if "/Game/Sample" not in cook_directories:
+            raise SystemExit("UE5EpicArkit cook contract omits the Casual Girl sample root")
         if "/StreamingADA" not in cook_directories:
             raise SystemExit(
                 "the current reviewed UE5EpicArkit cook contract requires StreamingADA"
@@ -223,7 +217,7 @@ fi
 
 if (( requires_epic_arkit == 1 )); then
     if ! find "$cook_root" -type f \
-        -path '*/FayAvatarRuntime/Content/FayFab/CasualGirl/*' \
+        -path '*/FayAvatarRuntime/Content/Sample/*' \
         -size +0c -print -quit | grep -q .; then
         fail 'the cooked Casual Girl content root is missing or empty'
     fi
@@ -242,6 +236,6 @@ if (( requires_metahuman == 1 )); then
     printf '  MetaHuman common and garment dependencies: present\n'
 fi
 if (( requires_epic_arkit == 1 )); then
-    printf '  Casual Girl content root and reviewed wrapper: present\n'
+    printf '  Casual Girl sample root and reviewed SK_Complete mesh: present\n'
 fi
 printf '  Editor-only helper: absent\n'

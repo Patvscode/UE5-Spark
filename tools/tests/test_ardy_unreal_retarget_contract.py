@@ -45,8 +45,8 @@ class ArdyUnrealRetargetContractTests(unittest.TestCase):
         self.assertIn("Converted.Normalize();", self.coordinate)
         self.assertEqual(
             self.plugin_sources.count("FayConvertArdyQuaternionToUnreal("),
-            3,
-            "one declaration, one definition, and one source-pose call are expected",
+            4,
+            "declaration, definition, Core27 source, and native Epic adapter are expected",
         )
 
         # Source unit axes must become Unreal forward, left, and up exactly.
