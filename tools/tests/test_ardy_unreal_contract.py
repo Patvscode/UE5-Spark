@@ -25,7 +25,7 @@ class ArdyUnrealContractTests(unittest.TestCase):
 
     def test_production_health_identity_is_exact(self) -> None:
         for marker in (
-            'Object->Values.Num() == 12',
+            'Object->Values.Num() == 13',
             'constexpr int32 ExpectedProtocolVersion = 2;',
             'CoordinateSystem == ExpectedCoordinateSystem',
             'ValidateSourceDescriptor(*Source)',
@@ -34,6 +34,8 @@ class ArdyUnrealContractTests(unittest.TestCase):
             'FacialControl == TEXT("excluded")',
             'Checkpoint == TEXT("ARDY-Core-RP-20FPS-Horizon8")',
             'EmbeddingCount == static_cast<double>(ExpectedMotionCatalog().Num())',
+            'Object->TryGetBoolField(TEXT("dynamicTextReady"), bDynamicTextReady)',
+            'bDynamicTextReady &&',
             'P95GenerationMilliseconds > 0.0',
             'P95GenerationMilliseconds < 400.0',
             'TEXT("FayAllowDiagnosticArdy=")',
@@ -96,6 +98,21 @@ class ArdyUnrealContractTests(unittest.TestCase):
         self.assertIn("int64 LastSequence = 0;", self.header)
         self.assertIn("LastSequence = Batch.Sequence;", self.source)
         self.assertNotIn("LastSequence = 0;", self.source)
+
+    def test_free_text_prompt_is_forwarded_on_every_pose_batch(self) -> None:
+        self.assertIn("FString ActivePrompt;", self.header)
+        start_behavior = self.source[
+            self.source.index("bool UFayArdyPoseClientComponent::StartBehavior") :
+            self.source.index("void UFayArdyPoseClientComponent::StopBehavior")
+        ]
+        self.assertIn("const FString& Prompt", start_behavior)
+        self.assertIn("Prompt.TrimStartAndEnd()", start_behavior)
+        self.assertIn("NormalizedPrompt.Len() > 512", start_behavior)
+        request = self.source[
+            self.source.index("void UFayArdyPoseClientComponent::RequestPoseBatch") :
+            self.source.index("void UFayArdyPoseClientComponent::RetireHealthRequest")
+        ]
+        self.assertIn('Payload->SetStringField(TEXT("prompt"), ActivePrompt);', request)
 
     def test_ready_service_is_requalified_periodically(self) -> None:
         for marker in (

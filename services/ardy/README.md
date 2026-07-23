@@ -11,17 +11,23 @@ image and the official Apache-2.0
 [nv-tlabs/ardy](https://github.com/nv-tlabs/ardy) source at a reviewed commit.
 It does not install host packages or include TensorRT.
 
-The service binds only to `127.0.0.1:8777` and exposes `GET /healthz` and
-`POST /v2/poses`. The incompatible v1 URL returns 404 rather than serving a v2
-envelope under a misleading path. Requests accept only a reviewed behavior,
-bounded intensity/duration, and the last consumed sequence. Arbitrary prompts
-and credentials are not part of the service API. Protocol v2 responses contain
-at most eight Core27 frames at 20 FPS. Each frame contains local XYZW rotations,
-global posed-joint positions, root translation/rotation, and contacts. Neck and
-head rotations are replaced with identity so StreamingADA retains ownership.
+The service binds only to `127.0.0.1:8777` and exposes `GET /healthz`,
+idempotent `POST /v2/prompts` prewarming, and `POST /v2/poses`. The incompatible
+v1 URL returns 404 rather than serving a v2 envelope under a misleading path.
+Pose requests retain the internal reviewed behavior used for routing and
+fallback, and may additionally carry any user-authored prompt from 1 to 512
+characters. Prompts receive no semantic allowlist or classifier. The real
+provider uses NVIDIA's official persistent LLM2Vec encoder and holds the 32
+most recently used prompt embeddings in a SHA-256-keyed LRU. Protocol v2
+responses contain at most eight Core27 frames at 20 FPS. Each frame contains
+local XYZW rotations, global posed-joint positions, root translation/rotation,
+and contacts. Root and Hips rotations are replaced with identity to keep the
+avatar upright; neck and head rotations are also replaced with identity so
+StreamingADA retains ownership.
 The root fields are a redundant stream anchor: root XYZ must equal global
-`positions[0]` (Hips), and root rotation must equal local `joints[0]` in the
-same quaternion hemisphere. Protocol validation rejects inconsistent data.
+`positions[0]` (Hips), and both root rotation and local `joints[0]` are identity
+in the same quaternion hemisphere. Protocol validation rejects inconsistent
+data.
 
 The source coordinate contract is explicit: ARDY is right-handed with +X
 pointing to the character's left, +Y up, +Z forward, and positions in metres.
@@ -50,11 +56,14 @@ Two providers exist:
 
 - `mock` produces deterministic protocol data for Unreal bridge and failure
   tests.
-- `ardy` loads the approved Horizon8 checkpoint and only the nine reviewed
-  cached embeddings in [`config/motion-catalog.json`](../../config/motion-catalog.json):
+- `ardy` loads the approved Horizon8 checkpoint, the nine reviewed cached
+  embeddings in [`config/motion-catalog.json`](../../config/motion-catalog.json),
+  and the official persistent text encoder for open prompts. The reviewed
+  cached behaviors remain the zero-encoding-latency path:
   `idle`, `listen`, `explain`, `wave`, `jog_in_place`, `run_in_place`,
-  `jumping_jacks`, `stretch`, and `dance_relaxed`. It reports degraded health
-  and returns 503 when the complete private cache is absent.
+  `jumping_jacks`, `stretch`, and `dance_relaxed`. It fails startup when either
+  the complete private motion cache or the pinned offline encoder cache is
+  absent.
 
 Protocol v2 bumps the sealed embedding manifest to schema 2. An existing
 three-embedding schema-1 cache is deliberately rejected and must be regenerated
@@ -63,15 +72,12 @@ source change does not replace or modify the currently qualified Spark runtime.
 Keep the existing qualified image available as rollback until v2 passes the
 same canary, render, and soak gates.
 
-The runtime wrapper uses a read-only root filesystem and checkpoint mount,
+The runtime wrapper uses a read-only root filesystem and checkpoint mounts,
 drops every Linux capability, enables `no-new-privileges`, applies a PID limit,
 and shares host networking only so the process can bind loopback. The normal
-runtime receives no Hugging Face token. Separate one-shot tools mount the token
-read-only and write only approved checkpoint IDs or the nine reviewed text
-embeddings. Embedding generation uses a private Hugging Face cache and publishes
-the complete cache atomically with prompt, exact encoder revision, shape, and
-file hash seals. The large one-time encoder cache is a sibling of the runtime
-model root, so the host-networked normal service cannot read it.
+runtime receives no Hugging Face token or network model access. Its completed,
+pinned Hugging Face cache is mounted read-only and forced into offline mode.
+Separate one-shot tools use credentials only to populate that private cache.
 
 Do not run a mixed v1/v2 activation sequence. The build script names the new
 `0.3.0` candidate, while the download, cache, run, activation, recovery, and

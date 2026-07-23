@@ -1,11 +1,20 @@
 from __future__ import annotations
 
+import hashlib
+import importlib.util
 import math
 import random
 import sys
 import unittest
 from copy import deepcopy
 from pathlib import Path
+
+try:
+    import numpy as np
+    import torch
+except ModuleNotFoundError:
+    np = None  # type: ignore[assignment]
+    torch = None  # type: ignore[assignment]
 
 
 SERVICE_ROOT = Path(__file__).resolve().parents[1] / "service"
@@ -28,9 +37,12 @@ from pose_protocol import (  # noqa: E402
     validate_batch,
 )
 from providers import (  # noqa: E402
+    ArdyPoseProvider,
+    DYNAMIC_PROMPT_CACHE_SIZE,
     MAX_CFG_WEIGHT,
     MIN_CFG_WEIGHT,
     MockPoseProvider,
+    PromptEmbeddingCache,
     _generation_window_frames,
     _serialize_contact_values,
     _validate_ardy_output_shapes,
@@ -60,6 +72,16 @@ class FakeHistory:
 class ShapedValue:
     def __init__(self, shape: tuple[int, ...]) -> None:
         self.shape = shape
+
+
+class FakeTextEncoder:
+    def __init__(self) -> None:
+        self.prompts: list[str] = []
+
+    def __call__(self, prompts: list[str]):
+        self.prompts.extend(prompts)
+        value = float(len(self.prompts))
+        return torch.full((1, 1, 4096), value), [1]
 
 
 def _quaternion_matrix(value: list[float]) -> list[list[float]]:
@@ -162,13 +184,73 @@ class PoseProtocolTests(unittest.TestCase):
         for behavior in GENERATED_BEHAVIORS:
             self.assertEqual(PoseRequest.from_json({"behavior": behavior}).behavior, behavior)
 
-    def test_request_is_allowlisted(self) -> None:
-        request = PoseRequest.from_json({"behavior": " WAVE ", "intensity": 0.8, "duration": 2})
+    def test_request_keeps_internal_behavior_allowlist_and_accepts_open_prompt(self) -> None:
+        request = PoseRequest.from_json({
+            "behavior": " WAVE ",
+            "intensity": 0.8,
+            "duration": 2,
+            "prompt": "  squat twice, then stand naturally  ",
+        })
         self.assertEqual(request.behavior, "wave")
+        self.assertEqual(request.prompt, "squat twice, then stand naturally")
         with self.assertRaises(ProtocolError):
             PoseRequest.from_json({"behavior": "execute arbitrary prompt"})
         with self.assertRaises(ProtocolError):
-            PoseRequest.from_json({"behavior": "idle", "prompt": "not allowed"})
+            PoseRequest.from_json({"behavior": "idle", "prompt": "   "})
+        with self.assertRaises(ProtocolError):
+            PoseRequest.from_json({"behavior": "idle", "prompt": "x" * 513})
+        with self.assertRaises(ProtocolError):
+            PoseRequest.from_json({"behavior": "idle", "prompt": 3})
+
+    @unittest.skipIf(torch is None, "torch is unavailable")
+    def test_dynamic_prompt_cache_is_sha256_keyed_bounded_and_idempotent(self) -> None:
+        encoder = FakeTextEncoder()
+        cache = PromptEmbeddingCache(encoder, torch, "cpu")
+        first, prompt_id, cached = cache.resolve("squat")
+        second, repeated_id, repeated_cached = cache.resolve("squat")
+        self.assertFalse(cached)
+        self.assertTrue(repeated_cached)
+        self.assertEqual(prompt_id, hashlib.sha256(b"squat").hexdigest())
+        self.assertEqual(repeated_id, prompt_id)
+        self.assertIs(second, first)
+        self.assertEqual(encoder.prompts, ["squat"])
+
+        for index in range(DYNAMIC_PROMPT_CACHE_SIZE):
+            cache.resolve(f"movement {index}")
+        self.assertEqual(cache.count, DYNAMIC_PROMPT_CACHE_SIZE)
+        cache.resolve("squat")
+        self.assertEqual(encoder.prompts.count("squat"), 2)
+
+    @unittest.skipIf(
+        np is None or importlib.util.find_spec("scipy") is None,
+        "numpy/scipy are unavailable",
+    )
+    def test_serialization_locks_root_and_hips_rotations_to_identity(self) -> None:
+        provider = object.__new__(ArdyPoseProvider)
+        provider._hemispheres = QuaternionHemisphereTracker()
+        provider._time = 0.0
+        identity_matrix = np.eye(3, dtype=np.float32)
+        tilted_matrix = np.asarray(
+            [[0.0, -1.0, 0.0], [1.0, 0.0, 0.0], [0.0, 0.0, 1.0]],
+            dtype=np.float32,
+        )
+        matrices = np.tile(identity_matrix, (8, 27, 1, 1))
+        matrices[:, 0] = tilted_matrix
+        root_matrices = np.tile(tilted_matrix, (8, 1, 1))
+        roots = np.zeros((8, 3), dtype=np.float32)
+        positions = np.zeros((8, 27, 3), dtype=np.float32)
+        contacts = np.zeros((8, 4), dtype=np.float32)
+
+        frames, _tracker, _next_time = provider._serialize_frames(
+            matrices,
+            root_matrices,
+            roots,
+            positions,
+            contacts,
+        )
+        for frame in frames:
+            self.assertEqual(frame["root"][3:], [0.0, 0.0, 0.0, 1.0])
+            self.assertEqual(frame["joints"][0], [0.0, 0.0, 0.0, 1.0])
 
     def test_mock_batch_is_v2_core27_with_positions_and_face_exclusion(self) -> None:
         provider = MockPoseProvider()

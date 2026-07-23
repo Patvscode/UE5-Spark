@@ -231,7 +231,8 @@ public:
         return CanPerform(Request) && Client->StartBehavior(
             Request.Behavior,
             Request.Intensity,
-            Request.DurationSeconds);
+            Request.DurationSeconds,
+            Request.Prompt);
     }
     virtual void Stop(const float BlendOutSeconds) override
     {
@@ -1186,6 +1187,7 @@ void UFayBodyMotionComponent::HandleAvatarMessage(const FFayAvatarMessage& Messa
     }
     FFayBodyMotionRequest Request;
     Request.Behavior = NormalizeBehavior(FName(*Message.Action.Behavior));
+    Request.Prompt = Message.Action.Prompt;
     Request.Intensity = FMath::IsFinite(Message.Action.Intensity)
         ? FMath::Clamp(Message.Action.Intensity, 0.0f, 1.0f)
         : 0.5f;

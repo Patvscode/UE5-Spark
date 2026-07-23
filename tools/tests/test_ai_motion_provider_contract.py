@@ -109,12 +109,11 @@ class AiMotionProviderContractTests(unittest.TestCase):
                 "context": self.runtime_context(),
             })
 
-    def test_asset_context_enters_only_the_structured_planner_input(self) -> None:
+    def test_asset_aware_mode_still_forwards_unrestricted_ardy_text(self) -> None:
         handler = object.__new__(CONTROLLER.ControllerHandler)
         handler.server = SimpleNamespace(
             ai_control=SimpleNamespace(selected_mode=lambda: "asset_aware_ai"),
-            llm_base="http://127.0.0.1:8080",
-            motion_planner_model="local-motion-planner",
+            ardy_base="http://127.0.0.1:8777",
         )
         captured = {}
         dispatched = []
@@ -122,7 +121,7 @@ class AiMotionProviderContractTests(unittest.TestCase):
 
         def fake_upstream(url, payload, *, timeout):
             captured.update({"url": url, "payload": payload, "timeout": timeout})
-            return {"choices": [{"message": {"content": '{"catalogId":"wave"}'}}]}
+            return {"ok": True, "promptId": "c" * 64, "cached": False}
 
         handler._upstream_json = fake_upstream
         handler._dispatch_action = lambda action: (
@@ -138,23 +137,12 @@ class AiMotionProviderContractTests(unittest.TestCase):
             "context": self.runtime_context(),
         })
 
-        user_content = captured["payload"]["messages"][1]["content"]
-        self.assertEqual(
-            captured["payload"]["messages"][0]["content"],
-            CONTROLLER.ASSET_AWARE_MOTION_PLANNER_SYSTEM_PROMPT,
-        )
-        structured = CONTROLLER.json.loads(user_content)
-        self.assertEqual(structured, {
-            "command": "make a friendly greeting",
-            "runtimeContext": self.runtime_context(),
-        })
-        self.assertTrue(responses[0][1]["assetContextUsed"])
+        self.assertEqual(captured["url"], "http://127.0.0.1:8777/v2/prompts")
+        self.assertEqual(captured["payload"], {"prompt": "make a friendly greeting"})
+        self.assertFalse(responses[0][1]["assetContextUsed"])
         self.assertEqual(responses[0][1]["aiControlMode"], "asset_aware_ai")
         self.assertEqual(dispatched[0]["provider"], "hybrid")
-
-        serialized = CONTROLLER.json.dumps(structured)
-        for forbidden in ("mesh", "texture", "morph", "image", "animation"):
-            self.assertNotIn(forbidden, serialized.lower())
+        self.assertEqual(dispatched[0]["prompt"], "make a friendly greeting")
 
     def test_browser_sends_context_only_while_controller_is_asset_aware(self) -> None:
         source = APP_PATH.read_text()
@@ -185,10 +173,12 @@ class AiMotionProviderContractTests(unittest.TestCase):
         header = (BRIDGE_ROOT / "Public/FayAvatarBridgeComponent.h").read_text()
         source = (BRIDGE_ROOT / "Private/FayAvatarBridgeComponent.cpp").read_text()
         self.assertIn("FString Provider;", header)
+        self.assertIn("FString Prompt;", header)
         self.assertIn('Action->HasField(TEXT("provider"))', source)
         self.assertIn('OutMessage.Action.Provider != TEXT("baked")', source)
         self.assertIn('OutMessage.Action.Provider != TEXT("hybrid")', source)
         self.assertIn("unsupported motion provider hint", source)
+        self.assertIn('Action->HasField(TEXT("prompt"))', source)
 
     def test_deterministic_route_cannot_reach_ardy(self) -> None:
         types = (MOTION_ROOT / "Public/FayBodyMotionTypes.h").read_text()

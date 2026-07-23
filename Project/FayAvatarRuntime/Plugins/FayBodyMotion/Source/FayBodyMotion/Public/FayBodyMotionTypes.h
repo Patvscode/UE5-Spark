@@ -36,6 +36,10 @@ struct FAYBODYMOTION_API FFayBodyMotionRequest
     UPROPERTY(BlueprintReadOnly, Category = "Fay|Body Motion")
     FName Behavior = NAME_None;
 
+    /** Optional generative text condition; empty selects the preset embedding. */
+    UPROPERTY(BlueprintReadOnly, Category = "Fay|Body Motion")
+    FString Prompt;
+
     UPROPERTY(BlueprintReadOnly, Category = "Fay|Body Motion")
     float Intensity = 0.5f;
 

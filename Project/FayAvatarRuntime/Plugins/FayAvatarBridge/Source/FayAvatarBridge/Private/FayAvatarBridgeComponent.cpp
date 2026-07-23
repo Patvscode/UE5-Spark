@@ -901,6 +901,20 @@ bool UFayAvatarBridgeComponent::ParseAvatarMessage(
                 return false;
             }
         }
+        if (Action->HasField(TEXT("prompt")))
+        {
+            if (!Action->TryGetStringField(TEXT("prompt"), OutMessage.Action.Prompt))
+            {
+                OutError = TEXT("A Fay action contained a non-text motion prompt.");
+                return false;
+            }
+            OutMessage.Action.Prompt = OutMessage.Action.Prompt.TrimStartAndEnd();
+            if (OutMessage.Action.Prompt.IsEmpty() || OutMessage.Action.Prompt.Len() > 512)
+            {
+                OutError = TEXT("A Fay action motion prompt was outside the 1-512 character transport bound.");
+                return false;
+            }
+        }
         Action->TryGetNumberField(TEXT("intensity"), OutMessage.Action.Intensity);
         Action->TryGetNumberField(TEXT("priority"), OutMessage.Action.Priority);
         Action->TryGetNumberField(TEXT("sentimentHint"), OutMessage.Action.SentimentHint);

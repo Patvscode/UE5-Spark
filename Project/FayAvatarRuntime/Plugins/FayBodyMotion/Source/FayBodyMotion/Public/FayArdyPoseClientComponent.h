@@ -26,7 +26,11 @@ public:
         ELevelTick TickType,
         FActorComponentTickFunction* ThisTickFunction) override;
 
-    bool StartBehavior(FName Behavior, float Intensity, float DurationSeconds);
+    bool StartBehavior(
+        FName Behavior,
+        float Intensity,
+        float DurationSeconds,
+        const FString& Prompt = FString());
     void StopBehavior();
     bool SamplePose(float DeltaSeconds, FFayArdyPoseFrame& OutPose);
 
@@ -58,6 +62,7 @@ private:
 
     FString BaseUrl = TEXT("http://127.0.0.1:8777");
     FName ActiveBehavior = TEXT("idle");
+    FString ActivePrompt;
     TArray<FFayArdyPoseFrame> PoseBuffer;
     TSharedPtr<IHttpRequest, ESPMode::ThreadSafe> HealthRequest;
     TSharedPtr<IHttpRequest, ESPMode::ThreadSafe> PoseRequest;

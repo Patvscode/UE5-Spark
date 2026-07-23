@@ -41,6 +41,10 @@ struct FAYAVATARBRIDGE_API FFayAvatarAction
     UPROPERTY(BlueprintReadOnly, Category = "Fay|Action")
     FString Provider;
 
+    /** Optional free-text body-motion condition forwarded unchanged to ARDY. */
+    UPROPERTY(BlueprintReadOnly, Category = "Fay|Action")
+    FString Prompt;
+
     UPROPERTY(BlueprintReadOnly, Category = "Fay|Action")
     float Intensity = 0.0f;
 

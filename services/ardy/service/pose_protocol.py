@@ -97,12 +97,19 @@ class PoseRequest:
     intensity: float
     duration: float
     after_sequence: int
+    prompt: str | None = None
 
     @classmethod
     def from_json(cls, value: object) -> "PoseRequest":
         if not isinstance(value, dict):
             raise ProtocolError("request must be a JSON object")
-        allowed_keys = {"behavior", "intensity", "duration", "afterSequence"}
+        allowed_keys = {
+            "behavior",
+            "intensity",
+            "duration",
+            "afterSequence",
+            "prompt",
+        }
         if set(value) - allowed_keys:
             raise ProtocolError("request contains unsupported fields")
         behavior = value.get("behavior", "idle")
@@ -122,7 +129,21 @@ class PoseRequest:
             raise ProtocolError("duration must be between 0.2 and 10 seconds")
         if not 0 <= after_sequence <= 2**63 - 1:
             raise ProtocolError("afterSequence is outside the supported range")
-        return cls(behavior, intensity, duration, after_sequence)
+        prompt = value.get("prompt")
+        if prompt is not None:
+            prompt = normalize_prompt(prompt)
+        return cls(behavior, intensity, duration, after_sequence, prompt)
+
+
+def normalize_prompt(value: object) -> str:
+    """Normalize one user-authored ARDY prompt without semantic filtering."""
+
+    if not isinstance(value, str):
+        raise ProtocolError("prompt must be a string")
+    prompt = value.strip()
+    if not 1 <= len(prompt) <= 512:
+        raise ProtocolError("prompt must contain 1 to 512 characters")
+    return prompt
 
 
 def _finite_number(value: object, label: str) -> float:

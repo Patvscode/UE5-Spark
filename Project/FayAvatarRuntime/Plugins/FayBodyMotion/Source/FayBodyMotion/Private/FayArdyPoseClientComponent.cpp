@@ -261,6 +261,7 @@ void UFayArdyPoseClientComponent::EndPlay(const EEndPlayReason::Type EndPlayReas
 {
     bClientEnabled = false;
     ActiveBehavior = NAME_None;
+    ActivePrompt.Reset();
     RetireHealthRequest();
     RetirePoseRequest();
     SetReady(false);
@@ -300,7 +301,8 @@ void UFayArdyPoseClientComponent::TickComponent(
 bool UFayArdyPoseClientComponent::StartBehavior(
     const FName Behavior,
     const float Intensity,
-    const float DurationSeconds)
+    const float DurationSeconds,
+    const FString& Prompt)
 {
     if (!bClientEnabled || !bServiceReady ||
         !UFayBodyMotionComponent::IsBehaviorAllowed(Behavior) ||
@@ -308,8 +310,14 @@ bool UFayArdyPoseClientComponent::StartBehavior(
     {
         return false;
     }
+    const FString NormalizedPrompt = Prompt.TrimStartAndEnd();
+    if (NormalizedPrompt.Len() > 512)
+    {
+        return false;
+    }
     RetirePoseRequest();
     ActiveBehavior = FName(*Behavior.ToString().TrimStartAndEnd().ToLower());
+    ActivePrompt = NormalizedPrompt;
     ActiveIntensity = FMath::Clamp(FMath::IsFinite(Intensity) ? Intensity : 0.5f, 0.0f, 1.0f);
     ActiveDurationSeconds = FMath::Clamp(
         FMath::IsFinite(DurationSeconds) ? DurationSeconds : 1.0f,
@@ -331,6 +339,7 @@ bool UFayArdyPoseClientComponent::SupportsBehavior(const FName Behavior) const
 void UFayArdyPoseClientComponent::StopBehavior()
 {
     ActiveBehavior = NAME_None;
+    ActivePrompt.Reset();
     RetirePoseRequest();
     PoseBuffer.Reset();
     bPlaybackStarted = false;
@@ -419,6 +428,10 @@ void UFayArdyPoseClientComponent::RequestPoseBatch()
     }
     TSharedRef<FJsonObject> Payload = MakeShared<FJsonObject>();
     Payload->SetStringField(TEXT("behavior"), ActiveBehavior.ToString());
+    if (!ActivePrompt.IsEmpty())
+    {
+        Payload->SetStringField(TEXT("prompt"), ActivePrompt);
+    }
     Payload->SetNumberField(TEXT("intensity"), ActiveIntensity);
     Payload->SetNumberField(TEXT("duration"), ActiveDurationSeconds);
     Payload->SetNumberField(TEXT("afterSequence"), static_cast<double>(LastSequence));
@@ -492,6 +505,7 @@ void UFayArdyPoseClientComponent::HandleHealthResponse(
         double BufferFrames = 0.0;
         double EmbeddingCount = 0.0;
         double P95GenerationMilliseconds = 0.0;
+        bool bDynamicTextReady = false;
         FString Provider;
         FString FacialControl;
         FString CoordinateSystem;
@@ -500,7 +514,7 @@ void UFayArdyPoseClientComponent::HandleHealthResponse(
         const TArray<TSharedPtr<FJsonValue>>* MotionCatalog = nullptr;
         const bool bBaseHealthReady =
             FJsonSerializer::Deserialize(Reader, Object) && Object.IsValid() &&
-            Object->Values.Num() == 12 &&
+            Object->Values.Num() == 13 &&
             Object->TryGetStringField(TEXT("status"), Status) && Status == TEXT("ready") &&
             Object->TryGetStringField(TEXT("provider"), Provider) &&
             Object->TryGetNumberField(TEXT("protocolVersion"), Version) &&
@@ -522,7 +536,8 @@ void UFayArdyPoseClientComponent::HandleHealthResponse(
             FMath::IsFinite(EmbeddingCount) &&
             Object->TryGetNumberField(
                 TEXT("p95GenerationMs"), P95GenerationMilliseconds) &&
-            FMath::IsFinite(P95GenerationMilliseconds);
+            FMath::IsFinite(P95GenerationMilliseconds) &&
+            Object->TryGetBoolField(TEXT("dynamicTextReady"), bDynamicTextReady);
         if (bBaseHealthReady && bAllowDiagnosticProvider)
         {
             bReady = true;
@@ -533,6 +548,7 @@ void UFayArdyPoseClientComponent::HandleHealthResponse(
                 Object->TryGetStringField(TEXT("checkpoint"), Checkpoint) &&
                 Checkpoint == TEXT("ARDY-Core-RP-20FPS-Horizon8") &&
                 EmbeddingCount == static_cast<double>(ExpectedMotionCatalog().Num()) &&
+                bDynamicTextReady &&
                 P95GenerationMilliseconds > 0.0 &&
                 P95GenerationMilliseconds < 400.0;
         }

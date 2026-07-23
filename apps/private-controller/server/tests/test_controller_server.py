@@ -51,7 +51,7 @@ class ValidationTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 SERVER.normalize_action(payload)
 
-    def test_motion_command_is_narrow_and_does_not_accept_paths_or_urls(self):
+    def test_motion_command_preserves_free_text_with_only_transport_bounds(self):
         self.assertEqual(
             SERVER.normalize_motion_command({"command": "  please do jumping jacks  "}),
             "please do jumping jacks",
@@ -60,12 +60,14 @@ class ValidationTests(unittest.TestCase):
             {},
             {"command": ""},
             {"command": "wave", "duration": 100},
-            {"command": "open https://example.com/motion"},
-            {"command": "load ../motion.json"},
-            {"command": "x" * 161},
+            {"command": "x" * 513},
         ):
             with self.assertRaises(ValueError):
                 SERVER.normalize_motion_command(payload)
+        self.assertEqual(
+            SERVER.normalize_motion_command({"command": "walk toward https://example.com/door"}),
+            "walk toward https://example.com/door",
+        )
 
     def test_motion_catalog_owns_parameters_and_route(self):
         planned = SERVER.resolve_motion_command(
@@ -76,7 +78,7 @@ class ValidationTests(unittest.TestCase):
         self.assertEqual(planned["duration"], 8.0)
         self.assertEqual(planned["intensity"], 0.72)
         self.assertEqual(planned["rootMode"], "locked")
-        self.assertFalse(planned["rendererPackaged"])
+        self.assertTrue(planned["rendererPackaged"])
         self.assertEqual(planned["routeBehavior"], "jumping_jacks")
 
         routed = SERVER.resolve_motion_command("please wave", planner_catalog_id="stretch")
@@ -106,11 +108,13 @@ class ValidationTests(unittest.TestCase):
             else:
                 self.assertEqual(behavior, catalog_id)
 
-    def test_staged_motion_is_never_dispatched_and_packaged_motion_is_normalized(self):
+    def test_deterministic_catalog_motion_is_normalized_before_dispatch(self):
         handler = object.__new__(SERVER.ControllerHandler)
         handler.server = SimpleNamespace(
-            ai_control=SERVER.LocalAiControlState(SERVER.CHARACTER_AI_CONTROL_CONFIG)
+            ai_control=SERVER.LocalAiControlState(SERVER.CHARACTER_AI_CONTROL_CONFIG),
+            ardy_base="http://127.0.0.1:8777",
         )
+        handler.server.ai_control.select({"mode": "deterministic"})
         responses = []
         dispatched = []
         handler._motion_planner_suggestion = lambda _command: None
@@ -123,17 +127,50 @@ class ValidationTests(unittest.TestCase):
         )
 
         handler._motion_command({"command": "do jumping jacks"})
-        self.assertEqual(responses[-1][0], SERVER.HTTPStatus.ACCEPTED)
-        self.assertEqual(responses[-1][1]["status"], "staged")
-        self.assertEqual(dispatched, [])
+        self.assertEqual(responses[-1][0], SERVER.HTTPStatus.OK)
+        self.assertEqual(responses[-1][1]["status"], "routed")
+        self.assertEqual(dispatched[-1]["behavior"], "jumping_jacks")
+        self.assertEqual(dispatched[-1]["provider"], "baked")
 
         handler._motion_command({"command": "wave hello"})
         self.assertEqual(responses[-1][0], SERVER.HTTPStatus.OK)
         self.assertEqual(responses[-1][1]["status"], "routed")
         self.assertEqual(dispatched[-1], {
             "behavior": "wave", "duration": 2.4, "intensity": 0.65,
-            "user": "User", "provider": "hybrid",
+            "user": "User", "provider": "baked",
         })
+
+    def test_ai_motion_prewarms_and_forwards_the_complete_prompt(self):
+        handler = object.__new__(SERVER.ControllerHandler)
+        handler.server = SimpleNamespace(
+            ai_control=SERVER.LocalAiControlState(SERVER.CHARACTER_AI_CONTROL_CONFIG),
+            ardy_base="http://127.0.0.1:8777",
+        )
+        responses = []
+        dispatched = []
+        upstream = []
+        handler._json = lambda status, payload: responses.append((status, payload))
+        handler._upstream_json = lambda url, payload, *, timeout: (
+            upstream.append((url, payload, timeout))
+            or {"ok": True, "promptId": "a" * 64, "cached": False}
+        )
+        handler._dispatch_action = lambda action: (
+            dispatched.append(action) or (
+                SERVER.HTTPStatus.OK,
+                {"ok": True, "live": True, "replay": False, "behavior": action["behavior"]},
+            )
+        )
+
+        prompt = "Crouch twice, recover your balance, then wave with your left hand."
+        handler._motion_command({"command": prompt})
+        self.assertEqual(upstream, [(
+            "http://127.0.0.1:8777/v2/prompts", {"prompt": prompt}, 120,
+        )])
+        self.assertEqual(dispatched[-1]["behavior"], "explain")
+        self.assertEqual(dispatched[-1]["prompt"], prompt)
+        self.assertEqual(dispatched[-1]["provider"], "hybrid")
+        self.assertTrue(responses[-1][1]["promptForwarded"])
+        self.assertEqual(responses[-1][1]["prompt"], prompt)
 
     def test_motion_planner_can_use_a_model_independent_from_chat(self):
         handler = object.__new__(SERVER.ControllerHandler)

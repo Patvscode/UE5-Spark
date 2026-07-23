@@ -8,7 +8,7 @@
     {
       "id": "deterministic",
       "label": "Deterministic",
-      "description": "Use reviewed catalog matching only, without a generative motion planner.",
+      "description": "Use quick presets and dependable fallback motion without free-text generation.",
       "usesGenerativeMotion": false,
       "acceptsCharacterAssetContext": false,
       "requiresExplicitLocalOptIn": false
@@ -16,7 +16,7 @@
     {
       "id": "ai_motion",
       "label": "AI motion",
-      "description": "Interpret user movement intent into generic poses without character or scene context.",
+      "description": "Send the complete user movement description to ARDY without character or scene context.",
       "usesGenerativeMotion": true,
       "acceptsCharacterAssetContext": false,
       "requiresExplicitLocalOptIn": false

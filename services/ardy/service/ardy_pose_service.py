@@ -19,6 +19,7 @@ from pose_protocol import (
     PROTOCOL_VERSION,
     PoseRequest,
     ProtocolError,
+    normalize_prompt,
     source_descriptor,
 )
 from providers import ArdyPoseProvider, MockPoseProvider
@@ -69,6 +70,9 @@ class PoseHandler(BaseHTTPRequestHandler):
         )
 
     def do_POST(self) -> None:  # noqa: N802
+        if self.path == "/v2/prompts":
+            self._prewarm_prompt()
+            return
         if self.path != "/v2/poses":
             self._json(HTTPStatus.NOT_FOUND, {"error": "not_found"})
             return
@@ -83,6 +87,37 @@ class PoseHandler(BaseHTTPRequestHandler):
             self._json(HTTPStatus.SERVICE_UNAVAILABLE, {"error": "provider_unavailable"})
             return
         self._json(HTTPStatus.OK, batch)
+
+    def _prewarm_prompt(self) -> None:
+        try:
+            payload = self._read_json()
+            if not isinstance(payload, dict) or set(payload) != {"prompt"}:
+                raise ProtocolError("prompt prewarm requires exactly one prompt")
+            prompt = normalize_prompt(payload["prompt"])
+        except (ProtocolError, json.JSONDecodeError, UnicodeDecodeError) as error:
+            self._json(
+                HTTPStatus.BAD_REQUEST,
+                {"error": "invalid_request", "detail": str(error)},
+            )
+            return
+
+        prewarm = getattr(self.server.provider, "prewarm_prompt", None)
+        if not callable(prewarm):
+            self._json(
+                HTTPStatus.SERVICE_UNAVAILABLE,
+                {"error": "dynamic_text_unavailable"},
+            )
+            return
+        try:
+            response = prewarm(prompt)
+        except Exception:
+            LOGGER.exception("prompt prewarm failed")
+            self._json(
+                HTTPStatus.SERVICE_UNAVAILABLE,
+                {"error": "provider_unavailable"},
+            )
+            return
+        self._json(HTTPStatus.OK, response)
 
     def _read_json(self) -> object:
         value = self.headers.get("Content-Length")

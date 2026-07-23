@@ -27,12 +27,12 @@ from typing import Any
 TAILSCALE_NET = ipaddress.ip_network("100.64.0.0/10")
 MAX_REQUEST_BYTES = 8 * 1024
 MAX_MESSAGE_CHARS = 2_000
-MAX_MOTION_COMMAND_CHARS = 160
+MAX_MOTION_COMMAND_CHARS = 512
 MAX_LIVE_FRAME_BYTES = 2 * 1024 * 1024
 MAX_LIVE_FRAME_AGE_SECONDS = 2.0
 MAX_RENDERER_CONTROL_BYTES = 16 * 1024
 MAX_RENDERER_STATE_AGE_SECONDS = 6.0
-SERVER_VERSION = "prototype-6"
+SERVER_VERSION = "prototype-7-open-text"
 THINK_BLOCK_PATTERN = re.compile(r"<think>.*?(?:</think>|$)", re.IGNORECASE | re.DOTALL)
 LLM_MODEL_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}")
 CHAT_SYSTEM_PROMPT = (
@@ -479,7 +479,9 @@ def motion_provider_for_ai_control_mode(mode: object) -> str:
 def normalize_action(
     payload: object, *, provider_hint: str | None = None
 ) -> dict[str, object]:
-    if not isinstance(payload, dict) or not set(payload).issubset({"behavior", "intensity", "duration"}):
+    if not isinstance(payload, dict) or not set(payload).issubset(
+        {"behavior", "intensity", "duration", "prompt"}
+    ):
         raise ValueError("action must be a small JSON object")
     behavior = str(payload.get("behavior", "")).strip().lower()
     if behavior not in ALLOWED_BEHAVIORS:
@@ -497,6 +499,14 @@ def normalize_action(
         "duration": duration,
         "user": "User",
     }
+    if "prompt" in payload:
+        prompt = payload.get("prompt")
+        if not isinstance(prompt, str):
+            raise ValueError("motion prompt must be text")
+        prompt = prompt.strip()
+        if not prompt or len(prompt) > MAX_MOTION_COMMAND_CHARS:
+            raise ValueError("motion prompt must contain 1 to 512 characters")
+        action["prompt"] = prompt
     if provider_hint is not None:
         if not isinstance(provider_hint, str) or provider_hint not in MOTION_PROVIDER_HINTS:
             raise ValueError("motion provider hint is not supported")
@@ -512,11 +522,9 @@ def normalize_motion_command(payload: object) -> str:
         raise ValueError("movement command must be text")
     command = re.sub(r"[ \t]+", " ", command).strip()
     if not command or len(command) > MAX_MOTION_COMMAND_CHARS:
-        raise ValueError("movement command must contain 1 to 160 characters")
+        raise ValueError("movement command must contain 1 to 512 characters")
     if any(ord(character) < 32 for character in command):
         raise ValueError("movement command must be one line")
-    if "/" in command or "\\" in command or re.search(r"\b(?:https?|www)\s*[:.]", command, re.I):
-        raise ValueError("movement command must not contain a path or URL")
     return command
 
 
@@ -1191,16 +1199,73 @@ class ControllerHandler(BaseHTTPRequestHandler):
         ai_control_mode = self.server.ai_control.selected_mode()
         if runtime_context is not None and ai_control_mode != "asset_aware_ai":
             raise ValueError("runtime context requires asset_aware_ai mode")
+
+        # ARDY is a text-conditioned generative model. In either generative
+        # mode, preserve the user's complete movement description instead of
+        # reducing it to the deterministic quick-preset catalog. Prewarming is
+        # intentionally completed before Fay tells Unreal to begin, because
+        # Unreal's high-frequency pose requests have a much shorter timeout.
+        if ai_control_mode != "deterministic":
+            try:
+                prepared = self._upstream_json(
+                    f"{self.server.ardy_base}/v2/prompts",
+                    {"prompt": command},
+                    timeout=120,
+                )
+                prompt_id = prepared.get("promptId")
+                if (
+                    prepared.get("ok") is not True
+                    or not isinstance(prompt_id, str)
+                    or re.fullmatch(r"[0-9a-f]{64}", prompt_id) is None
+                ):
+                    raise ValueError("ARDY returned an invalid prompt receipt")
+            except (
+                OSError,
+                ValueError,
+                urllib.error.HTTPError,
+                urllib.error.URLError,
+                socket.timeout,
+            ):
+                self._json(HTTPStatus.SERVICE_UNAVAILABLE, {
+                    "error": "ardy_prompt_unavailable",
+                    "detail": "ARDY could not prepare that movement prompt. Nothing was sent.",
+                })
+                return
+
+            duration = 8.0
+            intensity = 0.65
+            action = normalize_action({
+                # Explain is only the existing generated-provider/fallback
+                # carrier. The prompt—not this carrier ID—conditions ARDY.
+                "behavior": "explain",
+                "prompt": command,
+                "duration": duration,
+                "intensity": intensity,
+            }, provider_hint="hybrid")
+            status, response = self._dispatch_action(action)
+            if status != HTTPStatus.OK:
+                self._json(status, response)
+                return
+            self._json(HTTPStatus.OK, {
+                "status": "routed",
+                **response,
+                "label": "Generated movement",
+                "prompt": command,
+                "promptId": prompt_id,
+                "promptForwarded": True,
+                "duration": duration,
+                "intensity": intensity,
+                "rootMode": "locked",
+                "rendererPackaged": True,
+                "plannerAdvisoryUsed": False,
+                "aiControlMode": ai_control_mode,
+                "assetContextUsed": False,
+            })
+            return
+
         direct_catalog_id = direct_motion_catalog_id(command)
         asset_context_used = False
-        if direct_catalog_id is not None or ai_control_mode == "deterministic":
-            planner_catalog_id = None
-        elif runtime_context is not None:
-            planner_catalog_id, asset_context_used = (
-                self._motion_planner_suggestion_with_context(command, runtime_context)
-            )
-        else:
-            planner_catalog_id = self._motion_planner_suggestion(command)
+        planner_catalog_id = None
         plan = resolve_motion_command(command, planner_catalog_id)
         if plan is None:
             self._json(HTTPStatus.UNPROCESSABLE_ENTITY, {

@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+from collections import OrderedDict
 import hashlib
 import json
 import math
+import os
 from pathlib import Path
 import threading
 import time
@@ -40,6 +42,7 @@ IDENTITY = [0.0, 0.0, 0.0, 1.0]
 MAX_HISTORY_FRAMES = 192
 MIN_CFG_WEIGHT = 1.25
 MAX_CFG_WEIGHT = 2.75
+DYNAMIC_PROMPT_CACHE_SIZE = 32
 
 # Deterministic source-basis standing positions for the protocol-only mock.
 # ARDY +X points to the character's left, +Y is up, and +Z is forward.
@@ -236,6 +239,106 @@ def load_embedding_cache(root: Path, np_module: object) -> dict[str, tuple[objec
     return result
 
 
+def load_offline_text_encoder(device: str) -> object:
+    """Load ARDY's official LLM2Vec encoder from the mounted pinned cache."""
+
+    # Keep the heavy NumPy-backed cache tooling out of mock/protocol imports;
+    # production images provide it, while lightweight contract runners do not.
+    from cache_embeddings import verify_encoder_revisions
+
+    cache_value = os.environ.get("HUGGINGFACE_CACHE_DIR", "")
+    if not cache_value:
+        raise RuntimeError("HUGGINGFACE_CACHE_DIR is required for dynamic text")
+    cache_root = Path(cache_value)
+    if cache_root.is_symlink():
+        raise RuntimeError("the dynamic-text cache root must not be a symlink")
+    try:
+        cache_root = cache_root.resolve(strict=True)
+    except OSError as error:
+        raise RuntimeError("the dynamic-text cache root is unavailable") from error
+    if not cache_root.is_dir():
+        raise RuntimeError("the dynamic-text cache root must be a directory")
+
+    # Force every Hugging Face/Transformers lookup to the already-mounted
+    # cache. Normal runtime therefore needs no token and cannot fetch drifted
+    # encoder weights from the network.
+    os.environ["HF_HUB_OFFLINE"] = "1"
+    os.environ["TRANSFORMERS_OFFLINE"] = "1"
+    os.environ["HF_DATASETS_OFFLINE"] = "1"
+    os.environ["HF_HUB_DISABLE_TELEMETRY"] = "1"
+    verify_encoder_revisions(cache_root)
+
+    from ardy.model.load_model import load_text_encoder
+
+    return load_text_encoder(
+        mode="local",
+        fp32=False,
+        device=device,
+    )
+
+
+class PromptEmbeddingCache:
+    """Bounded LRU of official ARDY text features keyed by prompt SHA-256."""
+
+    def __init__(
+        self,
+        encoder: object,
+        torch_module: object,
+        device: str,
+        capacity: int = DYNAMIC_PROMPT_CACHE_SIZE,
+    ) -> None:
+        if capacity <= 0:
+            raise ValueError("prompt embedding cache capacity must be positive")
+        self._encoder = encoder
+        self._torch = torch_module
+        self._device = device
+        self._capacity = capacity
+        self._entries: OrderedDict[str, tuple[object, object]] = OrderedDict()
+
+    @staticmethod
+    def prompt_id(prompt: str) -> str:
+        return hashlib.sha256(prompt.encode("utf-8")).hexdigest()
+
+    @property
+    def count(self) -> int:
+        return len(self._entries)
+
+    def resolve(
+        self,
+        prompt: str,
+    ) -> tuple[tuple[object, object], str, bool]:
+        prompt_id = self.prompt_id(prompt)
+        cached = self._entries.get(prompt_id)
+        if cached is not None:
+            self._entries.move_to_end(prompt_id)
+            return cached, prompt_id, True
+
+        features, lengths = self._encoder([prompt])  # type: ignore[operator]
+        try:
+            shape = tuple(features.shape)  # type: ignore[union-attr]
+            length_values = [int(value) for value in lengths]
+        except (AttributeError, TypeError, ValueError) as error:
+            raise RuntimeError("the dynamic text encoder returned an invalid envelope") from error
+        if shape != (1, 1, EMBEDDING_WIDTH) or length_values != [1]:
+            raise RuntimeError(
+                "the dynamic text encoder returned an invalid shape or length"
+            )
+        features = features.detach().to(device=self._device).contiguous()
+        if not bool(self._torch.isfinite(features).all().item()):
+            raise RuntimeError("the dynamic text encoder returned a non-finite value")
+        mask = self._torch.ones(
+            (1, 1),
+            dtype=self._torch.bool,
+            device=self._device,
+        )
+        embedding = (features, mask)
+        self._entries[prompt_id] = embedding
+        self._entries.move_to_end(prompt_id)
+        while len(self._entries) > self._capacity:
+            self._entries.popitem(last=False)
+        return embedding, prompt_id, False
+
+
 class MockPoseProvider:
     """Deterministic Core27 data for protocol, buffer, and failure testing."""
 
@@ -253,7 +356,12 @@ class MockPoseProvider:
 
     @property
     def health(self) -> dict[str, object]:
-        return {"checkpoint": None, "embeddingCount": 0, "p95GenerationMs": 0.0}
+        return {
+            "checkpoint": None,
+            "embeddingCount": 0,
+            "p95GenerationMs": 0.0,
+            "dynamicTextReady": False,
+        }
 
     def generate(self, request: PoseRequest) -> dict[str, object]:
         with self._lock:
@@ -350,7 +458,7 @@ class MockPoseProvider:
 
 
 class ArdyPoseProvider:
-    """Eager-PyTorch Horizon8 provider driven only by cached approved embeddings."""
+    """Eager-PyTorch Horizon8 provider with cached and open-text conditioning."""
 
     name = "ardy"
 
@@ -365,11 +473,12 @@ class ArdyPoseProvider:
 
         self._np = np
         self._torch = torch
+        self._device = "cuda:0"
         self._models_root = models_root.resolve(strict=True)
         self._model_name = model_name
         self._model = load_model(
             model_name,
-            device="cuda:0",
+            device=self._device,
             checkpoints_dir=str(self._models_root),
             text_encoder=False,
         )
@@ -381,6 +490,12 @@ class ArdyPoseProvider:
         if model_hierarchy != CORE27_HIERARCHY:
             raise RuntimeError("ARDY model does not expose the exact sealed Core27 skeleton")
         self._embeddings = self._load_embeddings(self._models_root / "embeddings")
+        self._text_encoder = load_offline_text_encoder(self._device)
+        self._prompt_embeddings = PromptEmbeddingCache(
+            self._text_encoder,
+            self._torch,
+            self._device,
+        )
         self._history = None
         self._lock = threading.Lock()
         self._sequence = 0
@@ -401,6 +516,7 @@ class ArdyPoseProvider:
             "checkpoint": self._model_name,
             "embeddingCount": len(self._embeddings),
             "p95GenerationMs": round(ordered[rank], 3) if ordered else 0.0,
+            "dynamicTextReady": self._text_encoder is not None,
         }
 
     def _load_embeddings(self, root: Path) -> dict[str, tuple[object, object]]:
@@ -408,19 +524,35 @@ class ArdyPoseProvider:
         result: dict[str, tuple[object, object]] = {}
         for behavior, (features, mask) in cached.items():
             result[behavior] = (
-                self._torch.from_numpy(features).unsqueeze(0).to("cuda:0"),
-                self._torch.from_numpy(mask).unsqueeze(0).to("cuda:0"),
+                self._torch.from_numpy(features).unsqueeze(0).to(self._device),
+                self._torch.from_numpy(mask).unsqueeze(0).to(self._device),
             )
         return result
+
+    def prewarm_prompt(self, prompt: str) -> dict[str, object]:
+        """Encode one prompt once and retain it for subsequent pose requests."""
+
+        with self._lock, self._torch.inference_mode():
+            _embedding, prompt_id, cached = self._prompt_embeddings.resolve(prompt)
+        return {
+            "ok": True,
+            "promptId": prompt_id,
+            "cached": cached,
+        }
 
     def generate(self, request: PoseRequest) -> dict[str, object]:
         # Timing-critical actions remain deterministic Unreal-side clips.
         if request.behavior not in set(APPROVED_EMBEDDING_BEHAVIORS):
             raise RuntimeError("behavior is reserved for the baked provider")
-        embedding = self._embeddings.get(request.behavior)
-        if embedding is None:
-            raise RuntimeError("approved cached embedding is unavailable")
         with self._lock, self._torch.inference_mode():
+            if request.prompt is None:
+                embedding = self._embeddings.get(request.behavior)
+                if embedding is None:
+                    raise RuntimeError("approved cached embedding is unavailable")
+            else:
+                embedding, _prompt_id, _cached = self._prompt_embeddings.resolve(
+                    request.prompt
+                )
             text_feat, text_pad_mask = embedding
             # Behavior changes intentionally retain the autoregressive motion
             # history. This lets ARDY generate a transition from the current
@@ -491,16 +623,22 @@ class ArdyPoseProvider:
         quaternions = Rotation.from_matrix(matrices.reshape(-1, 3, 3)).as_quat().reshape(
             BATCH_FRAMES, len(CORE27_JOINTS), 4
         )
-        root_quaternions = Rotation.from_matrix(root_matrices).as_quat()
+        # Root matrices are shape-validated upstream but intentionally not
+        # serialized; the runtime root-orientation policy is locked upright.
+        _ = root_matrices
         frames: list[dict[str, object]] = []
         excluded = {CORE27_JOINTS.index(name) for name in EXCLUDED_GENERATED_JOINTS}
         tracker = self._hemispheres.clone()
         for index in range(BATCH_FRAMES):
             joints = quaternions[index].tolist()
+            # Root orientation is deliberately not applied to the avatar. The
+            # packaged character remains upright while generated hips/spine
+            # articulation supplies the visible motion.
+            joints[0] = IDENTITY.copy()
             for joint_index in excluded:
                 joints[joint_index] = IDENTITY.copy()
             stable_root, stable_joints = tracker.stabilize(
-                root_quaternions[index].tolist(), joints
+                IDENTITY, joints
             )
             frames.append(
                 {

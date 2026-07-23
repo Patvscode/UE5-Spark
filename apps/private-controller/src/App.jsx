@@ -90,8 +90,8 @@ const DEFAULT_AI_CONTROL = {
   assetAwareEnabled: false,
   assetAwareNotice: "Asset-aware mode can share selected context with configured AI services as a controller-wide setting.",
   modes: [
-    { id: "deterministic", label: "Deterministic", description: "Reviewed catalog matching only.", requiresExplicitLocalOptIn: false },
-    { id: "ai_motion", label: "AI motion", description: "Generic motion intent without character asset input.", requiresExplicitLocalOptIn: false },
+    { id: "deterministic", label: "Deterministic", description: "Quick presets and dependable fallback motion.", requiresExplicitLocalOptIn: false },
+    { id: "ai_motion", label: "AI motion", description: "Your complete movement description goes to ARDY.", requiresExplicitLocalOptIn: false },
     { id: "asset_aware_ai", label: "Asset-aware AI", description: "Local asset context after explicit opt-in.", requiresExplicitLocalOptIn: true },
   ],
 };
@@ -162,7 +162,7 @@ export function App() {
   const sheetMeta = activeSheet === "conversation"
     ? { eyebrow: "Live Fay conversation", title: `Talk with ${characterName}`, label: "Conversation" }
     : activeSheet === "motion"
-      ? { eyebrow: "Sealed ARDY catalog", title: "Describe a move", label: "Movement director" }
+      ? { eyebrow: "Live generative ARDY", title: "Describe any move", label: "Movement director" }
       : { eyebrow: "Stage setup", title: "Camera & character", label: "Camera, character, and wardrobe settings" };
 
   const refreshHealth = useCallback(async () => {
@@ -603,12 +603,16 @@ export function App() {
       if (!hadLoop) setNotice("No repeated movement is running");
       return;
     }
-    const resolvedCommand = movementRouteFor(command) || command;
+    const resolvedCommand = aiControl.selectedMode === "deterministic"
+      ? movementRouteFor(command) || command
+      : command;
     const repeatRequested = motionMode === "loop" || LOOP_REQUEST_PATTERN.test(command);
     setMotionLoop(null);
     setDirectingMotion(true);
     setMotionPlan(null);
-    setNotice("Checking the reviewed movement catalog…");
+    setNotice(aiControl.selectedMode === "deterministic"
+      ? "Matching a dependable movement preset…"
+      : "Encoding your complete prompt with ARDY…");
     try {
       const payload = await requestMovement(resolvedCommand);
       applyMovementPayload(payload);
@@ -937,7 +941,7 @@ export function App() {
             <div className="command-stack">
               <form className="inline-motion-composer" onSubmit={directMovement}>
                 <PersonSimpleRun size={20} weight="regular" aria-hidden="true" />
-                <input id="inline-motion-command" ref={motionInputRef} value={motionDraft} onChange={(event) => setMotionDraft(event.target.value)} placeholder="Movement: wave, stretch…" maxLength={160} autoComplete="off" enterKeyHint="go" aria-label="Movement command" />
+                <input id="inline-motion-command" ref={motionInputRef} value={motionDraft} onChange={(event) => setMotionDraft(event.target.value)} placeholder="Movement: describe anything…" maxLength={512} autoComplete="off" enterKeyHint="go" aria-label="Movement command" />
                 <span className="motion-mode-toggle" aria-label="Movement repetition">
                   <button className={motionMode === "once" ? "is-selected" : ""} onClick={() => { if (motionLoop) stopMotionLoop(); else setMotionMode("once"); }} type="button" aria-pressed={motionMode === "once"}>Once</button>
                   <button className={motionMode === "loop" ? "is-selected" : ""} onClick={() => { if (motionLoop) stopMotionLoop(); else setMotionMode("loop"); }} type="button" aria-pressed={motionMode === "loop"}>{motionLoop ? "Stop" : "Loop"}</button>
@@ -999,7 +1003,7 @@ export function App() {
               </>
             ) : activeSheet === "motion" ? (
               <div className="motion-director-content">
-                <div className="sheet-truth"><span className={`status-dot ${health.ardy ? "is-ready" : ""}`} />{health.ardy ? "ARDY online" : "Catalog preview"}<span aria-hidden="true">·</span><span>{selectedAiControl?.label || "AI motion"}</span></div>
+                <div className="sheet-truth"><span className={`status-dot ${health.ardy ? "is-ready" : ""}`} />{health.ardy ? "ARDY online" : "ARDY unavailable"}<span aria-hidden="true">·</span><span>{selectedAiControl?.label || "AI motion"}</span></div>
                 <div className="motion-quick-actions" aria-label="Quick movements">
                   {MOTIONS.map(({ id, label, Icon }) => (
                     <button className={motion === id ? "is-active" : ""} key={id} onClick={() => playMotion(id)} type="button" aria-pressed={motion === id}>
@@ -1007,7 +1011,7 @@ export function App() {
                     </button>
                   ))}
                 </div>
-                <p className="motion-director-intro">Describe the body movement you want. The local planner may classify it, but only a reviewed catalog ID with fixed timing and root control can be used.</p>
+                <p className="motion-director-intro">Describe the movement naturally. In AI motion mode, your complete sentence conditions ARDY directly; the buttons remain convenient presets and fallbacks.</p>
                 <div className="motion-examples" aria-label="Movement examples">
                   {MOTION_COMMAND_EXAMPLES.map((example) => (
                     <button key={example} onClick={() => { setMotionDraft(example); motionInputRef.current?.focus(); }} type="button">{example}</button>
@@ -1017,7 +1021,7 @@ export function App() {
                   <label htmlFor="motion-command">Movement command</label>
                   <div className="motion-command-input">
                     <PersonSimpleRun size={21} />
-                    <input id="motion-command" ref={motionInputRef} value={motionDraft} onChange={(event) => setMotionDraft(event.target.value)} placeholder="Try: do jumping jacks" maxLength={160} autoComplete="off" />
+                    <input id="motion-command" ref={motionInputRef} value={motionDraft} onChange={(event) => setMotionDraft(event.target.value)} placeholder="Try: crouch, take two steps, then wave" maxLength={512} autoComplete="off" />
                     <button type="submit" disabled={!motionDraft.trim() || directingMotion} aria-label="Plan movement">{directingMotion ? <CircleNotch className="spin" size={18} /> : <ArrowRight size={18} weight="bold" />}</button>
                   </div>
                 </form>
@@ -1027,19 +1031,19 @@ export function App() {
                       <><strong>Nothing was sent</strong><p>{motionPlan.error}</p></>
                     ) : (
                       <>
-                        <div className="motion-plan-heading"><strong>{motionPlan.label}</strong><span>{motionPlan.status === "staged" ? "Recognized · package pending" : motionPlan.live ? "Moving live" : "Routed"}</span></div>
+                        <div className="motion-plan-heading"><strong>{motionPlan.prompt || motionPlan.label}</strong><span>{motionPlan.status === "staged" ? "Recognized · package pending" : motionPlan.live ? "Moving live" : "Routed"}</span></div>
                         <dl>
-                          <div><dt>Catalog ID</dt><dd>{motionPlan.catalogId}</dd></div>
+                          <div><dt>Source</dt><dd>{motionPlan.promptForwarded ? "ARDY text prompt" : motionPlan.catalogId || "Preset"}</dd></div>
                           <div><dt>Duration</dt><dd>{motionPlan.duration}s</dd></div>
                           <div><dt>Intensity</dt><dd>{Math.round(motionPlan.intensity * 100)}%</dd></div>
                           <div><dt>Root</dt><dd>{motionPlan.rootMode}</dd></div>
                         </dl>
-                        <p>{motionPlan.detail || (motionPlan.live ? "The reviewed action was sent to Unreal." : "The reviewed replay fallback is active.")}</p>
+                        <p>{motionPlan.detail || (motionPlan.live ? "ARDY is generating this motion live in Unreal." : "The deterministic replay fallback is active.")}</p>
                       </>
                     )}
                   </div>
                 )}
-                <div className="prototype-note"><Info size={15} weight="fill" /><span>New full-body entries are staged honestly until their ARDY pose, retarget, and renderer package pass review. A recognized command does not mean the avatar moved.</span></div>
+                <div className="prototype-note"><Info size={15} weight="fill" /><span>AI motion accepts free text. “Once” stops after one bounded run; “Loop” regenerates the same prompt until you stop it.</span></div>
               </div>
             ) : (
               <div className="settings-content">

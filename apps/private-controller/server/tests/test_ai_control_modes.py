@@ -199,16 +199,20 @@ class CharacterAiControlTests(unittest.TestCase):
                 server.server_close()
                 worker.join(timeout=2)
 
-    def test_deterministic_mode_bypasses_model_and_ai_motion_is_generic(self):
+    def test_deterministic_mode_uses_presets_and_ai_motion_forwards_free_text(self):
         handler = object.__new__(SERVER.ControllerHandler)
         state = SERVER.LocalAiControlState(SERVER.load_character_ai_control(CONFIG_PATH))
-        handler.server = SimpleNamespace(ai_control=state)
+        handler.server = SimpleNamespace(
+            ai_control=state,
+            ardy_base="http://127.0.0.1:8777",
+        )
         responses = []
-        suggestions = []
+        prepared = []
         dispatched = []
         handler._json = lambda status, payload: responses.append((status, payload))
-        handler._motion_planner_suggestion = lambda command: (
-            suggestions.append(command) or "wave"
+        handler._upstream_json = lambda url, payload, *, timeout: (
+            prepared.append((url, payload, timeout))
+            or {"ok": True, "promptId": "b" * 64, "cached": False}
         )
         handler._dispatch_action = lambda action: (
             dispatched.append(action) or (
@@ -220,15 +224,16 @@ class CharacterAiControlTests(unittest.TestCase):
         state.select({"mode": "deterministic"})
         handler._motion_command({"command": "make a friendly greeting"})
         self.assertEqual(responses[-1][0], SERVER.HTTPStatus.UNPROCESSABLE_ENTITY)
-        self.assertEqual(suggestions, [])
+        self.assertEqual(prepared, [])
         self.assertEqual(dispatched, [])
 
         state.select({"mode": "ai_motion"})
         handler._motion_command({"command": "make a friendly greeting"})
-        self.assertEqual(suggestions, ["make a friendly greeting"])
+        self.assertEqual(prepared[-1][1], {"prompt": "make a friendly greeting"})
         self.assertEqual(responses[-1][1]["aiControlMode"], "ai_motion")
         self.assertFalse(responses[-1][1]["assetContextUsed"])
-        self.assertEqual(dispatched[-1]["behavior"], "wave")
+        self.assertEqual(dispatched[-1]["behavior"], "explain")
+        self.assertEqual(dispatched[-1]["prompt"], "make a friendly greeting")
 
     def test_ui_uses_one_neutral_controller_wide_selector(self):
         source = APP_PATH.read_text(encoding="utf-8")
