@@ -71,6 +71,23 @@ class RendererSupervisorTests(unittest.TestCase):
             request_path.chmod(0o600)
             self.assertIsNone(SUPERVISOR.read_request(live_root))
 
+    def test_schema_one_casual_girl_defaults_to_full_body(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "FayAvatarRuntime"
+            executable = root / "Binaries/LinuxArm64/FayAvatarRuntime"
+            executable.parent.mkdir(parents=True)
+            executable.write_bytes(b"runtime")
+            executable.chmod(0o700)
+            launcher = root / "FayAvatarRuntime-Arm64.sh"
+            launcher.write_text("#!/bin/sh\n", encoding="utf-8")
+            launcher.chmod(0o700)
+            (root / ".ue5-spark-characters.json").write_text(json.dumps({
+                "schema": 1,
+                "characters": [{"id": "CasualGirl"}],
+            }), encoding="utf-8")
+            package = SUPERVISOR.load_package(executable, "v30")
+            self.assertEqual(package.framings["casual-girl"], "FullBody")
+
     def test_supervisor_never_uses_broad_process_killers(self):
         source = SCRIPT_PATH.read_text(encoding="utf-8")
         for forbidden in ("killall", "pkill", "docker stop", "podman stop"):

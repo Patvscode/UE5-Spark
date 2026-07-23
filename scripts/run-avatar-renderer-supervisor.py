@@ -174,7 +174,8 @@ def load_package(executable_input: Path, generation: str | None = None) -> Packa
         slug = reviewed_by_runtime.get(runtime_id)
         if slug is None:
             continue
-        available_framings = entry.get("cameraFramings", ["Portrait"])
+        reviewed_default_framing = "FullBody" if slug == "casual-girl" else "Portrait"
+        available_framings = entry.get("cameraFramings", [reviewed_default_framing])
         if not isinstance(available_framings, list):
             fail(f"package framing contract for {runtime_id} is invalid")
         framing = "FullBody" if "FullBody" in available_framings else "Portrait"
