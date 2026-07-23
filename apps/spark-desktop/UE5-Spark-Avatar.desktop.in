@@ -1,0 +1,14 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=UE5 Spark Avatar
+GenericName=Digital Human Companion
+Comment=Start and open the live DGX Spark digital-human companion
+Exec=@WEB_LAUNCHER@ avatar
+TryExec=@WEB_LAUNCHER@
+Icon=avatar-default
+Terminal=false
+Categories=AudioVideo;
+Keywords=Avatar;Companion;Digital Human;Fay;
+StartupNotify=true
+StartupWMClass=UE5SparkAvatar

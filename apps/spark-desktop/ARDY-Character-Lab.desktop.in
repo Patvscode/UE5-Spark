@@ -1,0 +1,14 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=NVIDIA ARDY Character Lab
+GenericName=Generative Motion Lab
+Comment=Start and open NVIDIA's ARDY Viser motion and character workspace
+Exec=@WEB_LAUNCHER@ ardy
+TryExec=@WEB_LAUNCHER@
+Icon=/usr/share/pixmaps/nvidia-logo_64x64.png
+Terminal=false
+Categories=Graphics;3DGraphics;
+Keywords=NVIDIA;ARDY;Motion;Character;Animation;
+StartupNotify=true
+StartupWMClass=NVIDIAARDYCharacterLab
