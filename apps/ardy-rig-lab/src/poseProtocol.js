@@ -245,3 +245,75 @@ export function interpolatePositions(left, right, alpha) {
     value + (right[jointIndex][axis] - value) * weight
   )));
 }
+
+function interpolationWeight(alpha) {
+  return Math.min(1, Math.max(0, Number(alpha) || 0));
+}
+
+function interpolateVector(left, right, alpha) {
+  return left.map((value, index) => value + (right[index] - value) * alpha);
+}
+
+function unitQuaternion(value) {
+  if (!finiteVector(value, 4)) {
+    throw new Error("Quaternion interpolation requires finite XYZW values.");
+  }
+  const length = Math.hypot(...value);
+  if (length <= Number.EPSILON) {
+    throw new Error("Quaternion interpolation requires a non-zero quaternion.");
+  }
+  return value.map((entry) => entry / length);
+}
+
+/**
+ * Interpolate normalized XYZW quaternions along their shortest rotational arc.
+ */
+export function interpolateQuaternion(left, right, alpha) {
+  const weight = interpolationWeight(alpha);
+  const start = unitQuaternion(left);
+  let end = unitQuaternion(right);
+  let cosine = start.reduce((sum, value, index) => sum + value * end[index], 0);
+
+  // q and -q represent the same rotation. Flip the destination so SLERP takes
+  // the shortest path and does not spin through the long arc.
+  if (cosine < 0) {
+    end = end.map((value) => -value);
+    cosine = -cosine;
+  }
+  cosine = Math.min(1, Math.max(-1, cosine));
+
+  if (cosine > 0.9995) {
+    return unitQuaternion(interpolateVector(start, end, weight));
+  }
+
+  const angle = Math.acos(cosine);
+  const sine = Math.sin(angle);
+  const startWeight = Math.sin((1 - weight) * angle) / sine;
+  const endWeight = Math.sin(weight * angle) / sine;
+  return unitQuaternion(start.map((value, index) => (
+    value * startWeight + end[index] * endWeight
+  )));
+}
+
+/**
+ * Sample every channel in two validated ARDY Core27 frames.
+ *
+ * Root and joint quaternions remain normalized XYZW values, while positions,
+ * timestamps, and continuous contact confidences are linearly interpolated.
+ */
+export function interpolatePoseFrame(left, right, alpha) {
+  const weight = interpolationWeight(alpha);
+  const rootPosition = interpolateVector(left.root.slice(0, 3), right.root.slice(0, 3), weight);
+  return {
+    time: left.time + (right.time - left.time) * weight,
+    root: [
+      ...rootPosition,
+      ...interpolateQuaternion(left.root.slice(3), right.root.slice(3), weight),
+    ],
+    joints: left.joints.map((rotation, index) => (
+      interpolateQuaternion(rotation, right.joints[index], weight)
+    )),
+    positions: interpolatePositions(left.positions, right.positions, weight),
+    contacts: interpolateVector(left.contacts, right.contacts, weight),
+  };
+}

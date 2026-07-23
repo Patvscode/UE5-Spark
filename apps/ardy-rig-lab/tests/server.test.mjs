@@ -10,6 +10,7 @@ import {
   validatePoseRequest,
   validateUpstreamUrl,
 } from "../server.mjs";
+import { defaultCharacterProfile } from "../src/characterProfile.js";
 import { poseBatch } from "./helpers.mjs";
 
 function listen(server) {
@@ -69,6 +70,7 @@ test("standalone server proxies only health and strict v2 poses", async (context
   const lab = createRigLabServer({
     distRoot: tempRoot,
     upstreamUrl: `http://127.0.0.1:${upstream.address().port}`,
+    dataRoot: path.join(tempRoot, "data"),
   });
   await listen(lab);
   context.after(async () => {
@@ -109,4 +111,60 @@ test("standalone server proxies only health and strict v2 poses", async (context
   assert.equal(index.status, 200);
   assert.match(await index.text(), /Rig Lab/);
   assert.match(index.headers.get("content-security-policy"), /connect-src 'self'/);
+});
+
+test("private model registry persists model bytes and reviewed rig profiles", async (context) => {
+  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "ardy-rig-model-test-"));
+  context.after(() => fs.rmSync(tempRoot, { recursive: true, force: true }));
+  fs.mkdirSync(path.join(tempRoot, "dist"));
+  fs.writeFileSync(path.join(tempRoot, "dist", "index.html"), "<!doctype html><title>Rig Lab</title>");
+  const lab = createRigLabServer({
+    distRoot: path.join(tempRoot, "dist"),
+    upstreamUrl: "http://127.0.0.1:8777",
+    dataRoot: path.join(tempRoot, "private"),
+  });
+  await listen(lab);
+  context.after(async () => close(lab));
+  const origin = `http://127.0.0.1:${lab.address().port}`;
+  const bytes = Buffer.from("glTF-private-test-model");
+
+  const upload = await fetch(`${origin}/api/models`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "model/gltf-binary",
+      "X-Rig-Model-Name": encodeURIComponent("Test Person.glb"),
+      "Content-Length": String(bytes.length),
+    },
+    body: bytes,
+  });
+  assert.equal(upload.status, 201);
+  const model = await upload.json();
+  assert.match(model.id, /^[a-f0-9]{24}$/);
+  assert.equal(model.name, "Test Person.glb");
+
+  const listing = await fetch(`${origin}/api/models`);
+  assert.equal(listing.status, 200);
+  assert.equal((await listing.json()).models.length, 1);
+  const downloaded = await fetch(`${origin}${model.fileUrl}`);
+  assert.deepEqual(Buffer.from(await downloaded.arrayBuffer()), bytes);
+
+  const profile = defaultCharacterProfile({
+    modelId: model.id,
+    modelName: model.name,
+    name: "Test mapping",
+  });
+  profile.boneMap.Hips = "pelvis";
+  const saved = await fetch(`${origin}/api/models/${model.id}/profile`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(profile),
+  });
+  assert.equal(saved.status, 200);
+  assert.equal((await saved.json()).boneMap.Hips, "pelvis");
+  const restored = await fetch(`${origin}/api/models/${model.id}/profile`);
+  assert.equal((await restored.json()).name, "Test mapping");
+
+  const removed = await fetch(`${origin}/api/models/${model.id}`, { method: "DELETE" });
+  assert.equal(removed.status, 200);
+  assert.equal((await fetch(`${origin}${model.fileUrl}`)).status, 404);
 });

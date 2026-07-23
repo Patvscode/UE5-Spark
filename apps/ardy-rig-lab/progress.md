@@ -29,3 +29,49 @@ Original prompt: Prototype subtask, local repo only, no remote deployment yet: i
   isolated prototype, but code splitting remains an optional polish item.
 - Run the required Playwright interaction/screenshot loop and inspect output.
 - Do not deploy or alter the companion controller.
+
+## 2026-07-23 — reusable character setup
+
+User request: make the lab able to add and rig models as a complete reusable
+setup.
+
+- The Spark ARDY service is now live on protocol v2 at loopback port 8777, so
+  the earlier protocol-v1 blocker no longer applies.
+- Implement skinned GLB/GLTF/VRM and FBX import, skeleton inventory, Core27
+  automatic/manual bone mapping, bind-pose calibration, reusable profiles,
+  private model persistence, and live pose retargeting.
+- Unrigged static meshes must be identified honestly; this milestone will not
+  fabricate skin weights or call a hidden auto-rigger.
+- Deploy the Rig Lab separately from the official NVIDIA demo and the companion
+  controller, then verify it through its own private Tailscale route.
+
+### Implemented
+
+- Added GLB, GLTF-with-sidecars, VRM and FBX browser import with explicit
+  unrigged-model diagnostics.
+- Added private single-file GLB/VRM/FBX persistence and model removal.
+- Added multi-skeleton inspection and body-skeleton selection.
+- Added stable-path Core27 auto-mapping, 27 manual mapping rows, duplicate-target
+  prevention, mapping coverage, and missing required-chain reporting.
+- Added character scale/orientation/placement calibration and per-joint local
+  rotation corrections.
+- Added reusable private profiles plus JSON import/export.
+- Added complete pose-frame interpolation, including shortest-path XYZW
+  quaternion interpolation.
+- Added bind-pose-restoring character retargeting, skeleton helper, bone
+  selection, mesh visibility, auto-fit, and first-frame-anchored opt-in root
+  motion.
+- Added a standalone hardened user service and private Tailscale route:
+  `https://spark-ccb2-1.tail2b1107.ts.net:8476/`.
+- Loaded the private `Core27Source.glb` diagnostic skin and confirmed 27/27
+  automatic mappings.
+- Completed one real two-second ARDY prompt: 40/40 frames played, no missing
+  frames, and no browser console errors.
+- Confirmed the responsive 390 × 844 layout and the full desktop workflow.
+
+### Current asset boundary
+
+- The portable Core27 debug skin works end-to-end.
+- Casual Girl, Ada and Aoi remain Unreal-only `.uasset` content. The next asset
+  step is a private skinned GLB export through the existing Unreal/FEX toolchain;
+  the lab itself is ready to import and profile those exports.

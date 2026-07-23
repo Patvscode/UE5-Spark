@@ -158,6 +158,8 @@ __pycache__/
 .playwright-cli/
 **/node_modules/
 apps/ardy-rig-lab/dist/
+apps/ardy-rig-lab/data-private/
+apps/ardy-rig-lab/output/
 .DS_Store
 *.log
 *.dmp

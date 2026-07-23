@@ -18,7 +18,11 @@ test("lab is isolated real WebGL with requested controls", () => {
     "Motion prompt",
     "Run once",
     "Loop",
-    "Rig mapping",
+    "Character model",
+    "Bone mapping",
+    "Character calibration",
+    "Rig profile",
+    "Source overlay",
     "Joint markers",
     "Chair blocks",
     "Bed blocks",
@@ -29,4 +33,22 @@ test("lab is isolated real WebGL with requested controls", () => {
   assert.match(main, /window\.advanceTime/);
   assert.match(main, /dynamicTextReady/);
   assert.match(main, /no fallback motion is simulated/);
+  for (const id of [
+    "model-file-input",
+    "active-skeleton-select",
+    "mapping-rows",
+    "auto-map-character",
+    "character-scale",
+    "character-joint-select",
+    "target-bone-select",
+    "root-motion",
+    "save-profile",
+    "profile-import-input",
+  ]) {
+    assert.match(html, new RegExp(`id="${id}"`));
+  }
+  assert.match(main, /importModelFiles/);
+  assert.match(main, /attachModel/);
+  assert.match(main, /sampleFrame/);
+  assert.match(scene, /CharacterRig/);
 });

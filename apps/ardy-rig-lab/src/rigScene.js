@@ -1,6 +1,9 @@
 import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 
+import { CharacterRig } from "./characterRig.js";
+import { sanitizeCharacterProfile } from "./characterProfile.js";
+import { disposeObject3D } from "./modelImporter.js";
 import {
   CORE27_JOINTS,
   CORE27_PARENT_INDICES,
@@ -81,6 +84,10 @@ export class RigScene {
     this.mapping = null;
     this.sourcePositions = null;
     this.selectedJoint = "Hips";
+    this.characterRig = null;
+    this.staticCharacter = null;
+    this.characterAnalysis = null;
+    this.characterProfile = null;
     this._buildEnvironment();
     this._buildRig();
     this.resetView();
@@ -228,6 +235,166 @@ export class RigScene {
 
   setComponentVisible(component, visible) {
     if (this.components[component]) this.components[component].visible = Boolean(visible);
+  }
+
+  attachModel(analysis, profile, { disposePrevious = true } = {}) {
+    if (!analysis?.root?.isObject3D) {
+      throw new Error("RigScene requires a successfully imported Three.js model.");
+    }
+    this.removeModel({ disposeModel: disposePrevious });
+    this.characterAnalysis = analysis;
+
+    if (analysis.rigged && analysis.inventory?.activeSkeleton?.bones?.length) {
+      this.characterRig = new CharacterRig(analysis, profile);
+      this.characterProfile = this.characterRig.getProfile();
+      this.scene.add(this.characterRig.object3D);
+      return this.characterRig.getStatus();
+    }
+
+    this.characterProfile = sanitizeCharacterProfile(profile, {
+      modelId: profile?.modelId,
+      modelName: profile?.modelName || analysis.sourceName,
+      availableBones: [],
+    });
+    const container = new THREE.Group();
+    container.name = "static-imported-character";
+    const placement = new THREE.Group();
+    placement.name = "static-character-placement";
+    container.add(placement);
+    placement.add(analysis.root);
+    this.scene.add(container);
+    this.staticCharacter = {
+      container,
+      placement,
+      modelRoot: analysis.root,
+      originalVisibility: new Map(),
+    };
+    analysis.root.traverse((object) => {
+      if (object.isMesh || object.isPoints || object.isLine) {
+        this.staticCharacter.originalVisibility.set(object, object.visible);
+      }
+    });
+    this.setCharacterProfile(this.characterProfile);
+    return {
+      ready: false,
+      mappedCount: 0,
+      totalCount: CORE27_JOINTS.length,
+      static: true,
+    };
+  }
+
+  removeModel({ disposeModel = true } = {}) {
+    if (this.characterRig) {
+      this.characterRig.dispose({ disposeModel });
+      this.characterRig = null;
+    }
+    if (this.staticCharacter) {
+      const { container, modelRoot } = this.staticCharacter;
+      if (disposeModel) disposeObject3D(modelRoot);
+      else modelRoot.removeFromParent();
+      container.removeFromParent();
+      container.clear();
+      this.staticCharacter.originalVisibility.clear();
+      this.staticCharacter = null;
+    }
+    this.characterAnalysis = null;
+    this.characterProfile = null;
+  }
+
+  setCharacterProfile(profile) {
+    if (this.characterRig) {
+      const status = this.characterRig.setProfile(profile);
+      this.characterProfile = this.characterRig.getProfile();
+      return status;
+    }
+    if (!this.staticCharacter) return null;
+    this.characterProfile = sanitizeCharacterProfile(profile, {
+      modelId: profile?.modelId,
+      modelName: profile?.modelName || this.characterAnalysis?.sourceName,
+      availableBones: [],
+    });
+    const { transform } = this.characterProfile;
+    this.staticCharacter.placement.position.fromArray(transform.offset);
+    this.staticCharacter.placement.rotation.set(
+      transform.pitchDegrees * Math.PI / 180,
+      transform.yawDegrees * Math.PI / 180,
+      transform.rollDegrees * Math.PI / 180,
+      "YXZ",
+    );
+    this.staticCharacter.placement.scale.setScalar(transform.scale);
+    for (const [object, authoredVisible] of this.staticCharacter.originalVisibility) {
+      object.visible = this.characterProfile.meshVisible && authoredVisible;
+    }
+    this.staticCharacter.container.updateMatrixWorld(true);
+    return {
+      ready: false,
+      mappedCount: 0,
+      totalCount: CORE27_JOINTS.length,
+      static: true,
+    };
+  }
+
+  applyCharacterPose(frame) {
+    return this.characterRig?.applyPose(frame) || null;
+  }
+
+  resetCharacterRootAnchor() {
+    if (this.characterRig) this.characterRig.resetRootAnchor();
+  }
+
+  setCharacterSelectedJoint(name = null) {
+    return this.characterRig?.setSelectedJoint(name) || null;
+  }
+
+  suggestCharacterScale(targetHeight = 1.72) {
+    if (this.characterRig) return this.characterRig.suggestScale(targetHeight);
+    if (!this.staticCharacter || !this.characterProfile) return null;
+    this.staticCharacter.container.updateMatrixWorld(true);
+    const height = new THREE.Box3()
+      .setFromObject(this.staticCharacter.modelRoot)
+      .getSize(new THREE.Vector3()).y;
+    if (!Number.isFinite(height) || height <= Number.EPSILON) return null;
+    return this.characterProfile.transform.scale * targetHeight / height;
+  }
+
+  focusCharacter() {
+    let bounds = null;
+    if (this.characterRig) bounds = this.characterRig.getBounds();
+    else if (this.staticCharacter) {
+      this.staticCharacter.container.updateMatrixWorld(true);
+      bounds = new THREE.Box3().setFromObject(this.staticCharacter.modelRoot);
+    }
+    if (!bounds || bounds.isEmpty()) {
+      this.resetView();
+      return false;
+    }
+    const center = bounds.getCenter(new THREE.Vector3());
+    const size = bounds.getSize(new THREE.Vector3());
+    const maximum = Math.max(size.x, size.y, size.z, 0.25);
+    const halfFov = THREE.MathUtils.degToRad(this.camera.fov * 0.5);
+    const distance = Math.min(30, Math.max(0.45, maximum * 0.72 / Math.tan(halfFov)));
+    const direction = this.camera.position.clone().sub(this.controls.target);
+    if (direction.lengthSq() < Number.EPSILON) direction.set(1, 0.25, 1);
+    direction.normalize();
+    this.controls.target.copy(center);
+    this.camera.position.copy(center).addScaledVector(direction, distance);
+    this.controls.minDistance = Math.max(0.08, maximum * 0.12);
+    this.controls.maxDistance = Math.max(12, maximum * 12);
+    this.controls.update();
+    return true;
+  }
+
+  getCharacterStatus() {
+    if (this.characterRig) return this.characterRig.getStatus();
+    if (this.staticCharacter) {
+      return {
+        ready: false,
+        mappedCount: 0,
+        totalCount: CORE27_JOINTS.length,
+        static: true,
+      };
+    }
+    return null;
   }
 
   resetView() {

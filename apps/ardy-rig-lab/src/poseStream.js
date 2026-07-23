@@ -2,7 +2,7 @@ import {
   FPS,
   FRAME_SECONDS,
   createNeutralFrame,
-  interpolatePositions,
+  interpolatePoseFrame,
   validatePoseBatch,
 } from "./poseProtocol.js";
 
@@ -18,7 +18,11 @@ function boundedNumber(value, minimum, maximum, fallback) {
 }
 
 export class PoseStream {
-  constructor({ fetchImpl = fetch, endpoint = "/v2/poses", onState = () => {} } = {}) {
+  constructor({
+    fetchImpl = (...args) => globalThis.fetch(...args),
+    endpoint = "/v2/poses",
+    onState = () => {},
+  } = {}) {
     this.fetchImpl = fetchImpl;
     this.endpoint = endpoint;
     this.onState = onState;
@@ -136,13 +140,22 @@ export class PoseStream {
       void this._fillBuffer(this.generation);
     }
 
+    // Keep the original positions-only return value for existing renderers.
+    return this.sampleFrame().positions;
+  }
+
+  sampleFrame() {
     const next = this.queue[0];
-    if (!next) return this.currentFrame.positions;
-    return interpolatePositions(
-      this.currentFrame.positions,
-      next.positions,
+    if (!next) return this.currentFrame;
+    return interpolatePoseFrame(
+      this.currentFrame,
+      next,
       this.accumulator / FRAME_SECONDS,
     );
+  }
+
+  samplePose() {
+    return this.sampleFrame();
   }
 
   async _fillBuffer(generation) {

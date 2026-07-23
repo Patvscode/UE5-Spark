@@ -1,78 +1,128 @@
 # ARDY Rig Lab
 
-An isolated, local-only Core27 diagnostic viewport for UE5-Spark. It does not
-import, modify, or replace `apps/private-controller`.
+ARDY Rig Lab is the private 3D model-import and retargeting workspace for
+UE5-Spark. It runs beside the companion application and the official NVIDIA
+ARDY demo; it does not replace either one.
 
-The viewport is real Three.js WebGL—not a video replay. It renders the exact
-27-joint ARDY source skeleton, diagnostic proxy geometry, joint markers, a
-floor, and simple chair/bed scale references. It supports orbit, pan, zoom,
-fullscreen, component visibility, global rig calibration, and per-joint
-translation trims.
+Spark link:
 
-## Why this is separate from the official demo
+<https://spark-ccb2-1.tail2b1107.ts.net:8476/>
 
-The pinned official ARDY repository includes:
+The viewport is real Three.js WebGL, not a video. It supports orbit, pan, zoom,
+fullscreen, a floor, chair and bed scale references, the exact ARDY Core27
+source overlay, imported skinned characters, and live 20 FPS pose playback.
 
-- `scripts/run_demo.py`, a Viser UI that loads and runs the ARDY model
-  in-process; and
-- `scripts/visualize.py`, a Viser viewer for exported `.npz` files.
+## Add and rig a character
 
-Neither consumes the existing UE5-Spark pose service. Running the official
-interactive demo beside the project service would load a second model stack,
-while exporting `.npz` files would prevent live rig debugging. This lab instead
-keeps the official Core27 order, basis, 20 FPS cadence, and camera controls
-while consuming the project's strict service contract directly.
+1. Open **Character model**.
+2. Choose a model file.
+   - GLB is the recommended portable format.
+   - VRM and FBX are supported.
+   - A GLTF plus its `.bin` and texture sidecars can be opened for the current
+     browser session, but is not stored in the private library. Export a GLB
+     when persistence is required.
+3. Select **Add model to this Spark**.
+4. Review the detected meshes, skeletons and bones.
+5. Select the body skeleton if the file contains more than one.
+6. Start with **Auto-map bones**, then correct any Core27 row manually.
+7. Use **Character calibration** to adjust model height, orientation, position,
+   and per-joint local rotation corrections.
+8. Leave root motion off for in-place testing. Enable it only when the
+   character should travel through the room.
+9. Open **Rig profile**, name the setup, and save it.
+10. Enter a movement prompt and choose **Run once** or **Loop**.
+
+Mappings use stable bone paths scoped to one selected skeleton. One target bone
+cannot drive two Core27 joints. Every pose frame starts from the imported bind
+pose, so corrections do not accumulate or drift. Root travel is opt-in and is
+anchored to the first accepted frame instead of applying an absolute hip
+position.
+
+## What counts as a rigged model
+
+A movable character must contain:
+
+- at least one `SkinnedMesh`;
+- a bound skeleton;
+- joints and skin weights; and
+- a usable body-bone mapping.
+
+Static meshes can be inspected, positioned and scaled, but the lab does not
+invent skin weights or claim that a static model is rigged. Unreal `.uasset`
+files also cannot be opened directly in a browser. Casual Girl, Ada and Aoi
+currently need a one-time skinned GLB export from Unreal before they can use
+this lab.
+
+## Private storage
+
+The standalone server stores model files and profiles under
+`RIG_LAB_DATA_ROOT`. On the Spark this is:
+
+```text
+/home/pmello/Workspace/02_Experiments/ue5-spark-cooker/models-private/rig-lab
+```
+
+The directory and stored files are private and excluded from Git. Profile JSON
+can be exported manually for backup or imported into the currently loaded
+matching model. Import rejects a different model ID or skeleton.
+
+Server routes:
+
+- `GET /api/models`
+- `POST /api/models`
+- `GET /api/models/:id/file`
+- `GET|PUT /api/models/:id/profile`
+- `DELETE /api/models/:id`
+- `GET /api/ardy-health`
+- `POST /v2/poses`
+
+The server binds to loopback only. The public-facing Spark link is a private
+Tailscale Serve route.
+
+## Motion truth boundary
+
+The neutral Core27 overlay is a labeled reference pose. Once or Loop sends the
+prompt and controls to the real project-owned ARDY protocol-v2 service. Only
+validated batches animate the character. A malformed response, unavailable
+service, or underrun holds the last verified pose; the browser does not
+manufacture fallback motion.
+
+The character driver consumes the complete ARDY frame:
+
+- root position and XYZW quaternion;
+- all 27 local XYZW joint rotations;
+- global Core27 positions; and
+- foot-contact confidences.
 
 ## Run locally
 
 ```bash
 cd apps/ardy-rig-lab
 npm install
-npm run dev
-```
-
-Open `http://127.0.0.1:8488`. Vite proxies the following same-origin routes to
-the loopback service at `http://127.0.0.1:8777`:
-
-- `GET /api/ardy-health` → `GET /healthz`
-- `POST /v2/poses` → `POST /v2/poses`
-
-For the standalone built server:
-
-```bash
 npm run build
 npm start
 ```
 
-The server remains loopback-only. `ARDY_RIG_LAB_UPSTREAM` may select a
-different loopback HTTP port; it cannot target another host.
+Environment variables:
 
-## Motion truth boundary
+```text
+RIG_LAB_HOST=127.0.0.1
+RIG_LAB_PORT=8488
+ARDY_RIG_LAB_UPSTREAM=http://127.0.0.1:8777
+RIG_LAB_DATA_ROOT=/private/path/rig-lab
+```
 
-The neutral standing source rig is a static, labeled Core27 calibration pose
-from the repository's protocol mock positions. It is not presented as
-generated motion.
+The reproducible user-service template is
+`deploy/systemd/user/ue5-spark-rig-lab.service.in`.
 
-Once or Loop sends the user prompt and controls to the real `POST /v2/poses`
-endpoint. Only validated protocol-v2 batches animate the viewport. On an
-invalid response, unavailable service, or underrun, the lab holds the last
-verified frame; it never manufactures fallback motion.
-
-When health reports `dynamicTextReady: false`, free-text prompting is blocked
-instead of pretending the mock provider followed the text. The base behavior
-can still be requested after clearing the prompt.
-
-## Current blocker
-
-The repository handoff currently says the qualified Spark runtime is still the
-protocol-v1 ARDY service, while protocol v2 is a source-only candidate. The Rig
-Lab therefore cannot show live Spark motion until the v2 candidate is safely
-activated at loopback port `8777`. A v1 health response or missing v2 route is
-shown as unavailable, and the viewport remains on the labeled reference pose.
-
-## Tests
+## Validate
 
 ```bash
 npm test
 npm run build
 ```
+
+The browser also exposes:
+
+- `window.render_game_to_text()` for a bounded model/mapping/motion status; and
+- `window.advanceTime(milliseconds)` for deterministic browser testing.
