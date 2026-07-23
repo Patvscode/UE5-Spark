@@ -13,8 +13,8 @@ const MOTIONS = [
 
 const CHARACTERS = [
   { id: "ada", name: "Ada", detail: "Primary MetaHuman", ready: true },
-  { id: "aoi", name: "Aoi", detail: "Portability replay", ready: true },
-  { id: "fab-candidate", name: "Casual Girl", detail: "Fab compatibility review", ready: false },
+  { id: "aoi", name: "Aoi", detail: "Portable MetaHuman", ready: true },
+  { id: "casual-girl", name: "Casual Girl", detail: "UE5 ARKit character", ready: true },
 ];
 
 const MEDIA = {
@@ -131,7 +131,7 @@ export function App() {
   });
   const [wardrobeNotice, setWardrobeNotice] = useState("Asset profile not installed");
   const [notice, setNotice] = useState("Connecting to the live renderer…");
-  const [health, setHealth] = useState({ fay: false, ardy: false, renderer: false, stream: false, checked: false });
+  const [health, setHealth] = useState({ fay: false, ardy: false, renderer: false, stream: false, checked: false, activeCharacter: null, requestedCharacter: null, availableCharacters: [], rendererSwitchState: "unmanaged", rendererSwitchSupported: false });
   const [statusFresh, setStatusFresh] = useState(false);
   const [liveFrameUrl, setLiveFrameUrl] = useState(null);
   const [streamState, setStreamState] = useState("replay");
@@ -147,12 +147,15 @@ export function App() {
   const videoSource = media ? (media[motion] || media.idle) : null;
   const systemsReady = health.fay && health.ardy;
   const streamRequested = health.renderer && health.stream && statusFresh;
-  const liveStage = character === "ada" && streamRequested && streamState === "live" && Boolean(liveFrameUrl);
-  const liveLabel = !selectedCharacter.ready
-    ? "Renderer package pending"
-    : character !== "ada"
-      ? "Verified replay"
-      : !health.checked ? "Checking" : liveStage ? "Stage live" : streamRequested && streamState === "error" ? "Replay fallback" : streamRequested ? "Stream connecting" : health.renderer ? "Renderer linked" : systemsReady ? "Systems ready" : "Limited preview";
+  const exactRendererSelected = health.activeCharacter === character && health.rendererSwitchState !== "switching" && health.rendererSwitchState !== "starting";
+  const liveStage = exactRendererSelected && streamRequested && streamState === "live" && Boolean(liveFrameUrl);
+  const characterSwitching = health.requestedCharacter === character && ["starting", "switching", "rollback"].includes(health.rendererSwitchState);
+  const liveLabel = !health.checked ? "Checking"
+    : liveStage ? "Stage live"
+      : characterSwitching ? `Loading ${selectedCharacter.name}`
+        : streamRequested && exactRendererSelected && streamState === "error" ? "Replay fallback"
+          : streamRequested && exactRendererSelected ? "Stream connecting"
+            : media ? "Verified replay" : health.rendererSwitchSupported ? "Ready to launch" : "Renderer unavailable";
   const characterName = selectedCharacter.name;
   const selectedAiControl = aiControl.modes.find((item) => item.id === aiControl.selectedMode) || aiControl.modes[1];
   const stageMediaStyle = { "--stage-zoom": stageZoom };
@@ -167,12 +170,19 @@ export function App() {
       const response = await fetch("/api/status", { cache: "no-store" });
       if (!response.ok) throw new Error();
       const payload = await response.json();
-      setHealth({ fay: Boolean(payload.fay), ardy: Boolean(payload.ardy), renderer: Boolean(payload.renderer), stream: Boolean(payload.stream), checked: true });
+      setHealth({
+        fay: Boolean(payload.fay), ardy: Boolean(payload.ardy), renderer: Boolean(payload.renderer), stream: Boolean(payload.stream), checked: true,
+        activeCharacter: typeof payload.activeCharacter === "string" ? payload.activeCharacter : null,
+        requestedCharacter: typeof payload.requestedCharacter === "string" ? payload.requestedCharacter : null,
+        availableCharacters: Array.isArray(payload.availableCharacters) ? payload.availableCharacters : [],
+        rendererSwitchState: typeof payload.rendererSwitchState === "string" ? payload.rendererSwitchState : "unmanaged",
+        rendererSwitchSupported: Boolean(payload.rendererSwitchSupported),
+      });
       setStatusFresh(true);
       window.clearTimeout(statusStaleTimerRef.current);
       statusStaleTimerRef.current = window.setTimeout(() => setStatusFresh(false), 12000);
     } catch {
-      setHealth({ fay: false, ardy: false, renderer: false, stream: false, checked: true });
+      setHealth({ fay: false, ardy: false, renderer: false, stream: false, checked: true, activeCharacter: null, requestedCharacter: null, availableCharacters: [], rendererSwitchState: "unmanaged", rendererSwitchSupported: false });
       setStatusFresh(false);
       window.clearTimeout(statusStaleTimerRef.current);
     }
@@ -368,7 +378,7 @@ export function App() {
   }, [notice]);
 
   useEffect(() => {
-    if (!aliveMode || motionLoop || !health.renderer || !health.ardy || listening || sending) return undefined;
+    if (!aliveMode || motionLoop || !health.renderer || !health.ardy || !exactRendererSelected || listening || sending) return undefined;
     let cancelled = false;
     let timer = null;
     let controller = null;
@@ -426,7 +436,7 @@ export function App() {
       window.clearTimeout(timer);
       controller?.abort();
     };
-  }, [activeSheet, aliveMode, health.ardy, health.renderer, listening, motionLoop, sending]);
+  }, [activeSheet, aliveMode, exactRendererSelected, health.ardy, health.renderer, listening, motionLoop, sending]);
 
   useEffect(() => {
     if (!motionLoop) return undefined;
@@ -504,7 +514,7 @@ export function App() {
       request.context = {
         schemaVersion: 1,
         characterProfile: character,
-        wardrobePreset: character === "fab-candidate"
+        wardrobePreset: character === "casual-girl"
           ? wardrobeSelection.preset
           : "not-applicable",
         cameraFraming: camera,
@@ -563,9 +573,9 @@ export function App() {
     setMotionMode("once");
     setMotion(nextMotion);
     setPlaying(true);
-    setNotice(health.renderer
+    setNotice(exactRendererSelected
       ? `Sending ${selected?.label || "motion"} to the live renderer…`
-      : `${selected?.label || "Motion"} · verified ${character === "ada" ? "Ada" : "Aoi"} replay`);
+      : `${selected?.label || "Motion"} · verified ${characterName} replay`);
     try {
       const payload = await requestMovement(nextMotion);
       applyMovementPayload(payload);
@@ -687,7 +697,7 @@ export function App() {
     setMessages((items) => [...items, { id: `user-${Date.now()}`, role: "user", content: message }]);
     setDraft("");
     setSending(true);
-    setNotice("Ada is thinking…");
+    setNotice(`${characterName} is thinking…`);
     try {
       if (STOP_MOVEMENT_PATTERN.test(message)) {
         const hadLoop = Boolean(motionLoop);
@@ -738,7 +748,7 @@ export function App() {
       if (!response.ok) throw new Error(payload.error || "Ada could not answer yet.");
       const reply = String(payload.reply || "").trim() || "I’m here, but I did not receive a complete reply.";
       setMessages((items) => [...items, { id: `assistant-${Date.now()}`, role: "assistant", content: reply }]);
-      setNotice(health.renderer ? "Live reply sent to Ada" : "Live Fay reply · device voice preview");
+      setNotice(health.renderer ? `Live reply sent to ${characterName}` : "Live Fay reply · device voice preview");
       speak(reply);
     } catch (error) {
       setMessages((items) => [...items, { id: `error-${Date.now()}`, role: "system", content: error.message || "Conversation is unavailable." }]);
@@ -773,16 +783,31 @@ export function App() {
     recognition.start();
   }
 
-  function chooseCharacter(id) {
+  async function chooseCharacter(id) {
     const candidate = CHARACTERS.find((item) => item.id === id);
     if (!candidate) return;
     setCharacter(id);
     setMotion(id === "ada" ? "explain" : "idle");
     setPlaying(true);
     setActiveSheet(null);
-    setNotice(candidate.ready
-      ? `${candidate.name} · verified private replay selected`
-      : `${candidate.name} selected · renderer package still pending`);
+    if (!health.rendererSwitchSupported || !health.availableCharacters.includes(id)) {
+      setNotice(MEDIA[id] ? `${candidate.name} · verified private replay selected` : `${candidate.name} is not in the active renderer package`);
+      return;
+    }
+    setNotice(`Loading ${candidate.name} in Unreal…`);
+    try {
+      const response = await fetch("/api/character", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ character: id }),
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(payload.detail || "Character switch was not accepted.");
+      setNotice(payload.status === "ready" ? `${candidate.name} is live` : `${candidate.name} is starting in Unreal…`);
+      refreshHealth();
+    } catch (error) {
+      setNotice(error.message || `${candidate.name} could not be started`);
+    }
   }
 
   function togglePlayback() {

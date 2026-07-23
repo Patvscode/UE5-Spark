@@ -10,6 +10,7 @@ import math
 import mimetypes
 import os
 import re
+import secrets
 import socket
 import stat
 import threading
@@ -29,7 +30,9 @@ MAX_MESSAGE_CHARS = 2_000
 MAX_MOTION_COMMAND_CHARS = 160
 MAX_LIVE_FRAME_BYTES = 2 * 1024 * 1024
 MAX_LIVE_FRAME_AGE_SECONDS = 2.0
-SERVER_VERSION = "prototype-4"
+MAX_RENDERER_CONTROL_BYTES = 16 * 1024
+MAX_RENDERER_STATE_AGE_SECONDS = 6.0
+SERVER_VERSION = "prototype-5"
 THINK_BLOCK_PATTERN = re.compile(r"<think>.*?(?:</think>|$)", re.IGNORECASE | re.DOTALL)
 LLM_MODEL_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}")
 CHAT_SYSTEM_PROMPT = (
@@ -50,11 +53,21 @@ MOTION_CONTEXT_FIELDS = frozenset({
     "schemaVersion", "characterProfile", "wardrobePreset",
     "cameraFraming", "stageZoom", "rendererState",
 })
-MOTION_CONTEXT_CHARACTER_PROFILES = frozenset({"ada", "aoi", "fab-candidate"})
+MOTION_CONTEXT_CHARACTER_PROFILES = frozenset({"ada", "aoi", "casual-girl"})
 MOTION_CONTEXT_CAMERA_FRAMINGS = frozenset({"fit", "portrait", "custom"})
 MOTION_CONTEXT_RENDERER_STATES = frozenset({
     "live-preview", "renderer-unstreamed", "verified-replay",
 })
+RENDERER_CHARACTER_PROFILES = {
+    "ada": "Ada",
+    "aoi": "Aoi",
+    "casual-girl": "CasualGirl",
+}
+RENDERER_SWITCH_STATES = frozenset({
+    "starting", "switching", "ready", "failed", "rollback",
+})
+RENDERER_STATE_FILE = "renderer-state.json"
+RENDERER_REQUEST_FILE = "renderer-request.json"
 AI_CONTROL_CONFIG_FIELDS = frozenset({
     "$schema", "schemaVersion", "controlConfigId", "defaultMode", "assetAwareNotice", "modes",
 })
@@ -502,7 +515,7 @@ def normalize_motion_context(payload: object) -> dict[str, object]:
     if payload.get("wardrobePreset") not in WARDROBE_PRESETS | {"not-applicable"}:
         raise ValueError("runtime context wardrobe preset is not supported")
     if (
-        payload.get("characterProfile") != "fab-candidate"
+        payload.get("characterProfile") != "casual-girl"
         and payload.get("wardrobePreset") != "not-applicable"
     ):
         raise ValueError("runtime context wardrobe preset does not match the character")
@@ -696,6 +709,121 @@ def live_stream_ready(renderer: bool, live_root: Path) -> bool:
     return renderer and read_live_frame(live_root) is not None
 
 
+def normalize_renderer_character_request(payload: object) -> str:
+    if not isinstance(payload, dict) or set(payload) != {"character"}:
+        raise ValueError("character request must contain exactly one character")
+    character = payload.get("character")
+    if not isinstance(character, str) or character not in RENDERER_CHARACTER_PROFILES:
+        raise ValueError("character is not a reviewed renderer profile")
+    return character
+
+
+def _read_private_control_json(path: Path) -> dict[str, object] | None:
+    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        descriptor = os.open(path, flags)
+    except (FileNotFoundError, OSError):
+        return None
+    try:
+        metadata = os.fstat(descriptor)
+        if (
+            not stat.S_ISREG(metadata.st_mode)
+            or metadata.st_uid != os.geteuid()
+            or stat.S_IMODE(metadata.st_mode) != 0o600
+            or not 2 <= metadata.st_size <= MAX_RENDERER_CONTROL_BYTES
+        ):
+            return None
+        with os.fdopen(descriptor, "rb", closefd=False) as stream:
+            body = stream.read(MAX_RENDERER_CONTROL_BYTES + 1)
+        if len(body) != metadata.st_size:
+            return None
+        payload = json.loads(body.decode("utf-8"))
+        return payload if isinstance(payload, dict) else None
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        return None
+    finally:
+        os.close(descriptor)
+
+
+def read_renderer_state(
+    live_root: Path, *, now_unix_ms: int | None = None
+) -> dict[str, object] | None:
+    payload = _read_private_control_json(live_root / RENDERER_STATE_FILE)
+    if payload is None or set(payload) != {
+        "schemaVersion", "state", "activeCharacter", "requestedCharacter",
+        "availableCharacters", "packageGeneration", "updatedAtUnixMs",
+    }:
+        return None
+    now_ms = int(time.time() * 1000) if now_unix_ms is None else now_unix_ms
+    updated_ms = payload.get("updatedAtUnixMs")
+    available = payload.get("availableCharacters")
+    active = payload.get("activeCharacter")
+    requested = payload.get("requestedCharacter")
+    generation = payload.get("packageGeneration")
+    if (
+        payload.get("schemaVersion") != 1
+        or payload.get("state") not in RENDERER_SWITCH_STATES
+        or type(updated_ms) is not int
+        or updated_ms > now_ms + 2_000
+        or now_ms - updated_ms > int(MAX_RENDERER_STATE_AGE_SECONDS * 1000)
+        or not isinstance(available, list)
+        or not 1 <= len(available) <= len(RENDERER_CHARACTER_PROFILES)
+        or len(available) != len(set(available))
+        or any(item not in RENDERER_CHARACTER_PROFILES for item in available)
+        or active is not None and active not in available
+        or requested is not None and requested not in available
+        or not isinstance(generation, str)
+        or re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}", generation) is None
+    ):
+        return None
+    if payload["state"] == "ready" and active is None:
+        return None
+    return {
+        "state": payload["state"],
+        "activeCharacter": active,
+        "requestedCharacter": requested,
+        "availableCharacters": list(available),
+        "packageGeneration": generation,
+    }
+
+
+def write_renderer_request(live_root: Path, character: str) -> dict[str, object]:
+    if character not in RENDERER_CHARACTER_PROFILES:
+        raise ValueError("character is not a reviewed renderer profile")
+    request = {
+        "schemaVersion": 1,
+        "character": character,
+        "requestId": secrets.token_hex(12),
+        "requestedAtUnixMs": int(time.time() * 1000),
+    }
+    destination = live_root / RENDERER_REQUEST_FILE
+    temporary = live_root / f".{RENDERER_REQUEST_FILE}.{request['requestId']}.tmp"
+    body = json.dumps(request, separators=(",", ":"), sort_keys=True).encode("utf-8")
+    flags = (
+        os.O_WRONLY | os.O_CREAT | os.O_EXCL
+        | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+    )
+    descriptor = os.open(temporary, flags, 0o600)
+    try:
+        with os.fdopen(descriptor, "wb", closefd=False) as stream:
+            stream.write(body)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary, destination)
+        directory_descriptor = os.open(live_root, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
+        try:
+            os.fsync(directory_descriptor)
+        finally:
+            os.close(directory_descriptor)
+    finally:
+        os.close(descriptor)
+        try:
+            temporary.unlink()
+        except FileNotFoundError:
+            pass
+    return request
+
+
 class ControllerServer(ThreadingHTTPServer):
     daemon_threads = True
 
@@ -722,6 +850,8 @@ class ControllerHandler(BaseHTTPRequestHandler):
         path = urllib.parse.urlparse(self.path).path
         if path == "/api/status":
             self._status()
+        elif path == "/api/character":
+            self._renderer_character_status()
         elif path == "/api/ai-control":
             self._json(HTTPStatus.OK, self.server.ai_control.snapshot())
         elif path == "/api/wardrobe":
@@ -758,6 +888,8 @@ class ControllerHandler(BaseHTTPRequestHandler):
                 self._motion_command(payload)
             elif path == "/api/ai-control":
                 self._ai_control(payload)
+            elif path == "/api/character":
+                self._renderer_character(payload)
             elif path == "/api/wardrobe":
                 self._wardrobe(payload)
             else:
@@ -800,6 +932,21 @@ class ControllerHandler(BaseHTTPRequestHandler):
         except (OSError, ValueError, urllib.error.URLError):
             pass
         stream = live_stream_ready(renderer, self.server.live_root)
+        renderer_control = read_renderer_state(self.server.live_root)
+        if renderer_control is None:
+            active_character = "ada" if renderer and stream else None
+            requested_character = active_character
+            available_characters = ["ada", "aoi"]
+            switch_state = "unmanaged"
+            package_generation = "legacy"
+            switch_supported = False
+        else:
+            active_character = renderer_control["activeCharacter"]
+            requested_character = renderer_control["requestedCharacter"]
+            available_characters = renderer_control["availableCharacters"]
+            switch_state = renderer_control["state"]
+            package_generation = renderer_control["packageGeneration"]
+            switch_supported = True
         self._json(HTTPStatus.OK, {
             "fay": fay, "ardy": ardy, "renderer": renderer, "stream": stream,
             "mode": (
@@ -807,7 +954,55 @@ class ControllerHandler(BaseHTTPRequestHandler):
                 "renderer-unstreamed" if renderer else
                 "verified-replay"
             ),
+            "activeCharacter": active_character,
+            "requestedCharacter": requested_character,
+            "availableCharacters": available_characters,
+            "rendererSwitchState": switch_state,
+            "rendererSwitchSupported": switch_supported,
+            "packageGeneration": package_generation,
             "version": SERVER_VERSION,
+        })
+
+    def _renderer_character_status(self) -> None:
+        state = read_renderer_state(self.server.live_root)
+        if state is None:
+            self._json(HTTPStatus.SERVICE_UNAVAILABLE, {
+                "error": "renderer_supervisor_unavailable",
+            })
+            return
+        self._json(HTTPStatus.OK, state)
+
+    def _renderer_character(self, payload: object) -> None:
+        character = normalize_renderer_character_request(payload)
+        state = read_renderer_state(self.server.live_root)
+        if state is None:
+            self._json(HTTPStatus.SERVICE_UNAVAILABLE, {
+                "error": "renderer_supervisor_unavailable",
+                "detail": "The managed renderer switcher is not running.",
+            })
+            return
+        if character not in state["availableCharacters"]:
+            self._json(HTTPStatus.CONFLICT, {
+                "error": "character_not_in_package",
+                "character": character,
+                "availableCharacters": state["availableCharacters"],
+            })
+            return
+        if state["state"] == "ready" and state["activeCharacter"] == character:
+            self._json(HTTPStatus.OK, {
+                "ok": True,
+                "status": "ready",
+                "character": character,
+                "packageGeneration": state["packageGeneration"],
+            })
+            return
+        request = write_renderer_request(self.server.live_root, character)
+        self._json(HTTPStatus.ACCEPTED, {
+            "ok": True,
+            "status": "requested",
+            "character": character,
+            "requestId": request["requestId"],
+            "packageGeneration": state["packageGeneration"],
         })
 
     def _live_frame(self, head_only: bool = False) -> None:

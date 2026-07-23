@@ -292,6 +292,54 @@ class ValidationTests(unittest.TestCase):
             self.assertFalse(SERVER.live_stream_ready(False, live_root))
             self.assertTrue(SERVER.live_stream_ready(True, live_root))
 
+    def test_renderer_state_is_private_fresh_and_profile_allowlisted(self):
+        with tempfile.TemporaryDirectory() as directory:
+            live_root = Path(directory)
+            live_root.chmod(0o700)
+            now_ms = int(time.time() * 1000)
+            state_path = live_root / SERVER.RENDERER_STATE_FILE
+            state_path.write_text(json.dumps({
+                "schemaVersion": 1,
+                "state": "ready",
+                "activeCharacter": "casual-girl",
+                "requestedCharacter": "casual-girl",
+                "availableCharacters": ["ada", "aoi", "casual-girl"],
+                "packageGeneration": "v30",
+                "updatedAtUnixMs": now_ms,
+            }), encoding="utf-8")
+            state_path.chmod(0o600)
+            state = SERVER.read_renderer_state(live_root, now_unix_ms=now_ms)
+            self.assertEqual(state["activeCharacter"], "casual-girl")
+            self.assertEqual(state["packageGeneration"], "v30")
+
+            state_path.chmod(0o644)
+            self.assertIsNone(SERVER.read_renderer_state(live_root, now_unix_ms=now_ms))
+            state_path.chmod(0o600)
+            payload = json.loads(state_path.read_text(encoding="utf-8"))
+            payload["availableCharacters"].append("arbitrary")
+            state_path.write_text(json.dumps(payload), encoding="utf-8")
+            state_path.chmod(0o600)
+            self.assertIsNone(SERVER.read_renderer_state(live_root, now_unix_ms=now_ms))
+
+    def test_renderer_character_request_is_atomic_and_narrow(self):
+        with tempfile.TemporaryDirectory() as directory:
+            live_root = Path(directory)
+            live_root.chmod(0o700)
+            request = SERVER.write_renderer_request(live_root, "casual-girl")
+            self.assertRegex(request["requestId"], r"^[0-9a-f]{24}$")
+            request_path = live_root / SERVER.RENDERER_REQUEST_FILE
+            self.assertEqual(request_path.stat().st_mode & 0o777, 0o600)
+            self.assertEqual(
+                json.loads(request_path.read_text(encoding="utf-8"))["character"],
+                "casual-girl",
+            )
+        for payload in (
+            {}, {"character": "CasualGirl"}, {"character": "../Ada"},
+            {"character": "ada", "path": "/tmp/runtime"},
+        ):
+            with self.assertRaises(ValueError):
+                SERVER.normalize_renderer_character_request(payload)
+
     def test_private_live_root_rejects_shared_permissions(self):
         with tempfile.TemporaryDirectory() as directory:
             live_root = Path(directory)

@@ -93,6 +93,30 @@ view-only preview into that directory:
   "$XDG_RUNTIME_DIR/ue5-spark-avatar-live"
 ```
 
+For a sealed package that contains Ada, Aoi, and CasualGirl, use the managed
+launcher instead of starting Unreal and the preview producer separately:
+
+```bash
+install -d -m 0700 "$XDG_RUNTIME_DIR/ue5-spark-avatar-live" ~/ue5-spark-private-logs
+./scripts/run-avatar-renderer-supervisor.py \
+  --package-exe /path/to/v30/FayAvatarRuntime/Binaries/LinuxArm64/FayAvatarRuntime \
+  --rollback-exe /path/to/v29/FayAvatarRuntime/Binaries/LinuxArm64/FayAvatarRuntime \
+  --live-root "$XDG_RUNTIME_DIR/ue5-spark-avatar-live" \
+  --log-root ~/ue5-spark-private-logs \
+  --generation v30 \
+  --rollback-generation v29 \
+  --initial-character casual-girl
+```
+
+The supervisor accepts only `ada`, `aoi`, and `casual-girl`, confirms that the
+corresponding runtime profile is present in each package's sealed character
+manifest, and stops only process groups it started. It writes a six-second state
+heartbeat beside the private frame. The controller displays a live frame only
+when that heartbeat names the selected character, so an Ada frame cannot be
+presented as Casual Girl during a restart. If a candidate launch fails, the
+supervisor first restores the previous character and may then use the explicitly
+provided rollback package; it never modifies either package.
+
 The producer captures only the one X11 window whose `_NET_WM_PID` matches the
 reviewed executable. It writes an atomic 960×540 JPEG at 5–15 FPS, opens no
 listener, records no audio, and stops only its own verified FFmpeg child. The
