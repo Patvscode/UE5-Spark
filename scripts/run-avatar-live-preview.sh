@@ -68,9 +68,10 @@ if [[ -e $frame_path ]]; then
         fail 'the existing live frame must have mode 0600'
 fi
 
-ffmpeg -hide_banner -h muxer=image2 2>&1 | grep -Fq atomic_writing || \
+ffmpeg -hide_banner -h muxer=image2 2>&1 | grep -F atomic_writing >/dev/null || \
     fail 'ffmpeg image2 atomic writing support is unavailable'
-ffmpeg -hide_banner -encoders 2>/dev/null | grep -Eq '^[[:space:]]*V[^[:space:]]*[[:space:]]+mjpeg[[:space:]]' || \
+ffmpeg -hide_banner -encoders 2>/dev/null | \
+    grep -E '^[[:space:]]*V[^[:space:]]*[[:space:]]+mjpeg[[:space:]]' >/dev/null || \
     fail 'ffmpeg MJPEG encoding support is unavailable'
 
 read_process_starttime() {

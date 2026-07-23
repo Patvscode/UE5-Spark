@@ -32,7 +32,7 @@ MAX_LIVE_FRAME_BYTES = 2 * 1024 * 1024
 MAX_LIVE_FRAME_AGE_SECONDS = 2.0
 MAX_RENDERER_CONTROL_BYTES = 16 * 1024
 MAX_RENDERER_STATE_AGE_SECONDS = 6.0
-SERVER_VERSION = "prototype-5"
+SERVER_VERSION = "prototype-6"
 THINK_BLOCK_PATTERN = re.compile(r"<think>.*?(?:</think>|$)", re.IGNORECASE | re.DOTALL)
 LLM_MODEL_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}")
 CHAT_SYSTEM_PROMPT = (
@@ -68,6 +68,9 @@ RENDERER_SWITCH_STATES = frozenset({
 })
 RENDERER_STATE_FILE = "renderer-state.json"
 RENDERER_REQUEST_FILE = "renderer-request.json"
+WARDROBE_REQUEST_FILE = "wardrobe-request.json"
+WARDROBE_APPLIED_FILE = "wardrobe-applied.json"
+WARDROBE_REJECTED_FILE = "wardrobe-rejected.json"
 AI_CONTROL_CONFIG_FIELDS = frozenset({
     "$schema", "schemaVersion", "controlConfigId", "defaultMode", "assetAwareNotice", "modes",
 })
@@ -330,6 +333,13 @@ EXPECTED_WARDROBE_SLOT_VALUES = {
     "hair": frozenset({"style_1", "style_2"}),
 }
 EXPECTED_WARDROBE_PRESETS = frozenset({"underwear", "casual", "hoodie"})
+CURRENT_WARDROBE_PRESET = "casual"
+CURRENT_WARDROBE_SELECTION = {
+    "top": "tank",
+    "bottom": "pants",
+    "feet": "shoes_socks",
+    "hair": "style_1",
+}
 
 
 def load_wardrobe_profile(path: Path) -> tuple[dict[str, object], dict[str, frozenset[str]], frozenset[str]]:
@@ -380,33 +390,37 @@ def load_wardrobe_profile(path: Path) -> tuple[dict[str, object], dict[str, froz
     if payload["status"] != "installed" and payload["allowFullyUnclothed"]:
         raise RuntimeError("pending wardrobe profile cannot allow full undress")
 
-    installed = payload["status"] == "installed"
+    # The native v30 actor currently carries only this inspected default
+    # outfit. The broader seller catalog remains pending and is deliberately
+    # not exposed as a working runtime choice.
+    installed = True
+    current_preset = dict(presets[CURRENT_WARDROBE_PRESET])
+    if current_preset != CURRENT_WARDROBE_SELECTION:
+        raise RuntimeError("current runtime wardrobe preset drifted from its sealed mapping")
     public_profile = {
         "profileId": payload["id"],
         "displayName": "Casual Girl",
         "installed": installed,
-        "state": payload["status"],
-        "presets": [
-            {
-                "id": preset_id,
-                "label": preset_id.replace("_", " ").title(),
-                "slots": dict(presets[preset_id]),
-            }
-            for preset_id in presets
-        ],
+        "state": "installed_default_only",
+        "scope": "default_outfit_only",
+        "presets": [{
+            "id": CURRENT_WARDROBE_PRESET,
+            "label": "Casual",
+            "slots": current_preset,
+        }],
         "slots": {
-            slot: [
-                {"id": value, "label": value.replace("_", " ").title()}
-                for value in values
-            ]
-            for slot, values in slots.items()
+            slot: [{
+                "id": current_preset[slot],
+                "label": current_preset[slot].replace("_", " ").title(),
+            }]
+            for slot in slots
         },
         "fullyUnclothed": {
             "enabled": installed and payload["allowFullyUnclothed"],
             "reason": (
                 "Complete base-body audit approved."
                 if installed and payload["allowFullyUnclothed"] else
-                "Complete base-body geometry has not been audited."
+                "Complete base-body geometry has not been audited; only the fixed casual outfit is installed."
             ),
         },
     }
@@ -605,25 +619,19 @@ def normalize_wardrobe(payload: object) -> dict[str, object]:
         raise ValueError("wardrobe request contains unsupported fields")
     if payload.get("profileId") != WARDROBE_PROFILE["profileId"]:
         raise ValueError("wardrobe profile is not reviewed")
-    if "preset" not in payload and "slots" not in payload:
-        raise ValueError("wardrobe request needs a preset or reviewed slots")
+    if "preset" not in payload:
+        raise ValueError("wardrobe request needs the installed casual preset")
 
     normalized: dict[str, object] = {"profileId": WARDROBE_PROFILE["profileId"]}
-    if "preset" in payload:
-        preset = payload.get("preset")
-        if not isinstance(preset, str) or preset not in WARDROBE_PRESETS:
-            raise ValueError("wardrobe preset is not reviewed")
-        normalized["preset"] = preset
+    preset = payload.get("preset")
+    if preset != CURRENT_WARDROBE_PRESET:
+        raise ValueError("wardrobe preset is not installed in this renderer")
+    normalized["preset"] = CURRENT_WARDROBE_PRESET
     if "slots" in payload:
         slots = payload.get("slots")
-        if not isinstance(slots, dict) or not slots or not set(slots) <= set(WARDROBE_SLOT_VALUES):
-            raise ValueError("wardrobe slots are not reviewed")
-        reviewed_slots: dict[str, str] = {}
-        for slot, value in slots.items():
-            if not isinstance(value, str) or value not in WARDROBE_SLOT_VALUES[slot]:
-                raise ValueError(f"wardrobe value for {slot} is not reviewed")
-            reviewed_slots[slot] = value
-        normalized["slots"] = reviewed_slots
+        if not isinstance(slots, dict) or slots != CURRENT_WARDROBE_SELECTION:
+            raise ValueError("only the complete installed casual outfit is available")
+    normalized["slots"] = dict(CURRENT_WARDROBE_SELECTION)
     return normalized
 
 
@@ -796,9 +804,23 @@ def write_renderer_request(live_root: Path, character: str) -> dict[str, object]
         "requestId": secrets.token_hex(12),
         "requestedAtUnixMs": int(time.time() * 1000),
     }
-    destination = live_root / RENDERER_REQUEST_FILE
-    temporary = live_root / f".{RENDERER_REQUEST_FILE}.{request['requestId']}.tmp"
-    body = json.dumps(request, separators=(",", ":"), sort_keys=True).encode("utf-8")
+    _atomic_private_control_json(
+        live_root, RENDERER_REQUEST_FILE, request, str(request["requestId"])
+    )
+    return request
+
+
+def _atomic_private_control_json(
+    live_root: Path,
+    filename: str,
+    payload: dict[str, object],
+    nonce: str,
+) -> None:
+    destination = live_root / filename
+    temporary = live_root / f".{filename}.{nonce}.tmp"
+    body = json.dumps(payload, separators=(",", ":"), sort_keys=True).encode("utf-8")
+    if not 2 <= len(body) <= MAX_RENDERER_CONTROL_BYTES:
+        raise ValueError("private control request is outside the allowed size")
     flags = (
         os.O_WRONLY | os.O_CREAT | os.O_EXCL
         | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
@@ -821,7 +843,60 @@ def write_renderer_request(live_root: Path, character: str) -> dict[str, object]
             temporary.unlink()
         except FileNotFoundError:
             pass
+
+
+def write_wardrobe_request(
+    live_root: Path, selection: dict[str, object]
+) -> dict[str, object]:
+    normalized = normalize_wardrobe(selection)
+    request = {
+        "schemaVersion": 1,
+        "requestId": secrets.token_hex(12),
+        "profileId": normalized["profileId"],
+        "preset": normalized["preset"],
+        "slots": normalized["slots"],
+        "requestedAtUnixMs": int(time.time() * 1000),
+    }
+    _atomic_private_control_json(
+        live_root, WARDROBE_REQUEST_FILE, request, str(request["requestId"])
+    )
     return request
+
+
+def read_wardrobe_receipt(live_root: Path, filename: str) -> dict[str, object] | None:
+    if filename not in {WARDROBE_APPLIED_FILE, WARDROBE_REJECTED_FILE}:
+        raise ValueError("wardrobe receipt filename is not supported")
+    payload = _read_private_control_json(live_root / filename)
+    if payload is None or set(payload) != {
+        "schemaVersion", "requestId", "profileId", "preset", "slots",
+        "requestedAtUnixMs",
+    }:
+        return None
+    request_id = payload.get("requestId")
+    requested_ms = payload.get("requestedAtUnixMs")
+    if (
+        payload.get("schemaVersion") != 1
+        or not isinstance(request_id, str)
+        or re.fullmatch(r"[0-9a-f]{24}", request_id) is None
+        or type(requested_ms) is not int
+        or requested_ms <= 0
+    ):
+        return None
+    try:
+        normalized = normalize_wardrobe({
+            "profileId": payload.get("profileId"),
+            "preset": payload.get("preset"),
+            "slots": payload.get("slots"),
+        })
+    except ValueError:
+        return None
+    return {
+        "requestId": request_id,
+        "profileId": normalized["profileId"],
+        "preset": normalized["preset"],
+        "slots": normalized["slots"],
+        "status": "applied" if filename == WARDROBE_APPLIED_FILE else "rejected",
+    }
 
 
 class ControllerServer(ThreadingHTTPServer):
@@ -1219,21 +1294,54 @@ class ControllerHandler(BaseHTTPRequestHandler):
 
     def _wardrobe(self, payload: object) -> None:
         selection = normalize_wardrobe(payload)
-        if not WARDROBE_PROFILE["installed"]:
+        state = read_renderer_state(self.server.live_root)
+        if (
+            state is None
+            or state["state"] != "ready"
+            or state["activeCharacter"] != "casual-girl"
+        ):
             self._json(HTTPStatus.CONFLICT, {
                 "ok": False,
-                "error": "wardrobe_profile_not_installed",
+                "error": "casual_girl_renderer_not_active",
                 "profileId": selection["profileId"],
-                "detail": (
-                    "The sealed Casual Girl wardrobe controls are ready, but the asset "
-                    "profile has not been installed or body-audited. Nothing changed."
-                ),
+                "detail": "Select Casual Girl and wait for her live stage before applying the outfit.",
             })
             return
-        self._json(HTTPStatus.NOT_IMPLEMENTED, {
-            "ok": False,
-            "error": "wardrobe_renderer_adapter_pending",
+
+        request = write_wardrobe_request(self.server.live_root, selection)
+        deadline = time.monotonic() + 1.25
+        while time.monotonic() < deadline:
+            for filename in (WARDROBE_APPLIED_FILE, WARDROBE_REJECTED_FILE):
+                receipt = read_wardrobe_receipt(self.server.live_root, filename)
+                if receipt is None or receipt["requestId"] != request["requestId"]:
+                    continue
+                if receipt["status"] == "applied":
+                    self._json(HTTPStatus.OK, {
+                        "ok": True,
+                        "status": "applied",
+                        "profileId": receipt["profileId"],
+                        "preset": receipt["preset"],
+                        "slots": receipt["slots"],
+                        "requestId": receipt["requestId"],
+                    })
+                else:
+                    self._json(HTTPStatus.CONFLICT, {
+                        "ok": False,
+                        "status": "rejected",
+                        "error": "wardrobe_runtime_rejected",
+                        "profileId": selection["profileId"],
+                        "requestId": request["requestId"],
+                    })
+                return
+            time.sleep(0.05)
+
+        self._json(HTTPStatus.ACCEPTED, {
+            "ok": True,
+            "status": "queued",
             "profileId": selection["profileId"],
+            "preset": selection["preset"],
+            "requestId": request["requestId"],
+            "detail": "The reviewed outfit was queued for the live renderer.",
         })
 
     def _renderer_online(self) -> bool:

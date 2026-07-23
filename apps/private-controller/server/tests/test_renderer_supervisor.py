@@ -51,6 +51,7 @@ class RendererSupervisorTests(unittest.TestCase):
     def test_supervisor_launches_through_the_guarded_stack_launcher(self):
         source = SCRIPT_PATH.read_text(encoding="utf-8")
         self.assertIn("str(self.stack_launcher), str(package.launcher)", source)
+        self.assertIn('f"-FayWardrobeCommandRoot={self.live_root}"', source)
         self.assertIn('default=Path(__file__).with_name("run-spark-digital-human.sh")', source)
 
     def test_request_reader_rejects_unreviewed_profile(self):

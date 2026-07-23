@@ -52,6 +52,12 @@ class LivePreviewScriptStaticTests(unittest.TestCase):
         for forbidden in ("killall", "pkill", "docker stop", "podman stop", "-listen"):
             self.assertNotIn(forbidden, self.source)
 
+    def test_ffmpeg_capability_probes_do_not_trip_pipefail(self) -> None:
+        self.assertIn("grep -F atomic_writing >/dev/null", self.source)
+        self.assertIn("+mjpeg[[:space:]]' >/dev/null", self.source)
+        self.assertNotIn("grep -Fq atomic_writing", self.source)
+        self.assertNotIn("grep -Eq '^[[:space:]]*V", self.source)
+
 
 if __name__ == "__main__":
     unittest.main()

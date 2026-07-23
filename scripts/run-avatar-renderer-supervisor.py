@@ -320,6 +320,7 @@ class Supervisor:
             str(self.stack_launcher), str(package.launcher),
             f"-FayCharacter={package.profiles[character]}",
             f"-FayCameraFraming={package.framings[character]}",
+            f"-FayWardrobeCommandRoot={self.live_root}",
             "-FayResetSpeechCache=0", "-FayTrimSpeechMemory=1",
             "-ResX=1280", "-ResY=720", "-Windowed", "-WinX=0", "-WinY=0",
         ]

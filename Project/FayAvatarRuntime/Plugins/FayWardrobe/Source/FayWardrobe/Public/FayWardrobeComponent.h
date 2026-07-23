@@ -69,6 +69,10 @@ public:
     UFUNCTION(BlueprintCallable, Category = "Fay|Wardrobe")
     bool SetSlotItem(FName SlotId, FName ItemId);
 
+    /** Apply one complete reviewed slot selection atomically. */
+    UFUNCTION(BlueprintCallable, Category = "Fay|Wardrobe")
+    bool ApplyCompleteSelection(const TMap<FName, FName>& Selection);
+
     /** Restore the actor's original visibility and discard all mappings. */
     UFUNCTION(BlueprintCallable, Category = "Fay|Wardrobe")
     void ResetWardrobe();

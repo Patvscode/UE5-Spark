@@ -24,6 +24,6 @@ The first asset-aware adapter is deliberately structured: selected profile ID, a
 
 Durable vision feedback: front-camera access is always explicit opt-in. Until a reviewed gaze bridge actually consumes frames and drives Unreal, expose at most a local browser preview and state plainly that the character cannot see or track the user yet.
 
-Durable wardrobe feedback: expose only sealed Casual Girl preset and garment IDs. Keep the whole wardrobe disabled until the profile is installed, and keep full undress unavailable until an asset audit proves that the base body is complete. Never expose arbitrary Unreal asset paths through the controller.
+Durable wardrobe feedback: expose only sealed Casual Girl preset and garment IDs. The native runtime currently installs only the complete `casual` default preset; keep every broader seller-catalog choice unavailable until its component is added and inspected. Keep full undress unavailable until an asset audit proves that the base body is complete. Never expose arbitrary Unreal asset paths through the controller.
 
 Build app UI in `src/`. Keep `.openai/hosting.json`, `worker/index.js`, `scripts/prepare-sites-build.mjs`, and `tests/sites-worker.test.mjs` intact so the same local prototype can be handed to Sites. Before a Sites handoff, run `npm run build` and `npm run test:sites`; the build must leave `dist/client/index.html`, `dist/server/index.js`, and `dist/.openai/hosting.json`.

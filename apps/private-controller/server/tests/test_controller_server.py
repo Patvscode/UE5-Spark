@@ -4,6 +4,7 @@ import ipaddress
 import json
 import os
 import tempfile
+import threading
 import time
 import unittest
 from pathlib import Path
@@ -169,32 +170,96 @@ class ValidationTests(unittest.TestCase):
 
     def test_wardrobe_is_sealed_and_full_undress_remains_disabled(self):
         profile = SERVER.WARDROBE_PROFILE
-        self.assertFalse(profile["installed"])
+        self.assertTrue(profile["installed"])
+        self.assertEqual(profile["state"], "installed_default_only")
+        self.assertEqual(profile["scope"], "default_outfit_only")
         self.assertFalse(profile["fullyUnclothed"]["enabled"])
         self.assertEqual(
             {item["id"] for item in profile["presets"]},
-            {"underwear", "casual", "hoodie"},
+            {"casual"},
         )
         self.assertEqual(
             SERVER.normalize_wardrobe({
                 "profileId": "casual-girl",
                 "preset": "casual",
-                "slots": {"top": "tank", "bottom": "shorts", "feet": "shoes_socks", "hair": "style_1"},
+                "slots": {"top": "tank", "bottom": "pants", "feet": "shoes_socks", "hair": "style_1"},
             }),
             {
                 "profileId": "casual-girl",
                 "preset": "casual",
-                "slots": {"top": "tank", "bottom": "shorts", "feet": "shoes_socks", "hair": "style_1"},
+                "slots": {"top": "tank", "bottom": "pants", "feet": "shoes_socks", "hair": "style_1"},
             },
         )
         for payload in (
             {"profileId": "casual-girl", "fullyUnclothed": True},
-            {"profileId": "casual-girl", "preset": "unreviewed"},
+            {"profileId": "casual-girl", "preset": "hoodie"},
             {"profileId": "casual-girl", "slots": {"top": "/Game/Anything"}},
+            {"profileId": "casual-girl", "preset": "casual", "slots": {"top": "tank"}},
             {"profileId": "other", "preset": "casual"},
         ):
             with self.assertRaises(ValueError):
                 SERVER.normalize_wardrobe(payload)
+
+    def test_wardrobe_request_and_runtime_receipt_stay_in_private_live_root(self):
+        selection = {
+            "profileId": "casual-girl",
+            "preset": "casual",
+            "slots": dict(SERVER.CURRENT_WARDROBE_SELECTION),
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            live_root = Path(directory)
+            live_root.chmod(0o700)
+            request = SERVER.write_wardrobe_request(live_root, selection)
+            request_path = live_root / SERVER.WARDROBE_REQUEST_FILE
+            self.assertEqual(request_path.stat().st_mode & 0o777, 0o600)
+            self.assertRegex(request["requestId"], r"^[0-9a-f]{24}$")
+            receipt_path = live_root / SERVER.WARDROBE_APPLIED_FILE
+            request_path.replace(receipt_path)
+            receipt = SERVER.read_wardrobe_receipt(
+                live_root, SERVER.WARDROBE_APPLIED_FILE
+            )
+            self.assertEqual(receipt["status"], "applied")
+            self.assertEqual(receipt["requestId"], request["requestId"])
+
+    def test_wardrobe_post_waits_for_matching_live_runtime_receipt(self):
+        selection = {
+            "profileId": "casual-girl",
+            "preset": "casual",
+            "slots": dict(SERVER.CURRENT_WARDROBE_SELECTION),
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            live_root = Path(directory)
+            live_root.chmod(0o700)
+            state_path = live_root / SERVER.RENDERER_STATE_FILE
+            state_path.write_text(json.dumps({
+                "schemaVersion": 1,
+                "state": "ready",
+                "activeCharacter": "casual-girl",
+                "requestedCharacter": "casual-girl",
+                "availableCharacters": ["ada", "aoi", "casual-girl"],
+                "packageGeneration": "v30",
+                "updatedAtUnixMs": int(time.time() * 1000),
+            }), encoding="utf-8")
+            state_path.chmod(0o600)
+
+            def runtime_receipt() -> None:
+                request = live_root / SERVER.WARDROBE_REQUEST_FILE
+                deadline = time.monotonic() + 1
+                while not request.exists() and time.monotonic() < deadline:
+                    time.sleep(0.01)
+                request.replace(live_root / SERVER.WARDROBE_APPLIED_FILE)
+
+            worker = threading.Thread(target=runtime_receipt)
+            worker.start()
+            handler = object.__new__(SERVER.ControllerHandler)
+            handler.server = SimpleNamespace(live_root=live_root)
+            responses = []
+            handler._json = lambda status, payload: responses.append((status, payload))
+            handler._wardrobe(selection)
+            worker.join(timeout=1)
+            self.assertFalse(worker.is_alive())
+            self.assertEqual(responses[0][0], SERVER.HTTPStatus.OK)
+            self.assertEqual(responses[0][1]["status"], "applied")
 
     def test_shared_pending_wardrobe_loader_is_sanitized_and_fails_closed(self):
         profile = json.loads(SERVER.WARDROBE_PROFILE_PATH.read_text(encoding="utf-8"))
@@ -203,7 +268,8 @@ class ValidationTests(unittest.TestCase):
             path.write_text(json.dumps(profile), encoding="utf-8")
             public, slots, presets = SERVER.load_wardrobe_profile(path)
             self.assertEqual(public["profileId"], "casual-girl")
-            self.assertFalse(public["installed"])
+            self.assertTrue(public["installed"])
+            self.assertEqual(public["state"], "installed_default_only")
             self.assertNotIn("sourceListing", public)
             self.assertNotIn("reviewedAssetRoot", public)
             self.assertEqual(slots, SERVER.EXPECTED_WARDROBE_SLOT_VALUES)

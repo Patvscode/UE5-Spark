@@ -50,6 +50,10 @@ private:
         EFayMetaHumanLiveLinkState State,
         EFayMetaHumanLiveLinkFailure Failure);
     void TickLiveLinkRecovery(float DeltaSeconds);
+    bool ConfigureReviewedCasualGirlWardrobe();
+    void ConfigureWardrobeCommandChannel();
+    void TickWardrobeCommandChannel(float DeltaSeconds);
+    bool ApplyWardrobeCommandFile(const FString& RequestPath);
 
     UPROPERTY(VisibleAnywhere, Category = "Spark Smoke Test")
     TObjectPtr<UCameraComponent> Camera;
@@ -117,4 +121,8 @@ private:
     int32 LiveLinkRecoveryAttemptCount = 0;
     double FrameRatePolicyAuditElapsedSeconds = 0.0;
     double LiveLinkRecoveryDelayRemainingSeconds = 0.0;
+    double WardrobeCommandPollElapsedSeconds = 0.0;
+    FString WardrobeCommandRoot;
+    FString LastWardrobeRequestId;
+    bool bWardrobeCommandChannelReady = false;
 };

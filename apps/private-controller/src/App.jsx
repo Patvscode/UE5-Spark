@@ -205,7 +205,12 @@ export function App() {
         return response.json();
       })
       .then((payload) => {
-        if (!cancelled && payload?.profileId === "casual-girl") setWardrobe(payload);
+        if (!cancelled && payload?.profileId === "casual-girl") {
+          setWardrobe(payload);
+          setWardrobeNotice(payload.installed
+            ? "Casual default outfit ready · additional outfits pending"
+            : "Asset profile not installed");
+        }
       })
       .catch(() => { /* The sealed pending manifest remains visible in static preview. */ });
     return () => { cancelled = true; };
@@ -647,7 +652,9 @@ export function App() {
       });
       const payload = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(payload.detail || "Wardrobe adapter is not ready.");
-      setWardrobeNotice("Wardrobe applied");
+      setWardrobeNotice(payload.status === "applied"
+        ? "Casual outfit applied live"
+        : "Casual outfit queued for the live renderer");
     } catch (error) {
       setWardrobeNotice(error.message || "Wardrobe was not changed");
     }

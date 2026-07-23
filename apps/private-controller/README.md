@@ -60,9 +60,14 @@ capability to enable and is responsible for that use, and the runtime has no
 character-specific license allowlist.
 
 Wardrobe state is loaded fail-closed from
-`config/wardrobe-profiles/CasualGirl.pending.json`. The API exposes only the
-reviewed preset/slot IDs and audit state; the Fab URL and Unreal asset root are
-not returned to the browser.
+`config/wardrobe-profiles/CasualGirl.pending.json`. The current runtime exposes
+only the installed `casual` default preset and its four fixed slot selections;
+the broader pending seller catalog remains unavailable. A POST is written as
+one atomic, mode-0600 request below the existing private live root, and the
+native renderer moves it to an applied or rejected receipt after validating the
+exact profile, preset, and complete slot set. The Fab URL, Unreal asset root,
+component names, and arbitrary paths are never returned to or accepted from the
+browser.
 
 ## Local verification
 

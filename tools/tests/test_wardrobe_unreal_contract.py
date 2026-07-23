@@ -32,6 +32,7 @@ class WardrobeUnrealContractTests(unittest.TestCase):
         for marker in (
             "bool ApplyPreset(FName PresetId);",
             "bool SetSlotItem(FName SlotId, FName ItemId);",
+            "bool ApplyCompleteSelection(const TMap<FName, FName>& Selection);",
             "bool bAllowFullyUnclothed = false;",
             "TArray<FName> ComponentNames;",
             "bool bProvidesBodyCoverage = false;",
@@ -124,6 +125,37 @@ class WardrobeUnrealContractTests(unittest.TestCase):
         ):
             self.assertIn(marker, HEADER + SOURCE)
         self.assertIn('"FayWardrobe"', game_build)
+
+    def test_casual_girl_default_preset_has_one_bounded_live_command_path(self) -> None:
+        game_source = (
+            REPO_ROOT
+            / "Project/FayAvatarRuntime/Source/FayAvatarRuntime/Private/"
+            "FayAvatarBootstrapGameMode.cpp"
+        ).read_text(encoding="utf-8")
+        game_header = (
+            REPO_ROOT
+            / "Project/FayAvatarRuntime/Source/FayAvatarRuntime/Private/"
+            "FayAvatarBootstrapGameMode.h"
+        ).read_text(encoding="utf-8")
+        for marker in (
+            'CasualGirlWardrobePresetId[] = TEXT("casual")',
+            'WardrobeRequestFilename[] = TEXT("wardrobe-request.json")',
+            'WardrobeAppliedFilename[] = TEXT("wardrobe-applied.json")',
+            'WardrobeRejectedFilename[] = TEXT("wardrobe-rejected.json")',
+            'MakeWardrobeItem(TEXT("tank"), TEXT("Top1"), true)',
+            'MakeWardrobeItem(TEXT("pants"), TEXT("Pants"), true)',
+            'MakeWardrobeItem(TEXT("shoes_socks"), TEXT("Shoes_Socks"), false)',
+            'MakeWardrobeItem(TEXT("style_1"), TEXT("Hair1"), false)',
+            "Wardrobe->ApplyCompleteSelection(Selection)",
+            "Root->Values.Num() == 6",
+            "(*Slots)->Values.Num() == 4",
+        ):
+            self.assertIn(marker, game_source)
+        self.assertIn("TickWardrobeCommandChannel(float DeltaSeconds);", game_header)
+        for unsupported in ("Top2", "Top3", "Top4", "Hair2", "Shorts"):
+            self.assertNotIn(
+                f'MakeWardrobeItem(TEXT("{unsupported.lower()}")', game_source
+            )
 
 
 if __name__ == "__main__":

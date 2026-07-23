@@ -9,15 +9,19 @@ Configuration is transactional: every slot, item, preset, and component is
 validated before visibility changes. Failure leaves the actor untouched. When
 the component is reset or destroyed it restores the visibility state it found.
 
-Exactly one `UFayWardrobeBindingComponent` inside a reviewed private character
-Blueprint selects a cooked `UFayWardrobeProfileAsset` and complete default
-preset. The GameMode resolves that binding after spawn. Characters without a
-binding, including the current Ada/Aoi package, keep wardrobe control disabled.
+Ordinarily, exactly one `UFayWardrobeBindingComponent` inside a reviewed private
+character Blueprint selects a cooked `UFayWardrobeProfileAsset` and complete
+default preset. The GameMode resolves that binding after spawn. The native
+Casual Girl adapter instead constructs its one installed `casual` preset from
+fixed component names compiled into the application; no client constructs that
+profile. Characters without either reviewed route keep wardrobe control
+disabled.
 
 The component deliberately has no network listener. A private command broker
-may call only `ApplyPreset` or `SetSlotItem` after the sealed binding succeeds.
-It may not construct profiles from user input. Hidden component groups also
-stop ticking and their original visibility/tick state is restored on reset.
+may call only `ApplyPreset`, `ApplyCompleteSelection`, or `SetSlotItem` after
+the sealed profile succeeds. It may not construct profiles from user input.
+Hidden component groups also stop ticking and their original visibility/tick
+state is restored on reset.
 
 `bAllowFullyUnclothed` defaults to false. Each private item declares whether it
 provides anatomical coverage. The runtime derives fully-unclothed state from

@@ -5,6 +5,7 @@
 #include "Components/SceneComponent.h"
 #include "Components/SkeletalMeshComponent.h"
 #include "DrawDebugHelpers.h"
+#include "Dom/JsonObject.h"
 #include "Engine/Engine.h"
 #include "Engine/SkeletalMesh.h"
 #include "Engine/World.h"
@@ -19,9 +20,14 @@
 #include "GameFramework/PlayerController.h"
 #include "HAL/PlatformProcess.h"
 #include "HAL/IConsoleManager.h"
+#include "HAL/FileManager.h"
 #include "Misc/CommandLine.h"
 #include "Misc/ConfigCacheIni.h"
+#include "Misc/FileHelper.h"
 #include "Misc/Parse.h"
+#include "Misc/Paths.h"
+#include "Serialization/JsonReader.h"
+#include "Serialization/JsonSerializer.h"
 #include "UObject/SoftObjectPath.h"
 
 DEFINE_LOG_CATEGORY_STATIC(LogFayAvatarRuntime, Log, All);
@@ -36,6 +42,14 @@ constexpr TCHAR MetaHumanAdapter[] = TEXT("UE58MetaHuman");
 constexpr TCHAR EpicArkitAdapter[] = TEXT("UE5EpicArkit");
 constexpr TCHAR ReviewedEpicArkitActorClass[] =
     TEXT("/Script/FayAvatarRuntime.FayCasualGirlActor");
+constexpr TCHAR CasualGirlCharacterId[] = TEXT("CasualGirl");
+constexpr TCHAR CasualGirlWardrobeProfileId[] = TEXT("casual-girl");
+constexpr TCHAR CasualGirlWardrobePresetId[] = TEXT("casual");
+constexpr TCHAR WardrobeRequestFilename[] = TEXT("wardrobe-request.json");
+constexpr TCHAR WardrobeAppliedFilename[] = TEXT("wardrobe-applied.json");
+constexpr TCHAR WardrobeRejectedFilename[] = TEXT("wardrobe-rejected.json");
+constexpr double WardrobeCommandPollIntervalSeconds = 0.1;
+constexpr int64 MaximumWardrobeRequestBytes = 4096;
 constexpr float ReviewedMaximumFramesPerSecond = 30.0f;
 constexpr float FrameRateLimitTolerance = 0.01f;
 constexpr double FrameRatePolicyAuditIntervalSeconds = 5.0;
@@ -88,6 +102,45 @@ bool IsReviewedCharacterId(const FString& Value)
         }
     }
     return true;
+}
+
+bool IsWardrobeRequestId(const FString& Value)
+{
+    if (Value.Len() != 24)
+    {
+        return false;
+    }
+    for (const TCHAR Character : Value)
+    {
+        if (!FChar::IsDigit(Character) &&
+            !(Character >= TEXT('a') && Character <= TEXT('f')))
+        {
+            return false;
+        }
+    }
+    return true;
+}
+
+FFayWardrobeItem MakeWardrobeItem(
+    const TCHAR* ItemId,
+    const TCHAR* ComponentName,
+    const bool bProvidesBodyCoverage)
+{
+    FFayWardrobeItem Item;
+    Item.ItemId = FName(ItemId);
+    Item.ComponentNames.Add(FName(ComponentName));
+    Item.bProvidesBodyCoverage = bProvidesBodyCoverage;
+    return Item;
+}
+
+FFayWardrobeSlot MakeWardrobeSlot(
+    const TCHAR* SlotId,
+    FFayWardrobeItem&& Item)
+{
+    FFayWardrobeSlot Slot;
+    Slot.SlotId = FName(SlotId);
+    Slot.Items.Add(MoveTemp(Item));
+    return Slot;
 }
 
 bool IsReviewedActorClassPath(
@@ -273,6 +326,7 @@ void AFayAvatarBootstrapGameMode::EndPlay(
     const EEndPlayReason::Type EndPlayReason)
 {
     bEndingPlay = true;
+    bWardrobeCommandChannelReady = false;
     bLiveLinkRecoveryScheduled = false;
     bLiveLinkRecoveryExhaustionPending = false;
     if (SpeechDriver != nullptr)
@@ -292,6 +346,7 @@ void AFayAvatarBootstrapGameMode::Tick(const float DeltaSeconds)
     Super::Tick(DeltaSeconds);
     TickFrameRatePolicy(DeltaSeconds);
     TickLiveLinkRecovery(DeltaSeconds);
+    TickWardrobeCommandChannel(DeltaSeconds);
 
     if (!bViewClaimed)
     {
@@ -763,7 +818,17 @@ void AFayAvatarBootstrapGameMode::TrySpawnMetaHuman()
     {
         BodyMotion->ConfigureAvatar(MetaHumanActor, BodyComponentName);
     }
-    if (Wardrobe != nullptr)
+    if (Wardrobe != nullptr &&
+        ActiveCharacterId.Equals(
+            CasualGirlCharacterId,
+            ESearchCase::CaseSensitive))
+    {
+        if (ConfigureReviewedCasualGirlWardrobe())
+        {
+            ConfigureWardrobeCommandChannel();
+        }
+    }
+    else if (Wardrobe != nullptr)
     {
         Wardrobe->ConfigureFromReviewedBinding(MetaHumanActor);
     }
@@ -820,6 +885,212 @@ void AFayAvatarBootstrapGameMode::TrySpawnMetaHuman()
         TEXT("Spawned character '%s' (speech_arkit_morphs=%s, speech_live_link=disabled)."),
         *ActiveCharacterId,
         bArkitConfigured ? TEXT("configured") : TEXT("jaw fallback"));
+}
+
+bool AFayAvatarBootstrapGameMode::ConfigureReviewedCasualGirlWardrobe()
+{
+    if (Wardrobe == nullptr || !IsValid(MetaHumanActor) ||
+        !CharacterAdapter.Equals(EpicArkitAdapter, ESearchCase::CaseSensitive))
+    {
+        return false;
+    }
+
+    // This first installed capability deliberately describes only the fixed,
+    // inspected default outfit. Unsupported seller components remain absent
+    // from the runtime mapping and therefore cannot be selected by a client.
+    FFayWardrobeProfile Profile;
+    Profile.ProfileId = FName(CasualGirlWardrobeProfileId);
+    Profile.bAllowFullyUnclothed = false;
+    Profile.Slots.Add(MakeWardrobeSlot(
+        TEXT("top"), MakeWardrobeItem(TEXT("tank"), TEXT("Top1"), true)));
+    Profile.Slots.Add(MakeWardrobeSlot(
+        TEXT("bottom"), MakeWardrobeItem(TEXT("pants"), TEXT("Pants"), true)));
+    Profile.Slots.Add(MakeWardrobeSlot(
+        TEXT("feet"),
+        MakeWardrobeItem(TEXT("shoes_socks"), TEXT("Shoes_Socks"), false)));
+    Profile.Slots.Add(MakeWardrobeSlot(
+        TEXT("hair"), MakeWardrobeItem(TEXT("style_1"), TEXT("Hair1"), false)));
+
+    FFayWardrobePreset Preset;
+    Preset.PresetId = FName(CasualGirlWardrobePresetId);
+    Preset.SlotItems.Add(TEXT("top"), TEXT("tank"));
+    Preset.SlotItems.Add(TEXT("bottom"), TEXT("pants"));
+    Preset.SlotItems.Add(TEXT("feet"), TEXT("shoes_socks"));
+    Preset.SlotItems.Add(TEXT("hair"), TEXT("style_1"));
+    Preset.bFullyUnclothed = false;
+    Profile.Presets.Add(MoveTemp(Preset));
+
+    if (!Wardrobe->ConfigureAvatar(MetaHumanActor, Profile) ||
+        !Wardrobe->ApplyPreset(FName(CasualGirlWardrobePresetId)))
+    {
+        Wardrobe->ResetWardrobe();
+        UE_LOG(LogFayAvatarRuntime, Error,
+            TEXT("Casual Girl fixed wardrobe capability failed closed."));
+        return false;
+    }
+    UE_LOG(LogFayAvatarRuntime, Display,
+        TEXT("Casual Girl reviewed wardrobe preset 'casual' is active."));
+    return true;
+}
+
+void AFayAvatarBootstrapGameMode::ConfigureWardrobeCommandChannel()
+{
+    FString Root;
+    if (!FParse::Value(
+            FCommandLine::Get(), TEXT("FayWardrobeCommandRoot="), Root))
+    {
+        UE_LOG(LogFayAvatarRuntime, Verbose,
+            TEXT("No private wardrobe command root was supplied; live wardrobe control is disabled."));
+        return;
+    }
+    Root.TrimQuotesInline();
+    Root = FPaths::ConvertRelativePathToFull(Root);
+    FPaths::NormalizeDirectoryName(Root);
+    if (Root.IsEmpty() || Root.Contains(TEXT("..")) ||
+        !FPaths::DirectoryExists(Root))
+    {
+        UE_LOG(LogFayAvatarRuntime, Error,
+            TEXT("The private wardrobe command root is unavailable; live wardrobe control is disabled."));
+        return;
+    }
+    WardrobeCommandRoot = MoveTemp(Root);
+    LastWardrobeRequestId.Reset();
+    WardrobeCommandPollElapsedSeconds = WardrobeCommandPollIntervalSeconds;
+    bWardrobeCommandChannelReady = true;
+    UE_LOG(LogFayAvatarRuntime, Display,
+        TEXT("Enabled the private, preset-only Casual Girl wardrobe command channel."));
+}
+
+void AFayAvatarBootstrapGameMode::TickWardrobeCommandChannel(
+    const float DeltaSeconds)
+{
+    if (!bWardrobeCommandChannelReady || Wardrobe == nullptr ||
+        !Wardrobe->IsReady())
+    {
+        return;
+    }
+    WardrobeCommandPollElapsedSeconds += FMath::Max(0.0f, DeltaSeconds);
+    if (WardrobeCommandPollElapsedSeconds < WardrobeCommandPollIntervalSeconds)
+    {
+        return;
+    }
+    WardrobeCommandPollElapsedSeconds = FMath::Fmod(
+        WardrobeCommandPollElapsedSeconds,
+        WardrobeCommandPollIntervalSeconds);
+
+    const FString RequestPath =
+        FPaths::Combine(WardrobeCommandRoot, WardrobeRequestFilename);
+    const int64 RequestSize = IFileManager::Get().FileSize(*RequestPath);
+    if (RequestSize < 2 || RequestSize > MaximumWardrobeRequestBytes)
+    {
+        return;
+    }
+    ApplyWardrobeCommandFile(RequestPath);
+}
+
+bool AFayAvatarBootstrapGameMode::ApplyWardrobeCommandFile(
+    const FString& RequestPath)
+{
+    FString JsonText;
+    TSharedPtr<FJsonObject> Root;
+    FString RequestId;
+    bool bAccepted = FFileHelper::LoadFileToString(JsonText, *RequestPath) &&
+        JsonText.Len() <= MaximumWardrobeRequestBytes;
+    if (bAccepted)
+    {
+        const TSharedRef<TJsonReader<>> Reader =
+            TJsonReaderFactory<>::Create(JsonText);
+        bAccepted = FJsonSerializer::Deserialize(Reader, Root) && Root.IsValid() &&
+            Root->Values.Num() == 6;
+    }
+
+    double SchemaVersion = 0.0;
+    double RequestedAtUnixMs = 0.0;
+    FString ProfileId;
+    FString PresetId;
+    const TSharedPtr<FJsonObject>* Slots = nullptr;
+    const double CurrentUnixMs =
+        static_cast<double>(FDateTime::UtcNow().ToUnixTimestamp()) * 1000.0;
+    if (bAccepted)
+    {
+        bAccepted = Root->TryGetNumberField(TEXT("schemaVersion"), SchemaVersion) &&
+            SchemaVersion == 1.0 &&
+            Root->TryGetStringField(TEXT("requestId"), RequestId) &&
+            IsWardrobeRequestId(RequestId) &&
+            Root->TryGetStringField(TEXT("profileId"), ProfileId) &&
+            ProfileId == CasualGirlWardrobeProfileId &&
+            Root->TryGetStringField(TEXT("preset"), PresetId) &&
+            PresetId == CasualGirlWardrobePresetId &&
+            Root->TryGetNumberField(
+                TEXT("requestedAtUnixMs"), RequestedAtUnixMs) &&
+            RequestedAtUnixMs > CurrentUnixMs - 10000.0 &&
+            RequestedAtUnixMs <= CurrentUnixMs + 2000.0 &&
+            Root->TryGetObjectField(TEXT("slots"), Slots) &&
+            Slots != nullptr && Slots->IsValid() &&
+            (*Slots)->Values.Num() == 4;
+    }
+    FString Top;
+    FString Bottom;
+    FString Feet;
+    FString Hair;
+    if (bAccepted)
+    {
+        bAccepted = (*Slots)->TryGetStringField(TEXT("top"), Top) &&
+            Top == TEXT("tank") &&
+            (*Slots)->TryGetStringField(TEXT("bottom"), Bottom) &&
+            Bottom == TEXT("pants") &&
+            (*Slots)->TryGetStringField(TEXT("feet"), Feet) &&
+            Feet == TEXT("shoes_socks") &&
+            (*Slots)->TryGetStringField(TEXT("hair"), Hair) &&
+            Hair == TEXT("style_1");
+    }
+    if (!RequestId.IsEmpty() && RequestId == LastWardrobeRequestId)
+    {
+        bAccepted = false;
+    }
+    else if (!RequestId.IsEmpty())
+    {
+        LastWardrobeRequestId = RequestId;
+    }
+
+    TMap<FName, FName> Selection;
+    if (bAccepted)
+    {
+        Selection.Add(TEXT("top"), TEXT("tank"));
+        Selection.Add(TEXT("bottom"), TEXT("pants"));
+        Selection.Add(TEXT("feet"), TEXT("shoes_socks"));
+        Selection.Add(TEXT("hair"), TEXT("style_1"));
+        bAccepted = Wardrobe->ApplyCompleteSelection(Selection);
+    }
+
+    const FString ReceiptPath = FPaths::Combine(
+        WardrobeCommandRoot,
+        bAccepted ? WardrobeAppliedFilename : WardrobeRejectedFilename);
+    if (!IFileManager::Get().Move(
+            *ReceiptPath,
+            *RequestPath,
+            true,
+            true,
+            false,
+            true))
+    {
+        UE_LOG(LogFayAvatarRuntime, Error,
+            TEXT("Could not publish the private wardrobe command receipt."));
+        return false;
+    }
+    if (bAccepted)
+    {
+        UE_LOG(LogFayAvatarRuntime, Display,
+            TEXT("Casual Girl wardrobe command applied (request=%s, preset=casual)."),
+            *RequestId);
+    }
+    else
+    {
+        UE_LOG(LogFayAvatarRuntime, Warning,
+            TEXT("Casual Girl wardrobe command rejected (request=%s, preset=casual)."),
+            RequestId.IsEmpty() ? TEXT("invalid") : *RequestId);
+    }
+    return bAccepted;
 }
 
 void AFayAvatarBootstrapGameMode::ResolveFaceAndJawMorph()

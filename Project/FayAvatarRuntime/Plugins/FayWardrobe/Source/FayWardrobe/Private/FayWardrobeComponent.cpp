@@ -170,6 +170,34 @@ bool UFayWardrobeComponent::SetSlotItem(const FName SlotId, const FName ItemId)
     return true;
 }
 
+bool UFayWardrobeComponent::ApplyCompleteSelection(
+    const TMap<FName, FName>& Selection)
+{
+    if (!bReady || Selection.Num() != ComponentsBySlot.Num())
+    {
+        return false;
+    }
+    for (const TPair<FName, FName>& Entry : Selection)
+    {
+        const TMap<FName, TArray<TWeakObjectPtr<UMeshComponent>>>* Items =
+            ComponentsBySlot.Find(Entry.Key);
+        if (!IsReviewedId(Entry.Key) || !IsReviewedId(Entry.Value) ||
+            Items == nullptr || !Items->Contains(Entry.Value))
+        {
+            return false;
+        }
+    }
+
+    FString Error;
+    if (!ApplySelection(Selection, Error))
+    {
+        UE_LOG(LogFayWardrobe, Error,
+            TEXT("Complete wardrobe selection failed closed: %s"), *Error);
+        return false;
+    }
+    return true;
+}
+
 void UFayWardrobeComponent::ResetWardrobe()
 {
     for (const TPair<TWeakObjectPtr<UMeshComponent>, FOriginalVisibility>& Entry :
