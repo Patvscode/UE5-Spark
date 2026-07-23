@@ -28,12 +28,17 @@ encoder_cache_root=$(readlink -f "$2")
 casual_girl_root=$(readlink -f "$3")
 project_root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)
 overlay_root="$project_root/apps/ardy-viser-lab"
+mobile_root="$overlay_root/mobile"
+viser_build_root=/usr/local/lib/python3.12/dist-packages/viser/client/build
 
 [[ -f $models_root/ARDY-Core-RP-20FPS-Horizon8/config.yaml ]] || fail 'MODELS_ROOT is missing Horizon8'
 [[ -f $models_root/ARDY-Core-RP-20FPS-Horizon40/config.yaml ]] || fail 'MODELS_ROOT is missing Horizon40'
 [[ -d $encoder_cache_root/hub && ! -L $encoder_cache_root/hub ]] || fail 'ENCODER_CACHE_ROOT is missing the pinned Hub cache'
 [[ -f $casual_girl_root/manifest.json ]] || fail 'CASUAL_GIRL_ROOT is missing manifest.json'
 [[ -f $overlay_root/project_demo.py ]] || fail 'project-owned Viser overlay is missing'
+[[ -f $mobile_root/index.html ]] || fail 'mobile Viser index is missing'
+[[ -f $mobile_root/ue5-spark-mobile.css ]] || fail 'mobile Viser stylesheet is missing'
+[[ -f $mobile_root/ue5-spark-mobile.js ]] || fail 'mobile Viser controller is missing'
 
 docker image inspect ue5-spark-ardy-demo:0.1.0 >/dev/null 2>&1 || \
     fail 'build ue5-spark-ardy-demo:0.1.0 first'
@@ -72,6 +77,9 @@ exec docker run --rm \
     --mount "type=bind,src=$encoder_cache_root,dst=/hf-cache,readonly" \
     --mount "type=bind,src=$casual_girl_root,dst=/characters/casual-girl,readonly" \
     --mount "type=bind,src=$overlay_root,dst=/project,readonly" \
+    --mount "type=bind,src=$mobile_root/index.html,dst=$viser_build_root/index.html,readonly" \
+    --mount "type=bind,src=$mobile_root/ue5-spark-mobile.css,dst=$viser_build_root/ue5-spark-mobile.css,readonly" \
+    --mount "type=bind,src=$mobile_root/ue5-spark-mobile.js,dst=$viser_build_root/ue5-spark-mobile.js,readonly" \
     --entrypoint python \
     ue5-spark-ardy-demo:0.1.0 \
     /project/project_demo.py --no-compile

@@ -37,6 +37,24 @@ Original prompt: Use NVIDIA's original ARDY Viser app as the base, support only 
   - every valid hair/clothing option was present
   - `None` removal and alternate-piece swaps updated live
   - no browser console errors were observed
+- Mobile layout request: improve the phone UI without changing desktop.
+- Added a project-owned, mobile-only Viser presentation layer:
+  - full-width collapsible bottom sheet for ARDY controls
+  - single-row, horizontally scrollable control tabs
+  - hidden-by-default timeline with a compact Timeline toggle
+  - iPhone safe-area spacing and larger touch targets
+  - no layout rules outside Viser's 575.98px phone breakpoint with a coarse
+    pointer
+- Deployed the mobile layer to the existing tailnet URL and validated it at a
+  390x844 touch viewport:
+  - the initial open sheet preserves a large interactive 3D stage
+  - the ARDY header collapses to a 48px control bar and reopens cleanly
+  - the optional timeline opens as a compact drawer above the control bar
+  - touch targets are at least 44px and text inputs avoid iOS auto-zoom
+  - no browser console errors were observed
+- Repeated the live check at 1280x800: the mobile media query did not match,
+  no mobile DOM hooks or timeline button were installed, and NVIDIA's original
+  desktop panel and 195px timeline geometry remained unchanged.
 
 ## Next gate
 
