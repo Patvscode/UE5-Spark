@@ -125,6 +125,7 @@ class WardrobeUnrealContractTests(unittest.TestCase):
         ):
             self.assertIn(marker, HEADER + SOURCE)
         self.assertIn('"FayWardrobe"', game_build)
+        self.assertIn('"Json"', game_build)
 
     def test_casual_girl_default_preset_has_one_bounded_live_command_path(self) -> None:
         game_source = (

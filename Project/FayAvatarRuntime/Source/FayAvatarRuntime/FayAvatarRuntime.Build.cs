@@ -16,7 +16,8 @@ public class FayAvatarRuntime : ModuleRules
                 "FayAvatarBridge",
                 "FayBodyMotion",
                 "FayMetaHumanRuntime",
-                "FayWardrobe"
+                "FayWardrobe",
+                "Json"
             });
 
     }
