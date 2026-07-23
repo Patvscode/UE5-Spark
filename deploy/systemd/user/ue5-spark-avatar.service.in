@@ -1,0 +1,19 @@
+[Unit]
+Description=UE5-Spark project-owned packaged Unreal avatar
+Requires=ue5-spark-ardy-ready.service
+After=ue5-spark-ardy-ready.service
+BindsTo=ue5-spark-ardy-ready.service
+PartOf=ue5-spark-digital-human.target
+StartLimitIntervalSec=300
+StartLimitBurst=2
+
+[Service]
+Type=simple
+WorkingDirectory=@PROJECT_ROOT@
+Environment=UE5_SPARK_MIN_AVAILABLE_MEMORY_GIB=6
+ExecStart=/usr/bin/python3 @PROJECT_ROOT@/scripts/run-avatar-renderer-supervisor.py --package-exe @PACKAGE_EXE@ --rollback-exe @ROLLBACK_EXE@ --live-root @LIVE_ROOT@ --log-root @LOG_ROOT@ --generation @GENERATION@ --rollback-generation @ROLLBACK_GENERATION@ --initial-character @INITIAL_CHARACTER@
+Restart=on-failure
+RestartSec=5s
+TimeoutStartSec=180s
+TimeoutStopSec=45s
+NoNewPrivileges=yes

@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import ipaddress
 import json
 import math
@@ -13,6 +14,8 @@ import re
 import secrets
 import socket
 import stat
+import subprocess
+import sys
 import threading
 import time
 import urllib.error
@@ -26,13 +29,22 @@ from typing import Any
 
 TAILSCALE_NET = ipaddress.ip_network("100.64.0.0/10")
 MAX_REQUEST_BYTES = 8 * 1024
+MAX_WORKSPACE_REQUEST_BYTES = 192 * 1024
 MAX_MESSAGE_CHARS = 2_000
 MAX_MOTION_COMMAND_CHARS = 512
 MAX_LIVE_FRAME_BYTES = 2 * 1024 * 1024
 MAX_LIVE_FRAME_AGE_SECONDS = 2.0
 MAX_RENDERER_CONTROL_BYTES = 16 * 1024
 MAX_RENDERER_STATE_AGE_SECONDS = 6.0
-SERVER_VERSION = "prototype-7-open-text"
+SERVER_VERSION = "prototype-9-managed-stack-workspace"
+PROJECT_STACK_UNIT = "ue5-spark-digital-human.target"
+PROJECT_SERVICE_UNITS = {
+    "ardy": "ue5-spark-ardy.service",
+    "ardy-ready": "ue5-spark-ardy-ready.service",
+    "avatar": "ue5-spark-avatar.service",
+}
+SERVICE_CONTROL_ACTIONS = ("start", "stop", "restart", "status")
+SYSTEMCTL_PATH = Path("/usr/bin/systemctl")
 THINK_BLOCK_PATTERN = re.compile(r"<think>.*?(?:</think>|$)", re.IGNORECASE | re.DOTALL)
 LLM_MODEL_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}")
 CHAT_SYSTEM_PROMPT = (
@@ -101,6 +113,318 @@ MOTION_ITEM_FIELDS = frozenset({
 
 class AssetAwareOptInRequired(ValueError):
     """Raised when the controller-wide asset-aware mode was not explicitly enabled."""
+
+
+class ProjectServiceControlError(RuntimeError):
+    """The fixed project-owned systemd target could not be controlled."""
+
+
+def _load_config_workspace_module() -> object:
+    """Load the sibling module when this file is run or imported by path."""
+
+    module_name = "ue5_spark_config_workspace"
+    existing = sys.modules.get(module_name)
+    if existing is not None:
+        return existing
+    path = Path(__file__).with_name("config_workspace.py")
+    spec = importlib.util.spec_from_file_location(module_name, path)
+    if spec is None or spec.loader is None:
+        raise RuntimeError("configuration workspace module is unavailable")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[module_name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+_CONFIG_WORKSPACE_MODULE = _load_config_workspace_module()
+ConfigWorkspace = _CONFIG_WORKSPACE_MODULE.ConfigWorkspace
+ConfigWorkspaceError = _CONFIG_WORKSPACE_MODULE.ConfigWorkspaceError
+ConfigWorkspaceConflict = _CONFIG_WORKSPACE_MODULE.ConfigWorkspaceConflict
+ConfigWorkspaceNotFound = _CONFIG_WORKSPACE_MODULE.ConfigWorkspaceNotFound
+ConfigWorkspaceSecurityError = _CONFIG_WORKSPACE_MODULE.ConfigWorkspaceSecurityError
+ConfigWorkspaceValidationError = _CONFIG_WORKSPACE_MODULE.ConfigWorkspaceValidationError
+
+
+def normalize_service_control_request(payload: object) -> str:
+    """Accept one operation for the fixed companion target, never a unit name."""
+
+    if not isinstance(payload, dict) or set(payload) != {"action"}:
+        raise ValueError("service request must contain exactly one action")
+    action = payload.get("action")
+    if not isinstance(action, str) or action not in SERVICE_CONTROL_ACTIONS:
+        raise ValueError("service action must be start, stop, restart, or status")
+    return action
+
+
+def _service_status_label(active_state: str) -> str:
+    return {
+        "active": "running",
+        "activating": "starting",
+        "deactivating": "stopping",
+        "inactive": "stopped",
+        "failed": "failed",
+    }.get(active_state, "unavailable")
+
+
+class ProjectServiceManager:
+    """Narrow systemd adapter for the project-owned heavy companion stack.
+
+    HTTP callers never provide a unit name. All subprocess calls use fixed
+    argv, never a shell, and Fay is intentionally absent from the managed unit
+    table because its lifecycle belongs to the existing external deployment.
+    """
+
+    _STATUS_PROPERTIES = ("LoadState", "ActiveState", "SubState", "Result")
+    _SAFE_STATE = re.compile(r"[a-z][a-z0-9-]{0,31}")
+
+    def __init__(
+        self,
+        *,
+        enabled: bool,
+        systemctl_path: Path = SYSTEMCTL_PATH,
+        runner: object = subprocess.run,
+    ) -> None:
+        self.enabled = enabled
+        self.systemctl_path = systemctl_path
+        self._runner = runner
+
+    def _unit_status(self, unit: str) -> dict[str, object]:
+        if unit not in {PROJECT_STACK_UNIT, *PROJECT_SERVICE_UNITS.values()}:
+            raise ProjectServiceControlError("unit is not project-owned")
+        if not self.enabled:
+            return {
+                "unit": unit,
+                "loadState": "unavailable",
+                "activeState": "unknown",
+                "subState": "unknown",
+                "result": "unknown",
+                "status": "unavailable",
+            }
+        command = [
+            str(self.systemctl_path),
+            "--user",
+            "show",
+            "--no-pager",
+            "--property=LoadState",
+            "--property=ActiveState",
+            "--property=SubState",
+            "--property=Result",
+            unit,
+        ]
+        try:
+            completed = self._runner(
+                command,
+                check=False,
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+        except (OSError, subprocess.SubprocessError):
+            completed = None
+        values: dict[str, str] = {}
+        if completed is not None and completed.returncode == 0:
+            for line in completed.stdout[:4096].splitlines():
+                key, separator, value = line.partition("=")
+                if separator and key in self._STATUS_PROPERTIES:
+                    values[key] = (
+                        value if self._SAFE_STATE.fullmatch(value) else "unknown"
+                    )
+        load_state = values.get("LoadState", "unknown")
+        active_state = values.get("ActiveState", "unknown")
+        sub_state = values.get("SubState", "unknown")
+        result = values.get("Result", "unknown")
+        status = (
+            _service_status_label(active_state)
+            if load_state == "loaded"
+            else "unavailable"
+        )
+        return {
+            "unit": unit,
+            "loadState": load_state,
+            "activeState": active_state,
+            "subState": sub_state,
+            "result": result,
+            "status": status,
+        }
+
+    def snapshot(self, *, fay_online: bool | None) -> dict[str, object]:
+        target = self._unit_status(PROJECT_STACK_UNIT)
+        components = {
+            component_id: self._unit_status(unit)
+            for component_id, unit in PROJECT_SERVICE_UNITS.items()
+        }
+        component_states = [item["status"] for item in components.values()]
+        if not self.enabled:
+            companion_status = "unavailable"
+        elif target["status"] == "unavailable" or "unavailable" in component_states:
+            companion_status = "unavailable"
+        elif "failed" in component_states or target["status"] == "failed":
+            companion_status = "failed"
+        elif target["status"] == "starting" or "starting" in component_states:
+            companion_status = "starting"
+        elif target["status"] == "stopping" or "stopping" in component_states:
+            companion_status = "stopping"
+        elif target["status"] == "running" and all(
+            state == "running" for state in component_states
+        ):
+            companion_status = "running"
+        elif target["status"] == "stopped" and all(
+            state == "stopped" for state in component_states
+        ):
+            companion_status = "stopped"
+        else:
+            companion_status = "failed"
+
+        def service_entry(
+            service_id: str,
+            label: str,
+            status: str,
+            detail: str,
+            *,
+            required: bool,
+            managed: bool,
+        ) -> dict[str, object]:
+            return {
+                "id": service_id,
+                "label": label,
+                "status": status,
+                "detail": detail,
+                "required": required,
+                "managed": managed,
+            }
+
+        ardy = components["ardy"]
+        ready = components["ardy-ready"]
+        avatar = components["avatar"]
+        can_start = self.enabled and companion_status in {"stopped", "failed"}
+        can_stop = self.enabled and companion_status not in {
+            "stopped", "unavailable",
+        }
+        can_restart = self.enabled and companion_status not in {
+            "starting", "stopping", "unavailable",
+        }
+        action_flags = {
+            "start": can_start,
+            "stop": can_stop,
+            "restart": can_restart,
+            "status": self.enabled,
+        }
+        services = [
+            service_entry(
+                "controller",
+                "Web controller",
+                "running",
+                "Lightweight controller is available and configured to start after login.",
+                required=True,
+                managed=False,
+            ),
+            service_entry(
+                "fay",
+                "Fay",
+                "running" if fay_online is True else "stopped" if fay_online is False else "unknown",
+                "Externally managed; this app will never start, stop, or reconfigure Fay.",
+                required=True,
+                managed=False,
+            ),
+            service_entry(
+                "ardy",
+                "ARDY motion",
+                str(ardy["status"]),
+                (
+                    "Generative motion service is ready."
+                    if ardy["status"] == "running"
+                    else "Project-owned ARDY service; startup requires at least 20 GiB available memory."
+                ),
+                required=True,
+                managed=True,
+            ),
+            service_entry(
+                "ardy-ready",
+                "ARDY warm-up",
+                str(ready["status"]),
+                "Requires dynamic text and a measured 0–400 ms cached pose batch before Unreal starts.",
+                required=True,
+                managed=True,
+            ),
+            service_entry(
+                "avatar",
+                "Unreal avatar",
+                str(avatar["status"]),
+                "Project-owned packaged Unreal renderer and private frame supervisor.",
+                required=True,
+                managed=True,
+            ),
+        ]
+        return {
+            "schemaVersion": 1,
+            "enabled": self.enabled,
+            "targetState": companion_status,
+            "components": services,
+            "services": services,
+            "companion": {
+                "status": companion_status,
+                "canStart": can_start,
+                "canStop": can_stop,
+                "canRestart": can_restart,
+            },
+            "allowedActions": [
+                action for action in SERVICE_CONTROL_ACTIONS if action_flags[action]
+            ],
+        }
+
+    def request(self, action: str) -> None:
+        if action not in SERVICE_CONTROL_ACTIONS:
+            raise ProjectServiceControlError("service action is not supported")
+        if not self.enabled:
+            raise ProjectServiceControlError("project service control is not enabled")
+        if action == "status":
+            return
+        if action in {"start", "restart"}:
+            reset_command = [
+                str(self.systemctl_path),
+                "--user",
+                "reset-failed",
+                *PROJECT_SERVICE_UNITS.values(),
+            ]
+            try:
+                reset = self._runner(
+                    reset_command,
+                    check=False,
+                    capture_output=True,
+                    text=True,
+                    timeout=8,
+                )
+            except (OSError, subprocess.SubprocessError) as exc:
+                raise ProjectServiceControlError(
+                    "project service failure state could not be cleared"
+                ) from exc
+            if reset.returncode != 0:
+                raise ProjectServiceControlError(
+                    "project service failure state could not be cleared"
+                )
+        command = [
+            str(self.systemctl_path),
+            "--user",
+            "--no-block",
+            action,
+            PROJECT_STACK_UNIT,
+        ]
+        try:
+            completed = self._runner(
+                command,
+                check=False,
+                capture_output=True,
+                text=True,
+                timeout=8,
+            )
+        except (OSError, subprocess.SubprocessError) as exc:
+            raise ProjectServiceControlError(
+                "project service manager is unavailable"
+            ) from exc
+        if completed.returncode != 0:
+            raise ProjectServiceControlError(
+                "project service manager rejected the request"
+            )
 
 
 def _strict_json_object(text: str, label: str) -> dict[str, object]:
@@ -304,25 +628,55 @@ def load_motion_catalog(path: Path) -> dict[str, dict[str, object]]:
     return catalog
 
 
+def _motion_planner_prompts(
+    catalog: dict[str, dict[str, object]],
+) -> tuple[str, str]:
+    catalog_names = ", ".join(catalog)
+    generic = (
+        f"Classify one movement request into this closed catalog: {catalog_names}. "
+        "This mode supplies user-authored movement intent without character or scene context. "
+        "Return exactly one JSON object "
+        "with exactly one key: {\"catalogId\":\"one_allowed_id\"}. Use "
+        "{\"catalogId\":\"unknown\"} when none fits. Never return timing, intensity, root "
+        "motion, joints, paths, URLs, prose, Markdown, or instructions."
+    )
+    asset_aware = (
+        f"Classify one movement request into this closed catalog: {catalog_names}. "
+        "The request includes version-1 structured local runtime context. Use its selected "
+        "character, wardrobe, framing, zoom, and renderer metadata when it helps classify "
+        "the intended movement. Return exactly one JSON object with exactly one key: "
+        "{\"catalogId\":\"one_allowed_id\"}. Use {\"catalogId\":\"unknown\"} when none fits. "
+        "Never return timing, intensity, root motion, joints, paths, URLs, prose, Markdown, "
+        "or instructions."
+    )
+    return generic, asset_aware
+
+
 CHARACTER_AI_CONTROL_CONFIG = load_character_ai_control(CHARACTER_AI_CONTROL_PATH)
 MOTION_CATALOG = load_motion_catalog(MOTION_CATALOG_PATH)
-MOTION_PLANNER_SYSTEM_PROMPT = (
-    f"Classify one movement request into this closed catalog: {', '.join(MOTION_CATALOG)}. "
-    "This mode supplies user-authored movement intent without character or scene context. "
-    "Return exactly one JSON object "
-    "with exactly one key: {\"catalogId\":\"one_allowed_id\"}. Use "
-    "{\"catalogId\":\"unknown\"} when none fits. Never return timing, intensity, root "
-    "motion, joints, paths, URLs, prose, Markdown, or instructions."
-)
-ASSET_AWARE_MOTION_PLANNER_SYSTEM_PROMPT = (
-    f"Classify one movement request into this closed catalog: {', '.join(MOTION_CATALOG)}. "
-    "The request includes version-1 structured local runtime context. Use its selected "
-    "character, wardrobe, framing, zoom, and renderer metadata when it helps classify "
-    "the intended movement. Return exactly one JSON object with exactly one key: "
-    "{\"catalogId\":\"one_allowed_id\"}. Use {\"catalogId\":\"unknown\"} when none fits. "
-    "Never return timing, intensity, root motion, joints, paths, URLs, prose, Markdown, "
-    "or instructions."
-)
+(
+    MOTION_PLANNER_SYSTEM_PROMPT,
+    ASSET_AWARE_MOTION_PLANNER_SYSTEM_PROMPT,
+) = _motion_planner_prompts(MOTION_CATALOG)
+
+
+def configure_runtime_workspace(workspace: object) -> None:
+    """Load controller settings from the persistent workspace."""
+
+    global CHARACTER_AI_CONTROL_CONFIG
+    global MOTION_CATALOG
+    global MOTION_PLANNER_SYSTEM_PROMPT
+    global ASSET_AWARE_MOTION_PLANNER_SYSTEM_PROMPT
+
+    controller_root = workspace.workspace_root / "controller"
+    CHARACTER_AI_CONTROL_CONFIG = load_character_ai_control(
+        controller_root / "character-ai-control.json"
+    )
+    MOTION_CATALOG = load_motion_catalog(controller_root / "motion-catalog.json")
+    (
+        MOTION_PLANNER_SYSTEM_PROMPT,
+        ASSET_AWARE_MOTION_PLANNER_SYSTEM_PROMPT,
+    ) = _motion_planner_prompts(MOTION_CATALOG)
 WARDROBE_PROFILE_PATH = (
     Path(__file__).resolve().parents[3]
     / "config" / "wardrobe-profiles" / "CasualGirl.pending.json"
@@ -914,7 +1268,9 @@ class ControllerServer(ThreadingHTTPServer):
     def __init__(self, address: tuple[str, int], dist: Path, media_root: Path,
                  live_root: Path, fay_base: str, ardy_base: str,
                  llm_base: str | None, llm_model: str | None,
-                 motion_planner_model: str | None):
+                 motion_planner_model: str | None,
+                 service_manager: ProjectServiceManager | None = None,
+                 config_workspace: object | None = None):
         super().__init__(address, ControllerHandler)
         self.dist = dist
         self.media_root = media_root
@@ -925,15 +1281,22 @@ class ControllerServer(ThreadingHTTPServer):
         self.llm_model = llm_model
         self.motion_planner_model = motion_planner_model
         self.ai_control = LocalAiControlState(CHARACTER_AI_CONTROL_CONFIG)
+        self.service_manager = service_manager or ProjectServiceManager(enabled=False)
+        self.config_workspace = config_workspace
 
 
 class ControllerHandler(BaseHTTPRequestHandler):
     server: ControllerServer
 
     def do_GET(self) -> None:  # noqa: N802
-        path = urllib.parse.urlparse(self.path).path
+        parsed = urllib.parse.urlparse(self.path)
+        path = parsed.path
         if path == "/api/status":
             self._status()
+        elif path == "/api/services":
+            self._service_status()
+        elif path == "/api/workspace":
+            self._workspace_get(parsed.query)
         elif path == "/api/character":
             self._renderer_character_status()
         elif path == "/api/ai-control":
@@ -963,7 +1326,13 @@ class ControllerHandler(BaseHTTPRequestHandler):
     def do_POST(self) -> None:  # noqa: N802
         path = urllib.parse.urlparse(self.path).path
         try:
-            payload = self._request_json()
+            payload = self._request_json(
+                maximum=(
+                    MAX_WORKSPACE_REQUEST_BYTES
+                    if path == "/api/workspace"
+                    else MAX_REQUEST_BYTES
+                )
+            )
             if path == "/api/chat":
                 self._chat(payload)
             elif path == "/api/action":
@@ -976,6 +1345,10 @@ class ControllerHandler(BaseHTTPRequestHandler):
                 self._renderer_character(payload)
             elif path == "/api/wardrobe":
                 self._wardrobe(payload)
+            elif path in {"/api/services", "/api/services/companion"}:
+                self._service_control(payload)
+            elif path == "/api/workspace":
+                self._workspace_mutate(payload)
             else:
                 self._json(HTTPStatus.NOT_FOUND, {"error": "not_found"})
         except ValueError as exc:
@@ -984,14 +1357,14 @@ class ControllerHandler(BaseHTTPRequestHandler):
     def do_OPTIONS(self) -> None:  # noqa: N802
         self._json(HTTPStatus.METHOD_NOT_ALLOWED, {"error": "same_origin_only"})
 
-    def _request_json(self) -> object:
+    def _request_json(self, *, maximum: int = MAX_REQUEST_BYTES) -> object:
         if self.headers.get_content_type() != "application/json":
             raise ValueError("Content-Type must be application/json")
         try:
             length = int(self.headers.get("Content-Length", "0"))
         except ValueError as exc:
             raise ValueError("invalid Content-Length") from exc
-        if not 1 <= length <= MAX_REQUEST_BYTES:
+        if not 1 <= length <= maximum:
             raise ValueError("request body is outside the allowed size")
         try:
             return json.loads(self.rfile.read(length).decode("utf-8"))
@@ -1046,6 +1419,133 @@ class ControllerHandler(BaseHTTPRequestHandler):
             "packageGeneration": package_generation,
             "version": SERVER_VERSION,
         })
+
+    def _fay_service_online(self) -> bool | None:
+        try:
+            status = self._upstream_json(
+                f"{self.server.fay_base}/api/get-system-status?username=User",
+                timeout=1,
+            )
+            return status.get("server") is True
+        except (OSError, ValueError, urllib.error.URLError, socket.timeout):
+            return None
+
+    def _service_status(self) -> None:
+        self._json(
+            HTTPStatus.OK,
+            self.server.service_manager.snapshot(
+                fay_online=self._fay_service_online()
+            ),
+        )
+
+    def _service_control(self, payload: object) -> None:
+        action = normalize_service_control_request(payload)
+        if action == "status":
+            self._service_status()
+            return
+        try:
+            self.server.service_manager.request(action)
+        except ProjectServiceControlError:
+            self._json(HTTPStatus.SERVICE_UNAVAILABLE, {
+                "error": "project_service_control_unavailable",
+                "detail": (
+                    "The fixed DGX Spark companion services could not accept "
+                    "that request. Fay was not changed."
+                ),
+            })
+            return
+        snapshot = self.server.service_manager.snapshot(
+            fay_online=self._fay_service_online()
+        )
+        snapshot["acceptedAction"] = action
+        snapshot["message"] = {
+            "start": "Companion startup requested.",
+            "stop": "Companion shutdown requested.",
+            "restart": "Companion restart requested.",
+        }[action]
+        self._json(HTTPStatus.ACCEPTED, snapshot)
+
+    def _workspace_get(self, query: str) -> None:
+        if self.server.config_workspace is None:
+            self._json(HTTPStatus.SERVICE_UNAVAILABLE, {
+                "error": "configuration_workspace_unavailable",
+                "detail": "The persistent configuration workspace is not configured.",
+            })
+            return
+        try:
+            fields = urllib.parse.parse_qsl(
+                query, keep_blank_values=True, strict_parsing=True, max_num_fields=1
+            ) if query else []
+            if not fields:
+                payload = self.server.config_workspace.snapshot()
+            elif len(fields) == 1 and fields[0][0] == "file" and fields[0][1]:
+                payload = self.server.config_workspace.read_file(fields[0][1])
+            else:
+                raise ConfigWorkspaceValidationError(
+                    "workspace query accepts only one opaque file ID"
+                )
+        except ValueError as exc:
+            self._json(HTTPStatus.BAD_REQUEST, {
+                "error": "invalid_workspace_query", "detail": str(exc),
+            })
+            return
+        except ConfigWorkspaceError as exc:
+            self._workspace_error(exc)
+            return
+        self._json(HTTPStatus.OK, payload)
+
+    def _workspace_mutate(self, payload: object) -> None:
+        if self.server.config_workspace is None:
+            self._json(HTTPStatus.SERVICE_UNAVAILABLE, {
+                "error": "configuration_workspace_unavailable",
+                "detail": "The persistent configuration workspace is not configured.",
+            })
+            return
+        try:
+            response = self.server.config_workspace.apply_action(payload)
+        except ConfigWorkspaceError as exc:
+            self._workspace_error(exc)
+            return
+        changed_file = response.get("file") if isinstance(response, dict) else None
+        if (
+            isinstance(changed_file, dict)
+            and changed_file.get("directoryId") == "controller-config"
+            and payload.get("action") == "save"
+        ):
+            try:
+                configure_runtime_workspace(self.server.config_workspace)
+                self.server.ai_control = LocalAiControlState(
+                    CHARACTER_AI_CONTROL_CONFIG
+                )
+            except RuntimeError as exc:
+                self._json(HTTPStatus.SERVICE_UNAVAILABLE, {
+                    "error": "configuration_reload_failed",
+                    "detail": str(exc),
+                })
+                return
+            response["message"] = (
+                f"{changed_file.get('name', 'Controller configuration')} saved, "
+                "backed up, and applied live."
+            )
+        self._json(HTTPStatus.OK, response)
+
+    def _workspace_error(self, exc: Exception) -> None:
+        if isinstance(exc, ConfigWorkspaceConflict):
+            status = HTTPStatus.CONFLICT
+            error = "configuration_revision_conflict"
+        elif isinstance(exc, ConfigWorkspaceNotFound):
+            status = HTTPStatus.NOT_FOUND
+            error = "configuration_file_not_found"
+        elif isinstance(exc, ConfigWorkspaceValidationError):
+            status = HTTPStatus.UNPROCESSABLE_ENTITY
+            error = "configuration_validation_failed"
+        elif isinstance(exc, ConfigWorkspaceSecurityError):
+            status = HTTPStatus.FORBIDDEN
+            error = "configuration_operation_forbidden"
+        else:
+            status = HTTPStatus.SERVICE_UNAVAILABLE
+            error = "configuration_workspace_unavailable"
+        self._json(status, {"error": error, "detail": str(exc)})
 
     def _renderer_character_status(self) -> None:
         state = read_renderer_state(self.server.live_root)
@@ -1538,6 +2038,16 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--dist", required=True, type=Path)
     parser.add_argument("--media-root", required=True, type=Path)
     parser.add_argument("--live-root", required=True, type=Path)
+    parser.add_argument(
+        "--config-workspace",
+        type=Path,
+        help="persistent private root for reviewed editable configuration",
+    )
+    parser.add_argument(
+        "--project-root",
+        type=Path,
+        help="working UE5-Spark source root shown by the file workspace",
+    )
     parser.add_argument("--fay-base", required=True)
     parser.add_argument("--ardy-base", default="http://127.0.0.1:8777")
     parser.add_argument("--llm-base")
@@ -1546,6 +2056,14 @@ def build_parser() -> argparse.ArgumentParser:
         "--motion-planner-model",
         type=checked_model_name,
         help="optional reviewed catalog classifier; defaults to --llm-model",
+    )
+    parser.add_argument(
+        "--enable-service-control",
+        action="store_true",
+        help=(
+            "allow the private controller to manage only the fixed "
+            "ue5-spark-digital-human.target user unit"
+        ),
     )
     return parser
 
@@ -1558,6 +2076,22 @@ def main() -> int:
         dist = safe_root(args.dist, "dist")
         media_root = safe_root(args.media_root, "media root")
         live_root = safe_private_root(args.live_root, "live root")
+        if bool(args.config_workspace) != bool(args.project_root):
+            raise ValueError(
+                "config-workspace and project-root must be supplied together"
+            )
+        config_workspace = None
+        if args.config_workspace is not None:
+            workspace_root = safe_private_root(
+                args.config_workspace, "config workspace"
+            )
+            project_root = safe_root(args.project_root, "project root")
+            config_workspace = ConfigWorkspace(
+                Path(__file__).resolve().parents[3],
+                workspace_root,
+                project_root=project_root,
+            )
+            configure_runtime_workspace(config_workspace)
         fay_base = checked_upstream(args.fay_base)
         ardy_base = checked_upstream(args.ardy_base, loopback_only=True)
         if bool(args.llm_base) != bool(args.llm_model):
@@ -1568,7 +2102,11 @@ def main() -> int:
             checked_upstream(args.llm_base, loopback_only=True)
             if args.llm_base else None
         )
-    except (ValueError, argparse.ArgumentTypeError) as exc:
+        if args.enable_service_control and (
+            not SYSTEMCTL_PATH.is_file() or not os.access(SYSTEMCTL_PATH, os.X_OK)
+        ):
+            raise ValueError("fixed /usr/bin/systemctl is unavailable")
+    except (ValueError, RuntimeError, argparse.ArgumentTypeError) as exc:
         raise SystemExit(str(exc)) from exc
     missing = [relative for relative in MEDIA_MAP.values() if not (media_root / relative).is_file()]
     if missing:
@@ -1576,6 +2114,8 @@ def main() -> int:
     server = ControllerServer(
         (args.host, args.port), dist, media_root, live_root, fay_base, ardy_base,
         llm_base, args.llm_model, args.motion_planner_model or args.llm_model,
+        ProjectServiceManager(enabled=args.enable_service_control),
+        config_workspace,
     )
     try:
         server.serve_forever(poll_interval=0.25)

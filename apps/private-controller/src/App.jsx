@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   ArrowRight, ArrowsInSimple, Camera, CaretDown, CaretUp, ChatCircleDots, Check,
-  CircleNotch, CoatHanger, Ear, HandWaving, Info, Microphone, Pause, Person,
-  PersonSimpleRun, Play, Sparkle, TextT, UserCircle, X,
+  CaretRight, CircleNotch, CoatHanger, Ear, HandWaving, HardDrives, Info,
+  Microphone, Pause, Person, PersonSimpleRun, Play, Sparkle, TextT, UserCircle, X,
 } from "@phosphor-icons/react";
+import { SystemFilesPanel } from "./SystemFilesPanel.jsx";
 
 const MOTIONS = [
   { id: "wave", label: "Wave", Icon: HandWaving },
@@ -163,7 +164,9 @@ export function App() {
     ? { eyebrow: "Live Fay conversation", title: `Talk with ${characterName}`, label: "Conversation" }
     : activeSheet === "motion"
       ? { eyebrow: "Live generative ARDY", title: "Describe any move", label: "Movement director" }
-      : { eyebrow: "Stage setup", title: "Camera & character", label: "Camera, character, and wardrobe settings" };
+      : activeSheet === "system"
+        ? { eyebrow: "Private Spark controls", title: "System & files", label: "System services and file workspace" }
+        : { eyebrow: "Stage setup", title: "Camera & character", label: "Camera, character, and wardrobe settings" };
 
   const refreshHealth = useCallback(async () => {
     try {
@@ -1045,8 +1048,15 @@ export function App() {
                 )}
                 <div className="prototype-note"><Info size={15} weight="fill" /><span>AI motion accepts free text. “Once” stops after one bounded run; “Loop” regenerates the same prompt until you stop it.</span></div>
               </div>
+            ) : activeSheet === "system" ? (
+              <SystemFilesPanel onBack={() => setActiveSheet("settings")} onStageNotice={setNotice} />
             ) : (
               <div className="settings-content">
+                <button className="system-files-launch" onClick={() => setActiveSheet("system")} type="button">
+                  <HardDrives size={22} weight="regular" />
+                  <span><strong>System & files</strong><small>Services, configuration, and wardrobe files</small></span>
+                  <CaretRight size={17} weight="bold" />
+                </button>
                 <section className="sheet-section">
                   <div className="panel-heading"><span>Framing</span><span className="camera-note">Fit reveals the whole current frame</span></div>
                   <div className="camera-options">

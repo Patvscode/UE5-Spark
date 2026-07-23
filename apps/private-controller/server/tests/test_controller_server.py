@@ -7,6 +7,7 @@ import tempfile
 import threading
 import time
 import unittest
+import urllib.request
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -19,6 +20,64 @@ SPEC.loader.exec_module(SERVER)
 
 
 class ValidationTests(unittest.TestCase):
+    def test_workspace_http_round_trip_applies_controller_config_live(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            for name in ("dist", "media", "live"):
+                (root / name).mkdir(mode=0o700)
+            workspace = SERVER.ConfigWorkspace(
+                MODULE_PATH.parents[3],
+                root / "workspace",
+                project_root=MODULE_PATH.parents[3],
+            )
+            server = SERVER.ControllerServer(
+                ("127.0.0.1", 0),
+                root / "dist",
+                root / "media",
+                root / "live",
+                "http://127.0.0.1:5000",
+                "http://127.0.0.1:8777",
+                None,
+                None,
+                None,
+                config_workspace=workspace,
+            )
+            worker = threading.Thread(target=server.serve_forever, daemon=True)
+            worker.start()
+            origin = f"http://127.0.0.1:{server.server_address[1]}"
+            try:
+                with urllib.request.urlopen(
+                    f"{origin}/api/workspace", timeout=2
+                ) as response:
+                    inventory = json.loads(response.read())
+                summary = next(
+                    item for item in inventory["files"]
+                    if item["name"] == "motion-catalog.json"
+                )
+                with urllib.request.urlopen(
+                    f"{origin}/api/workspace?file={summary['id']}", timeout=2
+                ) as response:
+                    opened = json.loads(response.read())
+                request = urllib.request.Request(
+                    f"{origin}/api/workspace",
+                    data=json.dumps({
+                        "action": "save",
+                        "fileId": opened["id"],
+                        "revision": opened["revision"],
+                        "content": opened["content"],
+                    }).encode(),
+                    headers={"Content-Type": "application/json"},
+                )
+                with urllib.request.urlopen(request, timeout=2) as response:
+                    saved = json.loads(response.read())
+                self.assertIn("applied live", saved["message"])
+                self.assertTrue(saved["backup"]["created"])
+                self.assertEqual(server.ai_control.selected_mode(), "ai_motion")
+            finally:
+                server.shutdown()
+                server.server_close()
+                worker.join(timeout=2)
+
     def test_bind_accepts_loopback_and_tailnet(self):
         tail_address = str(SERVER.TAILSCALE_NET.network_address + (28 << 16) + (1 << 8) + 2)
         self.assertEqual(SERVER.checked_bind_host("127.0.0.1"), "127.0.0.1")

@@ -28,7 +28,7 @@ PROFILE_KEYS = {
     "slots",
     "presets",
 }
-STATUS_VALUES = {"pending_asset_audit", "ready"}
+STATUS_VALUES = {"pending_asset_audit", "installed"}
 ADAPTER_VALUES = {"UE5EpicArkit"}
 SLOT_IDS = ("top", "bottom", "feet", "hair")
 ID_PATTERN = re.compile(r"^[a-z][a-z0-9-]{0,31}$")
