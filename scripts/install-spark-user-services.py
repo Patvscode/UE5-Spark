@@ -92,9 +92,16 @@ def unit_directory(value: str) -> Path:
         or path.is_symlink()
         or not resolved.is_dir()
         or metadata.st_uid != os.geteuid()
-        or stat.S_IMODE(metadata.st_mode) & 0o022
+        or stat.S_IMODE(metadata.st_mode) & 0o002
+        or (
+            stat.S_IMODE(metadata.st_mode) & 0o020
+            and metadata.st_gid != os.getegid()
+        )
     ):
-        fail(f"user unit directory must be canonical, user-owned, and not writable by others: {resolved}")
+        fail(
+            "user unit directory must be canonical, user-owned, and not writable "
+            f"by other users: {resolved}"
+        )
     return resolved
 
 
