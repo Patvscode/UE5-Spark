@@ -155,6 +155,9 @@ id_ed25519*
 __pycache__/
 *.py[cod]
 .pytest_cache/
+.playwright-cli/
+**/node_modules/
+apps/ardy-rig-lab/dist/
 .DS_Store
 *.log
 *.dmp
