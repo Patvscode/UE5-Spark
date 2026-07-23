@@ -34,7 +34,7 @@
     },
     "wave": {
       "label": "Wave",
-      "aliases": ["wave", "wave hello", "say hello", "greet me"],
+      "aliases": ["wave", "wave hello", "say hello", "greet me", "hi", "hello", "hey", "say hi"],
       "prompt": "A person gives a natural friendly wave with the right hand while keeping the shoulder and torso relaxed.",
       "duration": 2.4,
       "intensity": 0.65,
