@@ -110,7 +110,8 @@ install -d -m 0700 "$XDG_RUNTIME_DIR/ue5-spark-avatar-live" ~/ue5-spark-private-
 
 The supervisor accepts only `ada`, `aoi`, and `casual-girl`, confirms that the
 corresponding runtime profile is present in each package's sealed character
-manifest, and stops only process groups it started. It writes a six-second state
+manifest, launches each one through the guarded Spark/Fay readiness wrapper, and
+stops only process groups it started. It writes a six-second state
 heartbeat beside the private frame. The controller displays a live frame only
 when that heartbeat names the selected character, so an Ada frame cannot be
 presented as Casual Girl during a restart. If a candidate launch fails, the

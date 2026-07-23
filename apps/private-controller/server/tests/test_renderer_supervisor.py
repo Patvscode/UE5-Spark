@@ -25,6 +25,9 @@ class RendererSupervisorTests(unittest.TestCase):
             executable.parent.mkdir(parents=True)
             executable.write_bytes(b"runtime")
             executable.chmod(0o700)
+            launcher = root / "FayAvatarRuntime-Arm64.sh"
+            launcher.write_text("#!/bin/sh\n", encoding="utf-8")
+            launcher.chmod(0o700)
             (root / ".ue5-spark-characters.json").write_text(json.dumps({
                 "schema": 2,
                 "profileConfigSha256": "0" * 64,
@@ -43,6 +46,12 @@ class RendererSupervisorTests(unittest.TestCase):
             )
             self.assertEqual(package.framings["casual-girl"], "FullBody")
             self.assertEqual(package.generation, "v30")
+            self.assertEqual(package.launcher, launcher.resolve())
+
+    def test_supervisor_launches_through_the_guarded_stack_launcher(self):
+        source = SCRIPT_PATH.read_text(encoding="utf-8")
+        self.assertIn("str(self.stack_launcher), str(package.launcher)", source)
+        self.assertIn('default=Path(__file__).with_name("run-spark-digital-human.sh")', source)
 
     def test_request_reader_rejects_unreviewed_profile(self):
         with tempfile.TemporaryDirectory() as directory:

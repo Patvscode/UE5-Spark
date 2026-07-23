@@ -40,6 +40,7 @@ GENERATION_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}")
 @dataclass(frozen=True)
 class Package:
     executable: Path
+    launcher: Path
     root: Path
     generation: str
     profiles: dict[str, str]
@@ -143,6 +144,13 @@ def load_package(executable_input: Path, generation: str | None = None) -> Packa
     ):
         fail("renderer executable is not the packaged LinuxArm64 FayAvatarRuntime")
     root = find_package_root(executable)
+    launcher = root / "FayAvatarRuntime-Arm64.sh"
+    if (
+        not launcher.is_file()
+        or launcher.is_symlink()
+        or not os.access(launcher, os.X_OK)
+    ):
+        fail("package is missing its real executable FayAvatarRuntime-Arm64.sh launcher")
     manifest_path = root / ".ue5-spark-characters.json"
     if manifest_path.is_symlink() or manifest_path.stat().st_size > 64 * 1024:
         fail("package character manifest is unsafe")
@@ -178,7 +186,7 @@ def load_package(executable_input: Path, generation: str | None = None) -> Packa
     resolved_generation = generation or f"pkg-{digest}"
     if GENERATION_PATTERN.fullmatch(resolved_generation) is None:
         fail("package generation must be a simple 1-64 character identifier")
-    return Package(executable, root, resolved_generation, profiles, framings)
+    return Package(executable, launcher, root, resolved_generation, profiles, framings)
 
 
 def read_request(live_root: Path) -> dict[str, object] | None:
@@ -246,6 +254,7 @@ class Supervisor:
         rollback: Package | None,
         live_root: Path,
         log_root: Path,
+        stack_launcher: Path,
         preview_script: Path,
         startup_timeout: int,
     ):
@@ -253,6 +262,7 @@ class Supervisor:
         self.rollback = rollback
         self.live_root = live_root
         self.log_root = log_root
+        self.stack_launcher = stack_launcher
         self.preview_script = preview_script
         self.startup_timeout = startup_timeout
         self.owned: OwnedRenderer | None = None
@@ -306,8 +316,7 @@ class Supervisor:
         os.chmod(renderer_log_path, 0o600)
         os.chmod(preview_log_path, 0o600)
         command = [
-            str(package.executable),
-            "-vulkan", "-log",
+            str(self.stack_launcher), str(package.launcher),
             f"-FayCharacter={package.profiles[character]}",
             f"-FayCameraFraming={package.framings[character]}",
             "-FayResetSpeechCache=0", "-FayTrimSpeechMemory=1",
@@ -432,6 +441,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--rollback-exe", type=Path)
     parser.add_argument("--live-root", required=True, type=Path)
     parser.add_argument("--log-root", required=True, type=Path)
+    parser.add_argument("--stack-launcher", type=Path, default=Path(__file__).with_name("run-spark-digital-human.sh"))
     parser.add_argument("--preview-script", type=Path, default=Path(__file__).with_name("run-avatar-live-preview.sh"))
     parser.add_argument("--initial-character", choices=tuple(CHARACTER_PROFILES), default="ada")
     parser.add_argument("--generation")
@@ -451,9 +461,14 @@ def main() -> int:
     try:
         live_root = private_directory(args.live_root, "live root")
         log_root = private_directory(args.log_root, "log root", create=True)
+        stack_launcher = args.stack_launcher.expanduser().resolve(strict=True)
         preview_script = args.preview_script.expanduser().resolve(strict=True)
-        if preview_script.is_symlink() or not os.access(preview_script, os.X_OK):
-            fail("preview script must be one real executable file")
+        for launcher, label in (
+            (stack_launcher, "stack launcher"),
+            (preview_script, "preview script"),
+        ):
+            if launcher.is_symlink() or not launcher.is_file() or not os.access(launcher, os.X_OK):
+                fail(f"{label} must be one real executable file")
         package = load_package(args.package_exe, args.generation)
         rollback = (
             load_package(args.rollback_exe, args.rollback_generation)
@@ -464,7 +479,8 @@ def main() -> int:
         if any_unowned_renderer():
             fail("an unmanaged FayAvatarRuntime is already running; nothing was stopped")
         supervisor = Supervisor(
-            package, rollback, live_root, log_root, preview_script, args.startup_timeout,
+            package, rollback, live_root, log_root, stack_launcher, preview_script,
+            args.startup_timeout,
         )
     except (OSError, RuntimeError, ValueError) as exc:
         raise SystemExit(str(exc)) from exc
