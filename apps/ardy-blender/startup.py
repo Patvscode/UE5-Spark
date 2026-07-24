@@ -51,8 +51,12 @@ def _configure_scene() -> None:
         "ARDY_BLENDER_EXPORT_ROOT",
         os.environ.get("ARDY_BLENDER_STAGING_ROOT", ""),
     )
-    scene["ardy_adapter_version"] = "1.0.0"
+    scene["ardy_adapter_version"] = "1.1.0"
     scene["ardy_blender_target"] = "4.0.2+"
+    for screen in bpy.data.screens:
+        for area in screen.areas:
+            if area.type == "VIEW_3D" and hasattr(area.spaces.active, "show_region_ui"):
+                area.spaces.active.show_region_ui = True
 
 
 def _import_missing() -> bool:
@@ -68,6 +72,38 @@ def _import_missing() -> bool:
             body_fbx=scene.ardy_casual_body_fbx or None,
         )
         changed = True
+    return changed
+
+
+def _prepare_rig_views() -> bool:
+    changed = False
+    for collection_name in (
+        blender_adapter.COLLECTION_NVIDIA,
+        blender_adapter.COLLECTION_CASUAL,
+    ):
+        collection = bpy.data.collections.get(collection_name)
+        if collection is None:
+            continue
+        armatures = tuple(
+            item for item in collection.all_objects if item.type == "ARMATURE"
+        )
+        for armature in armatures:
+            visible = set(blender_adapter._preview_mapping(armature).values())
+            visible.add("root")
+            expected_hidden = {
+                bone.name for bone in armature.data.bones if bone.name not in visible
+            }
+            actual_hidden = {
+                bone.name for bone in armature.data.bones if bone.hide
+            }
+            if (
+                armature.data.display_type != "STICK"
+                or not armature.data.show_names
+                or not armature.show_in_front
+                or actual_hidden != expected_hidden
+            ):
+                blender_adapter._clean_armature_view(armature)
+                changed = True
     return changed
 
 
@@ -89,6 +125,7 @@ def main() -> None:
     _configure_scene()
     try:
         changed = _import_missing()
+        changed = _prepare_rig_views() or changed
         _save_first_project(changed)
         bpy.context.scene["ardy_startup_status"] = (
             "NVIDIA Original and Casual Girl are ready"

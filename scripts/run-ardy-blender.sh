@@ -13,7 +13,7 @@ fail() {
     fail 'run ARDY Blender on the Linux ARM64 DGX Spark'
 (( ${EUID:-$(id -u)} != 0 )) || fail 'run as the normal desktop user'
 
-for command_name in chmod docker hostname install pgrep readlink stat tee touch tr; do
+for command_name in chmod docker hostname install pgrep readlink stat systemctl tee touch tr; do
     command -v "$command_name" >/dev/null 2>&1 || fail "missing command: $command_name"
 done
 
@@ -26,6 +26,8 @@ nvidia_skin="$cooker_root/vendor-private/ardy/ardy/assets/skeletons/cskel27/skin
 nvidia_skin_root=${nvidia_skin%/*}
 image_name=ue5-spark-blender:5.0.1
 container_name=ue5-spark-blender
+ardy_service=ue5-spark-ardy.service
+viser_service=ue5-spark-ardy-viser-lab.service
 
 [[ -d $casual_fbx_root && ! -L $casual_fbx_root ]] || \
     fail "Casual Girl FBX source is missing: $casual_fbx_root"
@@ -46,6 +48,14 @@ if docker container inspect "$container_name" >/dev/null 2>&1; then
     fi
     docker container rm "$container_name" >/dev/null
 fi
+
+# Blender and the NVIDIA Viser lab are alternative interactive front ends for
+# the same large ARDY model. Avoid keeping both GPU copies resident, then start
+# the project-owned open-text pose endpoint that the Blender add-on consumes.
+systemctl --user stop "$viser_service" >/dev/null 2>&1 || true
+systemctl --user reset-failed "$viser_service" >/dev/null 2>&1 || true
+systemctl --user start "$ardy_service" || \
+    fail 'the open-text ARDY service could not be started'
 
 install -d -m 0700 \
     "$private_root" \
@@ -103,7 +113,7 @@ docker run --rm \
     --name "$container_name" \
     --hostname "$(hostname)" \
     --gpus all \
-    --network none \
+    --network host \
     --read-only \
     --cap-drop ALL \
     --security-opt no-new-privileges:true \
@@ -126,6 +136,7 @@ docker run --rm \
     --env ARDY_CASUAL_GIRL_FBX_ROOT=/inputs/casual-fbx \
     --env ARDY_BLENDER_PROJECT=/work/projects/ARDY-Rigging.blend \
     --env ARDY_BLENDER_EXPORT_ROOT=/work/exports \
+    --env ARDY_SERVICE_URL=http://127.0.0.1:8777 \
     --mount "type=bind,src=/tmp/.X11-unix,dst=/tmp/.X11-unix,readonly" \
     --mount "type=bind,src=$xauthority_path,dst=/tmp/.Xauthority,readonly" \
     --mount "type=bind,src=$project_root,dst=/project,readonly" \

@@ -41,16 +41,70 @@ the 3D View sidebar (`N`).
    FBX. Choose the NPZ manifest root only as a fallback.
 3. Click **Load Casual Girl**.
 4. Select a Core27 armature or its mesh and click **Validate Selected Core27**.
-5. Rig with Blender's standard Edit/Pose/Weight Paint tools.
-6. Select a mesh and armature, then **Export Selected for Unreal**. The adapter
+5. Click **Clear ARDY View**, then rig with Blender's standard
+   Edit/Pose/Weight Paint tools.
+6. Enter any movement description under **Live ARDY rig test**, select the
+   edited mesh or armature, and click **Generate & Play on Selected Rig**.
+7. Select a mesh and armature, then **Export Selected for Unreal**. The adapter
    calls Blender's standard FBX exporter with Unreal-friendly axis/unit and
    no-leaf-bone settings.
-7. To send an adjusted mesh back toward the ARDY pipeline, make that mesh
+8. To send an adjusted mesh back toward the ARDY pipeline, make that mesh
    active, choose a staging directory, and click **Stage Active Mesh as NPZ**.
 
 NPZ export is create-only: it generates a timestamped file inside the selected
 staging directory and will never overwrite a live/private input or an existing
 staging artifact.
+
+## Position the rig correctly
+
+The large white wedges in Blender's default octahedral display are not body
+geometry and do not prove that the imported joints are misplaced. Casual
+Girl's native UE skeleton includes long IK helpers, twist bones, and FBX display
+tails. Use **Clear ARDY View** before judging placement.
+
+- Make rest-pose corrections in **Edit Mode**. Pose Mode is only for testing.
+- A bone's **head** is its anatomical pivot. Place the pelvis between the hip
+  sockets; thighs at the hip sockets; calves at the knee pivots; feet at the
+  ankles; upper arms at the shoulder pivots; lower arms at the elbows; hands
+  at the wrists; and spine/neck bones on the body's center line.
+- A bone's **tail** defines its local axis and roll. It does not need to land on
+  the next joint in this imported UE rig. Do not use “Connect” or snap all tails
+  to children: that breaks twist, IK, and helper bones.
+- Keep the armature object's imported location, rotation, and scale unchanged.
+  Work on rest bones, not the whole object. Blender is +Z up, −Y
+  character-forward, and +X character-left; scene units are metres.
+- Check both front and side orthographic views. `_l` and `_r` mean the
+  character's left and right, not the viewer's. Enable X-axis mirror only after
+  confirming that the pair names and center line are correct.
+- Adjust the main deform chain first. ARDY drives pelvis, spine, clavicles,
+  upper/lower arms, hands, thighs, calves, feet, and toe bases. Fingers, twist
+  bones, breasts, IK helpers, and facial bones keep their authored pose during
+  this quick body-motion test.
+
+After each rest edit, return to Object or Pose Mode, keep the character mesh or
+armature selected, enter a prompt such as `squat twice and stand naturally`,
+and generate again. Each run creates a separate `ARDY Preview · ...` Action;
+**Restore Previous Action** returns to the Action that was active before the
+preview.
+
+## Live ARDY preview
+
+The desktop launcher starts the real open-text ARDY Horizon8 service on
+`127.0.0.1:8777` and gives only the Blender container access to that loopback
+endpoint. The complete 1–512 character prompt is sent to NVIDIA ARDY; it is not
+reduced to a movement catalog entry. Blender receives protocol-v2 Core27 frames
+at 20 FPS, builds a temporary Action, retargets the main body chains, and starts
+timeline playback.
+
+The first prompt after startup can take longer while the text encoder and model
+warm up. Later repeats of the same prompt reuse the bounded in-memory embedding
+cache. **Keep character in place** is enabled by default so rig defects are
+easier to see; disable it when evaluating ARDY root translation.
+
+The separate NVIDIA Viser Character Lab and Blender are alternative interactive
+front ends for the same large model. Opening ARDY Blender stops the Viser lab
+service first, preventing two model copies from consuming the Spark's unified
+memory. Its desktop icon can start the Viser lab again later.
 
 ## Private scene builder
 
@@ -98,7 +152,8 @@ apps/ardy-blender/run-blender-x11-container.sh
 ```
 
 The launcher drops every Linux capability, enables `no-new-privileges`, uses
-the logged-in UID/GID, disables container networking, and mounts only:
+the logged-in UID/GID, and uses host networking solely so the add-on can reach
+the fixed loopback ARDY endpoint. It mounts only:
 
 - this repository, read-only;
 - the explicitly selected private asset and staging roots, read/write;

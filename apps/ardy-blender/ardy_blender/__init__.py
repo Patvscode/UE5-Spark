@@ -6,10 +6,10 @@
 bl_info = {
     "name": "ARDY Character Adapter",
     "author": "UE5-Spark",
-    "version": (1, 0, 0),
+    "version": (1, 1, 0),
     "blender": (4, 0, 2),
     "location": "View3D > Sidebar > ARDY",
-    "description": "Load ARDY Core27/Casual Girl, validate, and export for Unreal",
+    "description": "Rig Core27/Casual Girl and preview real prompt-driven ARDY motion",
     "category": "Rigging",
 }
 

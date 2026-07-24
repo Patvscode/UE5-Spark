@@ -12,18 +12,229 @@ from __future__ import annotations
 from datetime import datetime, timezone
 import os
 from pathlib import Path
+import queue
+import threading
 from typing import Iterable
 
 import bpy
 from bpy_extras.io_utils import ExportHelper
-from mathutils import Matrix, Vector
+from mathutils import Matrix, Quaternion, Vector
 import numpy as np
 
-from . import formats
+from . import formats, motion_preview
 
 
 COLLECTION_NVIDIA = "ARDY · NVIDIA Original"
 COLLECTION_CASUAL = "ARDY · Casual Girl"
+PREVIEW_ACTION_PREFIX = "ARDY Preview · "
+
+_MOTION_RESULTS: queue.Queue = queue.Queue()
+_MOTION_BUSY = False
+
+
+def _clean_armature_view(armature, *, mapped_only: bool = True) -> None:
+    armature.data.display_type = "STICK"
+    armature.data.show_names = True
+    armature.show_in_front = True
+    visible = set(_preview_mapping(armature).values()) if mapped_only else None
+    if visible is not None:
+        visible.add("root")
+    for bone in armature.data.bones:
+        bone.hide = visible is not None and bone.name not in visible
+
+
+def _preview_mapping(armature) -> dict[str, str]:
+    bones = armature.data.bones
+    if all(name in bones for name in formats.CORE27_NAMES):
+        return {name: name for name in formats.CORE27_NAMES}
+    mapping = {
+        source: target
+        for source, target in motion_preview.CASUAL_GIRL_BONE_MAP.items()
+        if target in bones
+    }
+    required = {
+        "Hips",
+        "Spine",
+        "Spine1",
+        "Spine2",
+        "Spine3",
+        "LeftArm",
+        "RightArm",
+        "LeftUpLeg",
+        "RightUpLeg",
+        "LeftFoot",
+        "RightFoot",
+    }
+    missing = sorted(required.difference(mapping))
+    if missing:
+        raise formats.ArdyFormatError(
+            "selected rig is neither exact Core27 nor the reviewed Casual Girl "
+            f"body rig; missing mappings: {', '.join(missing)}"
+        )
+    return mapping
+
+
+def _ardy_rotation_to_blender(value) -> Matrix:
+    x_value, y_value, z_value, w_value = (float(component) for component in value)
+    source = Quaternion((w_value, x_value, y_value, z_value)).normalized()
+    conversion = Matrix(formats.ARDY_TO_BLENDER.tolist())
+    return conversion @ source.to_matrix() @ conversion.transposed()
+
+
+def _basis_rotation(armature, bone_name: str, source_rotation: Matrix) -> Quaternion:
+    # Blender evaluates pose-bone basis rotation after the target's current
+    # rest-local matrix. This matches the working Viser retarget relation:
+    # target_global = parent_global @ target_bind_local @ source_local_delta.
+    # Keeping the delta direct also means an Edit-Mode rest correction is
+    # automatically reflected the next time a preview Action is generated.
+    _ = armature, bone_name
+    return source_rotation.to_quaternion().normalized()
+
+
+def _activate_pose_mode(armature) -> None:
+    active = bpy.context.active_object
+    if active is not None and active.mode != "OBJECT":
+        bpy.ops.object.mode_set(mode="OBJECT")
+    _deselect_all()
+    armature.select_set(True)
+    bpy.context.view_layer.objects.active = armature
+    if armature.mode != "POSE":
+        bpy.ops.object.mode_set(mode="POSE")
+
+
+def _create_preview_action(
+    armature,
+    frames: list[dict],
+    *,
+    prompt: str,
+    in_place: bool,
+) -> object:
+    mapping = _preview_mapping(armature)
+    _activate_pose_mode(armature)
+    _clean_armature_view(armature)
+    scene = bpy.context.scene
+    scene.render.fps = motion_preview.FPS
+    start_frame = max(1, int(scene.frame_current))
+    action = bpy.data.actions.new(
+        f"{PREVIEW_ACTION_PREFIX}{datetime.now(timezone.utc).strftime('%H%M%S')}"
+    )
+    action.use_fake_user = True
+    action["ardy_prompt"] = prompt
+    action["ardy_source"] = "nv-tlabs/ardy"
+    action["ardy_fps"] = motion_preview.FPS
+
+    armature.animation_data_create()
+    previous = armature.animation_data.action
+    if previous is None or not previous.name.startswith(PREVIEW_ACTION_PREFIX):
+        armature["ardy_previous_action"] = previous.name if previous is not None else ""
+    armature.animation_data.action = action
+
+    base_location = armature.location.copy()
+    first_root = Vector(
+        formats.ardy_points_to_blender(
+            np.asarray(frames[0]["root"][:3], dtype=np.float64)[None]
+        )[0].tolist()
+    )
+    source_indices = {name: index for index, name in enumerate(formats.CORE27_NAMES)}
+    for offset, frame in enumerate(frames):
+        timeline_frame = start_frame + offset
+        for source_name, target_name in mapping.items():
+            pose_bone = armature.pose.bones.get(target_name)
+            if pose_bone is None:
+                continue
+            pose_bone.rotation_mode = "QUATERNION"
+            rotation = _ardy_rotation_to_blender(
+                frame["joints"][source_indices[source_name]]
+            )
+            pose_bone.rotation_quaternion = _basis_rotation(
+                armature, target_name, rotation
+            )
+            pose_bone.keyframe_insert(
+                data_path="rotation_quaternion",
+                frame=timeline_frame,
+                group=target_name,
+            )
+        if not in_place:
+            root = Vector(
+                formats.ardy_points_to_blender(
+                    np.asarray(frame["root"][:3], dtype=np.float64)[None]
+                )[0].tolist()
+            )
+            world_delta = root - first_root
+            local_delta = (
+                armature.parent.matrix_world.inverted_safe().to_3x3() @ world_delta
+                if armature.parent is not None
+                else world_delta
+            )
+            armature.location = base_location + local_delta
+            armature.keyframe_insert(data_path="location", frame=timeline_frame)
+
+    armature.location = base_location
+    scene.frame_start = start_frame
+    scene.frame_end = start_frame + len(frames) - 1
+    scene.frame_set(start_frame)
+    if bpy.context.screen is not None and not bpy.context.screen.is_animation_playing:
+        bpy.ops.screen.animation_play()
+    return action
+
+
+def _motion_worker(
+    *,
+    endpoint: str,
+    prompt: str,
+    intensity: float,
+    duration: float,
+    armature_name: str,
+) -> None:
+    try:
+        health, frames = motion_preview.fetch_motion(
+            endpoint,
+            prompt,
+            intensity=intensity,
+            duration=duration,
+        )
+        _MOTION_RESULTS.put(
+            {
+                "ok": True,
+                "armature": armature_name,
+                "prompt": prompt,
+                "health": health,
+                "frames": frames,
+            }
+        )
+    except Exception as exc:
+        _MOTION_RESULTS.put({"ok": False, "error": str(exc)})
+
+
+def _poll_motion_results():
+    global _MOTION_BUSY
+    try:
+        result = _MOTION_RESULTS.get_nowait()
+    except queue.Empty:
+        return 0.2
+    _MOTION_BUSY = False
+    scene = bpy.context.scene
+    if not result.get("ok"):
+        scene.ardy_preview_status = f"Not applied: {result.get('error', 'unknown error')}"
+        return 0.2
+    armature = bpy.data.objects.get(result["armature"])
+    if armature is None or armature.type != "ARMATURE":
+        scene.ardy_preview_status = "Not applied: the selected armature was removed"
+        return 0.2
+    try:
+        action = _create_preview_action(
+            armature,
+            result["frames"],
+            prompt=result["prompt"],
+            in_place=scene.ardy_preview_in_place,
+        )
+    except Exception as exc:
+        scene.ardy_preview_status = f"Not applied: {exc}"
+    else:
+        scene.ardy_preview_status = (
+            f"Playing {len(result['frames'])} real ARDY frames · {action.name}"
+        )
+    return 0.2
 
 
 def _deselect_all() -> None:
@@ -571,6 +782,150 @@ class ARDY_OT_validate_core27(bpy.types.Operator):
         return {"FINISHED"} if valid else {"CANCELLED"}
 
 
+class ARDY_OT_clean_rig_view(bpy.types.Operator):
+    bl_idname = "ardy.clean_rig_view"
+    bl_label = "Use Clear Stick Rig View"
+    bl_description = "Replace the large octahedral bone wedges with readable sticks and names"
+    bl_options = {"REGISTER", "UNDO"}
+
+    def execute(self, context):
+        armature = _selected_armature(context)
+        if armature is None:
+            self.report({"ERROR"}, "Select the character mesh or armature first")
+            return {"CANCELLED"}
+        _clean_armature_view(armature)
+        self.report({"INFO"}, "Rig display changed to sticks; geometry was not modified")
+        return {"FINISHED"}
+
+
+class ARDY_OT_show_all_bones(bpy.types.Operator):
+    bl_idname = "ardy.show_all_bones"
+    bl_label = "Show All Bones"
+    bl_description = "Reveal IK, twist, finger, facial, and other helper bones"
+    bl_options = {"REGISTER"}
+
+    def execute(self, context):
+        armature = _selected_armature(context)
+        if armature is None:
+            self.report({"ERROR"}, "Select the character mesh or armature first")
+            return {"CANCELLED"}
+        _clean_armature_view(armature, mapped_only=False)
+        self.report({"INFO"}, "All bones are visible in stick display")
+        return {"FINISHED"}
+
+
+class ARDY_OT_rig_guide(bpy.types.Operator):
+    bl_idname = "ardy.rig_guide"
+    bl_label = "ARDY Rig Placement Guide"
+    bl_options = {"REGISTER"}
+
+    def invoke(self, context, _event):
+        return context.window_manager.invoke_props_dialog(self, width=620)
+
+    def draw(self, _context):
+        layout = self.layout
+        layout.label(text="Before editing: File → Save As a new variant.", icon="FILE_TICK")
+        layout.label(text="Edit Mode changes rest joints; Pose Mode only tests motion.")
+        layout.separator()
+        layout.label(text="Coordinates: +Z up, −Y forward, +X character-left.")
+        layout.label(text="Bone HEADS are the anatomical pivots. Imported tails define axis/roll.")
+        layout.label(text="Do not auto-connect tails or change names, hierarchy, object transforms,")
+        layout.label(text="the 0.01 FBX parent Empty, or bone roll without a specific reason.")
+        layout.separator()
+        layout.label(text="Place heads at: pelvis center; hip sockets; knee centers; ankles; toe balls;")
+        layout.label(text="spine centerline; shoulder sockets; elbows; wrists; neck base; head base.")
+        layout.label(text="Check front and side orthographic views and preserve left/right symmetry.")
+        layout.separator()
+        layout.label(text="Casual Girl reviewed baseline (world metres):")
+        layout.label(text="pelvis Z .927 · knee Z .508 · ankle Z .089 · toe Z .026")
+        layout.label(text="shoulder Z 1.345 · elbow Z 1.139 · wrist Z .934 · head Z 1.491")
+        layout.label(text="Use Clear ARDY View to hide helpers that ARDY does not drive.")
+
+    def execute(self, _context):
+        return {"FINISHED"}
+
+
+class ARDY_OT_generate_preview(bpy.types.Operator):
+    bl_idname = "ardy.generate_preview"
+    bl_label = "Generate & Play on Selected Rig"
+    bl_description = "Send the complete prompt to real ARDY and create a temporary Blender Action"
+    bl_options = {"REGISTER"}
+
+    def execute(self, context):
+        global _MOTION_BUSY
+        if _MOTION_BUSY:
+            self.report({"WARNING"}, "ARDY is already generating a preview")
+            return {"CANCELLED"}
+        armature = _selected_armature(context)
+        if armature is None:
+            self.report({"ERROR"}, "Select the character mesh or armature first")
+            return {"CANCELLED"}
+        try:
+            _preview_mapping(armature)
+            endpoint = motion_preview.normalize_endpoint(
+                context.scene.ardy_service_url
+            )
+            prompt = motion_preview.normalize_prompt(
+                context.scene.ardy_motion_prompt
+            )
+        except (formats.ArdyFormatError, motion_preview.ArdyPreviewError) as exc:
+            self.report({"ERROR"}, str(exc))
+            return {"CANCELLED"}
+        _activate_pose_mode(armature)
+        _clean_armature_view(armature)
+        _MOTION_BUSY = True
+        context.scene.ardy_preview_status = (
+            "ARDY is encoding the prompt and generating Core27 motion…"
+        )
+        worker = threading.Thread(
+            target=_motion_worker,
+            kwargs={
+                "endpoint": endpoint,
+                "prompt": prompt,
+                "intensity": float(context.scene.ardy_motion_intensity),
+                "duration": float(context.scene.ardy_motion_duration),
+                "armature_name": armature.name,
+            },
+            name="ARDY-Blender-Preview",
+            daemon=True,
+        )
+        worker.start()
+        return {"FINISHED"}
+
+
+class ARDY_OT_stop_preview(bpy.types.Operator):
+    bl_idname = "ardy.stop_preview"
+    bl_label = "Stop Preview"
+    bl_description = "Stop playback without deleting the generated Action"
+    bl_options = {"REGISTER"}
+
+    def execute(self, context):
+        if context.screen is not None and context.screen.is_animation_playing:
+            bpy.ops.screen.animation_play()
+        context.scene.ardy_preview_status = "Preview stopped; generated Action is retained"
+        return {"FINISHED"}
+
+
+class ARDY_OT_restore_action(bpy.types.Operator):
+    bl_idname = "ardy.restore_action"
+    bl_label = "Restore Previous Action"
+    bl_description = "Reconnect the Action that was active before the last ARDY preview"
+    bl_options = {"REGISTER", "UNDO"}
+
+    def execute(self, context):
+        armature = _selected_armature(context)
+        if armature is None or armature.animation_data is None:
+            self.report({"ERROR"}, "Select a rig that has animation data")
+            return {"CANCELLED"}
+        previous_name = str(armature.get("ardy_previous_action") or "")
+        previous = bpy.data.actions.get(previous_name) if previous_name else None
+        armature.animation_data.action = previous
+        context.scene.ardy_preview_status = (
+            f"Restored {previous.name}" if previous is not None else "Restored no Action"
+        )
+        return {"FINISHED"}
+
+
 class ARDY_OT_export_fbx(bpy.types.Operator, ExportHelper):
     bl_idname = "ardy.export_unreal_fbx"
     bl_label = "Export Selected for Unreal"
@@ -627,8 +982,30 @@ class ARDY_PT_character_adapter(bpy.types.Panel):
 
         box = layout.box()
         box.label(text="Blender-native rigging", icon="POSE_HLT")
-        box.label(text="Use Edit, Pose, and Weight Paint modes")
+        row = box.row(align=True)
+        row.operator("ardy.clean_rig_view", text="Clear ARDY View", icon="BONE_DATA")
+        row.operator("ardy.show_all_bones", text="Show All", icon="HIDE_OFF")
+        box.operator("ardy.rig_guide", icon="HELP")
+        box.label(text="Edit rest joints in Armature Edit Mode")
+        box.label(text="Bone head = anatomical pivot")
+        box.label(text="Tail controls axis/roll; do not auto-connect it")
+        box.label(text="Keep object transforms unchanged and Z up")
+        box.label(text="Front + side views; mirror _l/_r pairs")
         box.operator("ardy.validate_core27", icon="CHECKMARK")
+
+        box = layout.box()
+        box.label(text="Live ARDY rig test", icon="ACTION")
+        box.prop(scene, "ardy_motion_prompt", text="Prompt")
+        row = box.row(align=True)
+        row.prop(scene, "ardy_motion_duration", text="Seconds")
+        row.prop(scene, "ardy_motion_intensity", text="Energy")
+        box.prop(scene, "ardy_preview_in_place", text="Keep character in place")
+        box.operator("ardy.generate_preview", icon="PLAY")
+        row = box.row(align=True)
+        row.operator("ardy.stop_preview", icon="PAUSE")
+        row.operator("ardy.restore_action", icon="LOOP_BACK")
+        box.label(text=scene.ardy_preview_status, icon="INFO")
+        box.label(text="Finish rest edit → Generate switches to Pose Mode")
 
         box = layout.box()
         box.label(text="Interchange", icon="EXPORT")
@@ -641,6 +1018,12 @@ CLASSES = (
     ARDY_OT_load_nvidia,
     ARDY_OT_load_casual,
     ARDY_OT_validate_core27,
+    ARDY_OT_clean_rig_view,
+    ARDY_OT_show_all_bones,
+    ARDY_OT_rig_guide,
+    ARDY_OT_generate_preview,
+    ARDY_OT_stop_preview,
+    ARDY_OT_restore_action,
     ARDY_OT_export_fbx,
     ARDY_OT_export_npz,
     ARDY_PT_character_adapter,
@@ -675,6 +1058,40 @@ def register() -> None:
         subtype="DIR_PATH",
         default=os.environ.get("ARDY_BLENDER_STAGING_ROOT", ""),
     )
+    bpy.types.Scene.ardy_service_url = bpy.props.StringProperty(
+        name="ARDY service",
+        default=os.environ.get("ARDY_SERVICE_URL", "http://127.0.0.1:8777"),
+    )
+    bpy.types.Scene.ardy_motion_prompt = bpy.props.StringProperty(
+        name="Movement prompt",
+        default="A person waves naturally, then relaxes.",
+        maxlen=motion_preview.MAX_PROMPT_CHARS,
+    )
+    bpy.types.Scene.ardy_motion_duration = bpy.props.FloatProperty(
+        name="Duration",
+        default=3.0,
+        min=0.2,
+        max=motion_preview.MAX_DURATION_SECONDS,
+        step=10,
+        precision=1,
+    )
+    bpy.types.Scene.ardy_motion_intensity = bpy.props.FloatProperty(
+        name="Energy",
+        default=0.5,
+        min=0.0,
+        max=1.0,
+        subtype="FACTOR",
+    )
+    bpy.types.Scene.ardy_preview_in_place = bpy.props.BoolProperty(
+        name="In place",
+        default=True,
+    )
+    bpy.types.Scene.ardy_preview_status = bpy.props.StringProperty(
+        name="Preview status",
+        default="Select a mesh or armature, enter any movement, then Generate",
+    )
+    if not bpy.app.timers.is_registered(_poll_motion_results):
+        bpy.app.timers.register(_poll_motion_results, first_interval=0.2, persistent=True)
 
 
 def unregister() -> None:
@@ -684,8 +1101,16 @@ def unregister() -> None:
         "ardy_casual_body_fbx",
         "ardy_casual_fbx_root",
         "ardy_nvidia_skin_path",
+        "ardy_preview_status",
+        "ardy_preview_in_place",
+        "ardy_motion_intensity",
+        "ardy_motion_duration",
+        "ardy_motion_prompt",
+        "ardy_service_url",
     ):
         if hasattr(bpy.types.Scene, name):
             delattr(bpy.types.Scene, name)
+    if bpy.app.timers.is_registered(_poll_motion_results):
+        bpy.app.timers.unregister(_poll_motion_results)
     for value in reversed(CLASSES):
         bpy.utils.unregister_class(value)

@@ -47,6 +47,18 @@ for command_name in curl systemctl; do
         fail "Required command is missing: $command_name"
 done
 
+if [[ ${1:-} == ardy ]]; then
+    command -v docker >/dev/null 2>&1 || fail 'Required command is missing: docker'
+    if docker container inspect ue5-spark-blender >/dev/null 2>&1 && \
+        [[ $(docker container inspect --format '{{.State.Running}}' ue5-spark-blender) == true ]]; then
+        fail 'ARDY Blender is open. Save and close Blender before starting the separate Character Lab.'
+    fi
+    # The Character Lab and Blender service are alternative front ends for one
+    # large ARDY model. Never leave both GPU copies resident.
+    systemctl --user stop ue5-spark-ardy.service >/dev/null 2>&1 || true
+    systemctl --user reset-failed "$service" >/dev/null 2>&1 || true
+fi
+
 if ! systemctl --user is-active --quiet "$service"; then
     if command -v notify-send >/dev/null 2>&1; then
         notify-send "$title" 'Starting its local service…' >/dev/null 2>&1 || true

@@ -34,7 +34,7 @@ fi
 docker run --rm --init \
   --name ue5-spark-ardy-blender \
   --user "$(id -u):$(id -g)" \
-  --network none \
+  --network host \
   --cap-drop ALL \
   --security-opt no-new-privileges:true \
   --gpus all \
@@ -47,6 +47,7 @@ docker run --rm --init \
   --env ARDY_CASUAL_GIRL_FBX_ROOT="${ARDY_CASUAL_GIRL_FBX_ROOT_CONTAINER:-/private/casual-girl/fbx}" \
   --env ARDY_CASUAL_GIRL_MANIFEST_ROOT="${ARDY_CASUAL_GIRL_MANIFEST_ROOT_CONTAINER:-/private/casual-girl/npz}" \
   --env ARDY_BLENDER_STAGING_ROOT=/staging \
+  --env ARDY_SERVICE_URL=http://127.0.0.1:8777 \
   --mount "type=bind,src=$repo_root,dst=/workspace,readonly" \
   --mount "type=bind,src=$private_root,dst=/private" \
   --mount "type=bind,src=$staging_root,dst=/staging" \
