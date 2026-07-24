@@ -1,0 +1,372 @@
+from __future__ import annotations
+
+import json
+import re
+import shutil
+import subprocess
+import sys
+import unittest
+from pathlib import Path
+
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
+SCRIPT_PATH = REPO_ROOT / "scripts" / "run-spark-avatar-gate.sh"
+SERVICE_ROOT = REPO_ROOT / "services" / "ardy" / "service"
+sys.path.insert(0, str(SERVICE_ROOT))
+
+from motion_catalog import GENERATED_BEHAVIORS  # noqa: E402
+from pose_protocol import (  # noqa: E402
+    COORDINATE_SYSTEM,
+    PROTOCOL_VERSION,
+    source_descriptor,
+)
+
+
+class SparkAvatarGateTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.source = SCRIPT_PATH.read_text(encoding="utf-8")
+
+    def test_bash_syntax_and_exact_arity(self) -> None:
+        syntax = subprocess.run(
+            ("bash", "-n", str(SCRIPT_PATH)),
+            cwd=REPO_ROOT,
+            check=False,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+        self.assertEqual(syntax.returncode, 0, syntax.stderr)
+
+        for arguments in ((), ("a", "1", "b", "2", "3", "extra")):
+            with self.subTest(arguments=arguments):
+                result = subprocess.run(
+                    ("bash", str(SCRIPT_PATH), *arguments),
+                    cwd=REPO_ROOT,
+                    check=False,
+                    text=True,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                )
+                self.assertEqual(result.returncode, 64)
+                self.assertIn("Usage:", result.stderr)
+
+        self.assertIn("if (( $# != 5 )); then", self.source)
+
+    @unittest.skipUnless(
+        sys.platform.startswith("linux")
+        and Path("/proc/self/stat").is_file()
+        and shutil.which("setsid") is not None,
+        "Linux /proc and setsid are required",
+    )
+    def test_linux_double_read_proves_direct_session_child(self) -> None:
+        function_start = self.source.index("capture_process_record() {")
+        function_end = self.source.index("\n\nread_process_starttime() {", function_start)
+        capture_function = self.source[function_start:function_end]
+        harness = f"""
+set -euo pipefail
+{capture_function}
+supervisor_pid=$BASHPID
+runner_bash_exe=$(readlink -f "$(command -v bash)")
+setsid bash -c 'sleep 2; :' &
+runner_pid=$!
+declare -a initial=() candidate=() confirm=()
+capture_process_record initial "$runner_pid"
+[[ ${{initial[0]}} != Z && ${{initial[1]}} == "$supervisor_pid" ]]
+provisional_starttime=${{initial[4]}}
+adopted=0
+for _ in $(seq 1 50); do
+    capture_process_record candidate "$runner_pid" || break
+    [[ ${{candidate[1]}} == "$supervisor_pid" && \
+        ${{candidate[4]}} == "$provisional_starttime" ]] || break
+    if [[ ${{candidate[2]}} == "$runner_pid" && \
+        ${{candidate[3]}} == "$runner_pid" ]]; then
+        candidate_exe=$(readlink -f "/proc/$runner_pid/exe")
+        capture_process_record confirm "$runner_pid"
+        if [[ ${{confirm[1]}} == "$supervisor_pid" && \
+            ${{confirm[2]}} == "$runner_pid" && \
+            ${{confirm[3]}} == "$runner_pid" && \
+            ${{confirm[4]}} == "$provisional_starttime" && \
+            $candidate_exe == "$runner_bash_exe" ]]; then
+            adopted=1
+            break
+        fi
+    fi
+    sleep 0.02
+done
+wait "$runner_pid"
+(( adopted == 1 ))
+"""
+        result = subprocess.run(
+            ("bash", "-c", harness),
+            cwd=REPO_ROOT,
+            check=False,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=10,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_only_fixed_voxtral_unit_can_receive_lifecycle_calls(self) -> None:
+        assignment = "readonly VOXTRAL_UNIT='codex-studio-voxtral-realtime.service'"
+        self.assertEqual(self.source.count(assignment), 1)
+        self.assertNotRegex(self.source, r"VOXTRAL_UNIT=\$|VOXTRAL_UNIT=\$\{")
+
+        lifecycle_calls = re.findall(
+            r"systemctl\s+--user\s+"
+            r"(start|stop|restart|enable|disable|mask|unmask)\s+"
+            r"([^\s;]+)",
+            self.source,
+        )
+        self.assertEqual(
+            lifecycle_calls,
+            [("start", '"$VOXTRAL_UNIT"'), ("stop", '"$VOXTRAL_UNIT"')],
+        )
+
+    def test_ardy_and_fay_are_observed_without_lifecycle_calls(self) -> None:
+        self.assertIn('docker inspect --type container "$ARDY_CONTAINER"', self.source)
+        self.assertNotRegex(
+            self.source,
+            r"\bdocker\s+(?:run|start|stop|restart|rm|kill|pause|unpause|update|exec)\b",
+        )
+        self.assertNotRegex(
+            self.source,
+            r"systemctl[^\n]*(?:fay|ardy)",
+        )
+        for marker in (
+            'process_matches_identity "$fay_pid"',
+            "capture_fay_listener_bindings fay_listener_bindings_after",
+            "arrays_are_equal fay_listener_bindings_before fay_listener_bindings_after",
+            "other_owner=$(grep -oE 'pid=[0-9]+,'",
+            "capture_ardy_snapshot ardy_after",
+            "ardy_immutable_snapshot_is_equal ardy_before ardy_after",
+            "loopback_listener_owned_by_pid 8777",
+            'value.get("provider") != "ardy"',
+            'value.get("checkpoint") != "ARDY-Core-RP-20FPS-Horizon8"',
+            'value["embeddingCount"] != 9',
+            'value.get("coordinateSystem") != "ardy-rh-x-left-y-up-z-forward-meters"',
+            'value.get("source") != expected_source',
+            'value.get("motionCatalog") != expected_catalog',
+            "not 0.0 < p95 < 400.0",
+            "docker image inspect --format '{{.Id}}' \"$ARDY_IMAGE\"",
+            "ardy_expected_image_id=$(resolve_fixed_ardy_image_id)",
+            'ardy_image_reference_is_expected "${destination[2]}" "${destination[12]}"',
+            "ardy_image_tag_matches_expected",
+            '"ardy_image_tag_unchanged=$ardy_image_tag_unchanged"',
+            '"ardy_p95_generation_ms=${ardy_after[18]:-not-available}"',
+        ):
+            self.assertIn(marker, self.source)
+
+    def test_ardy_image_reference_accepts_fixed_tag_or_exact_image_id_only(self) -> None:
+        function_start = self.source.index("ardy_image_reference_is_expected() {")
+        function_end = self.source.index("\n\ncapture_ardy_snapshot() {", function_start)
+        reference_function = self.source[function_start:function_end]
+        expected_id = "sha256:" + "1" * 64
+        foreign_id = "sha256:" + "2" * 64
+
+        def check(config_reference: str, runtime_image_id: str) -> bool:
+            harness = f"""
+set -euo pipefail
+readonly ARDY_IMAGE='ue5-spark-ardy:0.3.0'
+ardy_expected_image_id={expected_id!r}
+{reference_function}
+ardy_image_reference_is_expected {config_reference!r} {runtime_image_id!r}
+"""
+            result = subprocess.run(
+                ("bash", "-c", harness),
+                cwd=REPO_ROOT,
+                check=False,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+            return result.returncode == 0
+
+        self.assertTrue(check("ue5-spark-ardy:0.3.0", expected_id))
+        self.assertTrue(check(expected_id, expected_id))
+        self.assertFalse(check(foreign_id, expected_id))
+        self.assertFalse(check("ue5-spark-ardy:0.3.0", foreign_id))
+
+    def test_ardy_tag_identity_is_rechecked_before_pause_and_on_exit(self) -> None:
+        self.assertIn(
+            "the fixed ARDY production image tag changed during package verification",
+            self.source,
+        )
+        exit_handler = self.source[
+            self.source.index("on_exit() {") : self.source.index("handle_signal() {")
+        ]
+        self.assertIn("ardy_image_tag_matches_expected", exit_handler)
+        self.assertIn("ardy_image_tag_unchanged=passed", exit_handler)
+        self.assertIn("ardy_image_tag_unchanged=failed", exit_handler)
+
+    def test_ardy_health_parser_rejects_nonsealed_payloads(self) -> None:
+        prefix = 'printf \'%s\' "$body" | python3 -c \'\n'
+        start = self.source.index(prefix) + len(prefix)
+        end = self.source.index("\n'\n", start)
+        parser = self.source[start:end]
+        valid = {
+            "status": "ready",
+            "provider": "ardy",
+            "protocolVersion": PROTOCOL_VERSION,
+            "fps": 20,
+            "bufferFrames": 8,
+            "facialControl": "excluded",
+            "coordinateSystem": COORDINATE_SYSTEM,
+            "source": source_descriptor(),
+            "motionCatalog": list(GENERATED_BEHAVIORS),
+            "checkpoint": "ARDY-Core-RP-20FPS-Horizon8",
+            "embeddingCount": len(GENERATED_BEHAVIORS),
+            "p95GenerationMs": 212.343,
+        }
+
+        def parse(payload: object) -> subprocess.CompletedProcess[str]:
+            return subprocess.run(
+                (sys.executable, "-c", parser),
+                input=json.dumps(payload),
+                check=False,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+
+        accepted = parse(valid)
+        self.assertEqual(accepted.returncode, 0, accepted.stderr)
+        self.assertEqual(
+            accepted.stdout.splitlines(),
+            ["ardy", "ARDY-Core-RP-20FPS-Horizon8", "9", "212.343"],
+        )
+        invalid_cases = []
+        for key, value in (
+            ("provider", "mock"),
+            ("status", "degraded"),
+            ("checkpoint", "ARDY-Core-RP-20FPS-Horizon40"),
+            ("embeddingCount", len(GENERATED_BEHAVIORS) - 1),
+            ("embeddingCount", float(len(GENERATED_BEHAVIORS))),
+            ("p95GenerationMs", 0.0),
+            ("p95GenerationMs", 400.0),
+            ("protocolVersion", True),
+            ("coordinateSystem", "ardy-y-up-z-forward-meters"),
+            ("motionCatalog", list(reversed(GENERATED_BEHAVIORS))),
+        ):
+            changed = dict(valid)
+            changed[key] = value
+            invalid_cases.append(changed)
+        missing = dict(valid)
+        missing.pop("checkpoint")
+        invalid_cases.append(missing)
+        extra = dict(valid)
+        extra["unexpected"] = True
+        invalid_cases.append(extra)
+        changed_source = dict(valid)
+        changed_source["source"] = dict(source_descriptor())
+        changed_source["source"]["quaternionOrder"] = "wxyz"
+        invalid_cases.append(changed_source)
+        for payload in invalid_cases:
+            with self.subTest(payload=payload):
+                self.assertNotEqual(parse(payload).returncode, 0)
+
+    def test_ardy_immutable_comparator_excludes_only_latency(self) -> None:
+        function_start = self.source.index("ardy_immutable_snapshot_is_equal() {")
+        function_end = self.source.index("\n\narray_digest() {", function_start)
+        comparator = self.source[function_start:function_end]
+        self.assertIn("${#left[@]} == 19", comparator)
+        self.assertIn("for index in $(seq 0 17); do", comparator)
+        self.assertNotIn("${left[18]}", comparator)
+
+    def test_restore_and_runner_ownership_are_on_every_exit_path(self) -> None:
+        restore_arm = self.source.index("voxtral_restore_required=1")
+        stop_call = self.source.index('systemctl --user stop "$VOXTRAL_UNIT"')
+        self.assertLess(restore_arm, stop_call)
+        self.assertIn("trap 'on_exit $?' EXIT", self.source)
+        self.assertIn("trap '' HUP INT TERM", self.source)
+        self.assertIn('exec setsid "$soak_runner"', self.source)
+        self.assertIn('kill -TERM -- "-$runner_session_id"', self.source)
+        self.assertIn('wait "$runner_pid"', self.source)
+        self.assertIn("runner_reaped=1", self.source)
+        self.assertIn("runner_identity_capture_in_progress=1", self.source)
+        self.assertIn("deferred_signal_status", self.source)
+        self.assertIn("Deferring %s until the owned runner identity is committed.", self.source)
+        for marker in (
+            'capture_process_record runner_initial_record "$runner_pid"',
+            '${runner_initial_record[1]} == "$supervisor_pid"',
+            '${runner_candidate_record[2]} == "$runner_pid"',
+            '${runner_candidate_record[3]} == "$runner_pid"',
+            '$runner_candidate_exe == "$runner_bash_exe"',
+            '${runner_confirm_record[4]} == "$runner_provisional_starttime"',
+            "runner_identity_committed=1",
+        ):
+            self.assertIn(marker, self.source)
+        self.assertIn("while runner_leader_is_live; do", self.source)
+        self.assertIn("if ! voxtral_is_fully_inactive; then", self.source)
+        self.assertIn("voxtral_pause_continuity=failed", self.source)
+        self.assertIn(
+            "runner_group_post_exit_policy=not-scanned-after-exact-leader-exit",
+            self.source,
+        )
+        self.assertNotIn("process_group_has_live_members", self.source)
+        self.assertNotIn("clear_residual_runner_group", self.source)
+        self.assertIn("the allowlisted Voxtral unit or listener returned before restoration", self.source)
+
+        exit_handler = self.source[
+            self.source.index("on_exit() {") : self.source.index("handle_signal() {")
+        ]
+        for marker in (
+            "cancel_and_reap_runner",
+            "restore_voxtral",
+            "validate_fay_identity",
+            "capture_ardy_snapshot ardy_after",
+            "write_after_record",
+            "write_final_record",
+        ):
+            self.assertIn(marker, exit_handler)
+        self.assertLess(
+            exit_handler.index("restore_voxtral"),
+            exit_handler.index("Guarded DGX Spark avatar gate passed"),
+        )
+
+        cancel_handler = self.source[
+            self.source.index("cancel_and_reap_runner() {") :
+            self.source.index("restore_voxtral() {")
+        ]
+        self.assertEqual(cancel_handler.count('kill -TERM -- "-$runner_session_id"'), 1)
+        self.assertEqual(cancel_handler.count('kill -KILL -- "-$runner_session_id"'), 1)
+        self.assertNotIn('kill -TERM "$runner_pid"', cancel_handler)
+        self.assertNotIn('kill -KILL "$runner_pid"', cancel_handler)
+        self.assertIn("runner_identity_committed == 1", cancel_handler)
+        self.assertIn("if (( session_is_owned == 1 )) && runner_leader_is_live; then", cancel_handler)
+        self.assertIn("if runner_leader_is_live; then", cancel_handler)
+        self.assertIn("runner_exit_status=kill-timeout", cancel_handler)
+        self.assertIn(
+            "the rendered-soak runner changed executable while remaining live",
+            self.source,
+        )
+
+        final_record = self.source[
+            self.source.index("write_final_record() {") :
+            self.source.index("write_after_record() {")
+        ]
+        self.assertEqual(final_record.count("voxtral_restore_verified="), 1)
+
+    def test_private_evidence_is_unique_and_policy_is_passed_through(self) -> None:
+        for marker in (
+            "PRIVATE_GATE_DIR must not already exist",
+            'flock -n 9',
+            'mkdir -m 700 -- "$gate_root"',
+            '"$gate_root/gate-before.txt"',
+            '"$gate_root/gate-after.txt"',
+            '"$gate_root/gate-result.txt"',
+            '"$gate_root/runner-result.txt"',
+            '"$gate_root/runner-console.log"',
+        ):
+            self.assertIn(marker, self.source)
+        self.assertNotRegex(self.source, r"(?m)^\s*FAY_SOAK_[A-Z0-9_]+=")
+        self.assertIn(
+            'exec setsid "$soak_runner" "$package_launcher" "$fay_pid" "$soak_output"',
+            self.source,
+        )
+        self.assertNotIn('"$turn_count" "$@"', self.source)
+
+
+if __name__ == "__main__":
+    unittest.main()

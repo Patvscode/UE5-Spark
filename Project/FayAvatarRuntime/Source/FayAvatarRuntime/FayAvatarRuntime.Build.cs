@@ -12,7 +12,12 @@ public class FayAvatarRuntime : ModuleRules
                 "Core",
                 "CoreUObject",
                 "Engine",
-                "FayAvatarBridge"
+                "FayArkitRuntime",
+                "FayAvatarBridge",
+                "FayBodyMotion",
+                "FayMetaHumanRuntime",
+                "FayWardrobe",
+                "Json"
             });
 
     }

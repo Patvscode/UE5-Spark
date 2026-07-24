@@ -45,6 +45,40 @@ The bridge accepts `Topic: human` messages whose `Data.Key` is `audio`:
 Fields beyond `Topic`, `Data`, and `Key` are optional. An audio URL is required
 only for a message that should play speech.
 
+It also accepts a constrained action-only event. This does not fetch audio or
+interrupt speech that is already playing:
+
+```json
+{
+  "Topic": "human",
+  "Data": {
+    "Key": "action",
+    "Time": 1.5,
+    "Action": {
+      "code": "mcp.wave",
+      "behavior": "wave",
+      "affect": "neutral",
+      "provider": "baked",
+      "intensity": 0.7,
+      "priority": 50,
+      "sentimentHint": 0.0
+    }
+  },
+  "Username": "User"
+}
+```
+
+The body-motion component independently revalidates the behavior allowlist and
+bounds intensity and duration. Arbitrary prompts and pose arrays are rejected
+at this public boundary.
+
+`Action.provider` is optional and accepts only `baked` or `hybrid`. `baked`
+forces the renderer to use its local deterministic provider and never fall
+through to ARDY for that action. `hybrid` keeps normal ARDY-first routing with
+the baked fallback. Omitting the field preserves the pre-switch behavior and
+is treated as `hybrid`, so older callers remain compatible. Any other value or
+type is rejected by Fay and again by the Unreal bridge.
+
 ## Blueprint events
 
 | Event | Purpose |

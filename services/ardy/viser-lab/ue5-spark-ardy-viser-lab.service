@@ -1,0 +1,20 @@
+[Unit]
+Description=UE5-Spark ARDY Viser lab (NVIDIA Original + Casual Girl)
+After=network-online.target
+StartLimitIntervalSec=300
+StartLimitBurst=3
+
+[Service]
+Type=simple
+WorkingDirectory=%h/Workspace/02_Experiments/ue5-spark-cooker/UE5-Spark
+ExecStart=%h/Workspace/02_Experiments/ue5-spark-cooker/UE5-Spark/scripts/run-ardy-viser-lab-container.sh %h/Workspace/02_Experiments/ue5-spark-cooker/models-private/ardy-v2-candidate %h/Workspace/02_Experiments/ue5-spark-cooker/models-private/.hf-text-encoder-cache %h/Workspace/02_Experiments/ue5-spark-cooker/models-private/ardy-viser-lab/casual-girl
+ExecStop=-/usr/bin/docker stop --timeout 10 ue5-spark-ardy-viser-lab
+Restart=on-failure
+RestartSec=5
+TimeoutStartSec=180
+TimeoutStopSec=20
+NoNewPrivileges=yes
+PrivateTmp=yes
+
+[Install]
+WantedBy=default.target

@@ -37,6 +37,14 @@ struct FAYAVATARBRIDGE_API FFayAvatarAction
     UPROPERTY(BlueprintReadOnly, Category = "Fay|Action")
     FString Affect;
 
+    /** Empty preserves the legacy hybrid route; otherwise baked or hybrid. */
+    UPROPERTY(BlueprintReadOnly, Category = "Fay|Action")
+    FString Provider;
+
+    /** Optional free-text body-motion condition forwarded unchanged to ARDY. */
+    UPROPERTY(BlueprintReadOnly, Category = "Fay|Action")
+    FString Prompt;
+
     UPROPERTY(BlueprintReadOnly, Category = "Fay|Action")
     float Intensity = 0.0f;
 
@@ -101,6 +109,12 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FFayAvatarSpeechStartedEvent, const
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FFayAvatarSpeechFinishedEvent, const FFayAvatarMessage&, Message);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FFayAvatarMouthAmplitudeEvent, float, Amplitude);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FFayAvatarBridgeErrorEvent, const FString&, Stage, const FString&, Error);
+DECLARE_MULTICAST_DELEGATE_FourParams(
+    FFayAvatarDecodedPcmEvent,
+    const FFayAvatarMessage&,
+    const TArray<uint8>&,
+    int32,
+    int32);
 
 /**
  * Attach this component to the actor that owns the avatar.
@@ -122,7 +136,7 @@ public:
     virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
     virtual void TickComponent(float DeltaTime, ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction) override;
 
-    /** Fay's digital-human WebSocket endpoint. */
+    /** Fay's digital-human WebSocket endpoint; overridable with -FayWsUrl= or FAY_WS_URL. */
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Fay|Connection")
     FString WebSocketUrl = TEXT("ws://127.0.0.1:10002");
 
@@ -169,6 +183,7 @@ public:
      * Exact trusted origin and path prefix for Fay-generated WAV files.
      * Audio messages must resolve to one simple .wav filename below this URL;
      * userinfo, query strings, fragments, escapes, and nested paths are rejected.
+     * Overridable with -FayAudioBaseUrl= or FAY_AUDIO_BASE_URL.
      */
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Fay|Audio")
     FString AudioBaseUrl = TEXT("http://127.0.0.1:5000/audio/");
@@ -188,6 +203,10 @@ public:
     UPROPERTY(BlueprintAssignable, Category = "Fay|Events")
     FFayAvatarBridgeStateEvent OnConnectionStateChanged;
 
+    /**
+     * Broadcast synchronously; audio accepted for playback enters the queue
+     * before this event is delivered.
+     */
     UPROPERTY(BlueprintAssignable, Category = "Fay|Events")
     FFayAvatarMessageEvent OnMessageReceived;
 
@@ -202,6 +221,12 @@ public:
 
     UPROPERTY(BlueprintAssignable, Category = "Fay|Events")
     FFayAvatarBridgeErrorEvent OnBridgeError;
+
+    /**
+     * Native-only access to the trusted PCM16 payload immediately before
+     * playback. Receivers must copy any data they retain after the callback.
+     */
+    FFayAvatarDecodedPcmEvent OnDecodedPcm;
 
     UFUNCTION(BlueprintCallable, Category = "Fay|Connection")
     void Connect();
@@ -224,7 +249,19 @@ public:
     UFUNCTION(BlueprintPure, Category = "Fay|Audio")
     float GetSpeechPlaybackSeconds() const;
 
+    UFUNCTION(BlueprintPure, Category = "Fay|Audio")
+    bool IsSpeechPlaying() const { return bSpeechPlaying; }
+
+    /**
+     * True from the moment accepted audio is queued until its download,
+     * decode, and playback work has completely drained.
+     */
+    UFUNCTION(BlueprintPure, Category = "Fay|Audio")
+    bool HasPendingSpeechWork() const;
+
 private:
+    void ApplyRuntimeEndpointOverrides();
+    bool ValidateRuntimeEndpoints(FString& OutError);
     void SetConnectionState(EFayAvatarBridgeState NewState);
     void ReleaseSocket(bool bSendClose = true);
     void HandleSocketConnected(uint64 Generation);
@@ -290,6 +327,7 @@ private:
     bool bSpeechPlaying = false;
     bool bPlaybackStopRequested = false;
     bool bPendingQueueOverflowReported = false;
+    bool bRuntimeEndpointOverridesApplied = false;
     bool bManualDisconnect = false;
     bool bEndingPlay = false;
 };

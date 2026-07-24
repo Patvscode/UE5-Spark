@@ -2,7 +2,8 @@
 set -euo pipefail
 
 if [[ $# -lt 1 ]]; then
-    printf 'Usage: %s /path/to/FayAvatarRuntime.sh [Unreal arguments...]\n' "${0##*/}" >&2
+    printf 'Usage: %s /path/to/FayAvatarRuntime-Arm64.sh [Unreal arguments...]\n' \
+        "${0##*/}" >&2
     exit 64
 fi
 
@@ -17,6 +18,32 @@ fi
 
 launcher_input=$1
 shift
+camera_framing=Portrait
+camera_framing_argument_count=0
+for argument in "$@"; do
+    normalized_argument=${argument,,}
+    case $normalized_argument in
+        -faycameraframing|-faycameraframing=*)
+            camera_framing_argument_count=$((camera_framing_argument_count + 1))
+            if (( camera_framing_argument_count > 1 )); then
+                printf 'error: -FayCameraFraming may be specified only once\n' >&2
+                exit 64
+            fi
+            case $argument in
+                -FayCameraFraming=Portrait)
+                    camera_framing=Portrait
+                    ;;
+                -FayCameraFraming=FullBody)
+                    camera_framing=FullBody
+                    ;;
+                *)
+                    printf 'error: camera framing must be exact -FayCameraFraming=Portrait or -FayCameraFraming=FullBody\n' >&2
+                    exit 64
+                    ;;
+            esac
+            ;;
+    esac
+done
 if [[ ! -f "$launcher_input" ]]; then
     printf 'error: launcher does not exist: %s\n' "$launcher_input" >&2
     exit 66
@@ -24,13 +51,14 @@ fi
 
 launcher_dir=$(cd "$(dirname "$launcher_input")" && pwd -P)
 launcher="$launcher_dir/$(basename "$launcher_input")"
-if [[ $(basename "$launcher") != 'FayAvatarRuntime.sh' || ! -x "$launcher" ]]; then
-    printf 'error: expected an executable FayAvatarRuntime.sh launcher: %s\n' "$launcher" >&2
+if [[ $(basename "$launcher") != 'FayAvatarRuntime-Arm64.sh' || ! -x "$launcher" ]]; then
+    printf 'error: expected an executable FayAvatarRuntime-Arm64.sh launcher: %s\n' \
+        "$launcher" >&2
     exit 77
 fi
 
 game_root="$launcher_dir/FayAvatarRuntime"
-game_binary="$game_root/Binaries/Linux/FayAvatarRuntime"
+game_binary="$game_root/Binaries/LinuxArm64/FayAvatarRuntime"
 if [[ ! -x "$game_binary" ]]; then
     printf 'error: expected packaged game executable is missing: %s\n' "$game_binary" >&2
     exit 65
@@ -42,14 +70,15 @@ if [[ "$description" != *"ELF 64-bit"* || "$description" != *"ARM aarch64"* ]]; 
     printf '  %s\n' "$description" >&2
     exit 65
 fi
-if ! find "$game_root/Content/Paks" -type f \( -name '*.pak' -o -name '*.utoc' \) -print -quit 2>/dev/null | grep -q .; then
-    printf 'error: no cooked .pak or .utoc exists under %s/Content/Paks\n' "$game_root" >&2
-    exit 65
-fi
+"$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)/verify-cooked-package.sh" \
+    "$launcher_dir" --camera-framing "$camera_framing"
 
 printf 'Launcher: %s\n' "$launcher"
 printf 'ARM64 game executable: %s\n' "$game_binary"
 printf 'Starting Unreal with Vulkan; no system settings will be changed.\n'
 
 cd "$launcher_dir"
-exec "$launcher" -vulkan -log "$@"
+# AutomationTool's generated launcher starts the game as a child of /bin/sh
+# instead of replacing the shell.  Execute the already verified binary here so
+# callers own one stable PID and TERM cannot strand an Unreal child.
+exec "$game_binary" FayAvatarRuntime -vulkan -log "$@"

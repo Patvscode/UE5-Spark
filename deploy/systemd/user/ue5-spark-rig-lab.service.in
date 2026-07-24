@@ -1,0 +1,24 @@
+[Unit]
+Description=UE5-Spark private ARDY model and rigging lab
+After=network-online.target ue5-spark-ardy.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=@PROJECT_ROOT@/apps/ardy-rig-lab
+Environment=RIG_LAB_HOST=127.0.0.1
+Environment=RIG_LAB_PORT=8488
+Environment=ARDY_RIG_LAB_UPSTREAM=http://127.0.0.1:8777
+Environment=RIG_LAB_DATA_ROOT=@RIG_LAB_DATA_ROOT@
+ExecStart=/usr/bin/node server.mjs
+Restart=on-failure
+RestartSec=3s
+TimeoutStopSec=15s
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=@RIG_LAB_DATA_ROOT@
+
+[Install]
+WantedBy=default.target

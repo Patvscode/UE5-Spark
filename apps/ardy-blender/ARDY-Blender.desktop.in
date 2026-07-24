@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=ARDY Blender
+GenericName=3D Character Rigging
+Comment=Rig NVIDIA ARDY and Casual Girl characters in real Blender
+Exec=@EXEC@
+Icon=@ICON@
+Terminal=false
+Categories=Graphics;3DGraphics;
+StartupNotify=true
+StartupWMClass=Blender

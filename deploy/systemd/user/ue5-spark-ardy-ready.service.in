@@ -1,0 +1,18 @@
+[Unit]
+Description=UE5-Spark ARDY protocol-v2 readiness and cached-pose warm-up
+Requires=ue5-spark-ardy.service
+After=ue5-spark-ardy.service
+BindsTo=ue5-spark-ardy.service
+PartOf=ue5-spark-digital-human.target
+Before=ue5-spark-avatar.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=@PROJECT_ROOT@
+ExecStart=/usr/bin/python3 @PROJECT_ROOT@/scripts/warm-ardy-service.py --timeout-seconds 240
+RemainAfterExit=yes
+TimeoutStartSec=260s
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=read-only

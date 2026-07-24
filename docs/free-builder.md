@@ -47,6 +47,7 @@ quota still need to support at least a 32 GB, preferably 64 GB, x86-64 builder.
 ## Local emulation fallback
 
 FEX can run some x86-64 Linux applications on ARM64 in a user-owned workspace,
-but a full Unreal cook launches many CPU-heavy helper processes and performs
-large filesystem workloads. Treat it only as a bounded experiment, not as the
-reliable build route.
+and the project's pinned rootless FEX workflow has now completed the full Ada
+MetaHuman LinuxArm64 cook on DGX Spark. It remains an experimental, slow,
+version-sensitive route rather than an Epic-supported build configuration. A
+conventional x86-64 builder is still the simpler fallback when one is available.

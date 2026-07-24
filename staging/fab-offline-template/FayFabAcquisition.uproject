@@ -1,0 +1,37 @@
+{
+  "FileVersion": 3,
+  "EngineAssociation": "5.8",
+  "Category": "Private Fab offline review",
+  "Description": "Offline content-only project for reviewing and migrating one acquired Fab asset.",
+  "DisableEnginePluginsByDefault": true,
+  "Plugins": [
+    {
+      "Name": "Fab",
+      "Enabled": false,
+      "TargetAllowList": [
+        "Editor"
+      ]
+    },
+    {
+      "Name": "PythonScriptPlugin",
+      "Enabled": true,
+      "TargetAllowList": [
+        "Editor"
+      ]
+    },
+    {
+      "Name": "EditorScriptingUtilities",
+      "Enabled": true,
+      "TargetAllowList": [
+        "Editor"
+      ]
+    },
+    {
+      "Name": "ChaosCloth",
+      "Enabled": true,
+      "TargetAllowList": [
+        "Editor"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,25 @@
+{
+  "FileVersion": 3,
+  "Version": 2,
+  "VersionName": "0.2.0",
+  "FriendlyName": "Fay Body Motion",
+  "Description": "Character-neutral, fail-safe body-motion routing for Fay avatars.",
+  "Category": "Animation",
+  "CreatedBy": "UE5-Spark contributors",
+  "CanContainContent": false,
+  "IsBetaVersion": true,
+  "Installed": false,
+  "Plugins": [
+    {
+      "Name": "FayAvatarBridge",
+      "Enabled": true
+    }
+  ],
+  "Modules": [
+    {
+      "Name": "FayBodyMotion",
+      "Type": "Runtime",
+      "LoadingPhase": "Default"
+    }
+  ]
+}

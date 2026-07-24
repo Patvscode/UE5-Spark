@@ -1,0 +1,324 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <meta name="theme-color" content="#071015" />
+    <meta name="color-scheme" content="dark" />
+    <title>ARDY Rig Lab</title>
+  </head>
+  <body>
+    <main id="app">
+      <section class="viewport-shell" aria-label="ARDY Core27 3D viewport">
+        <canvas id="rig-canvas"></canvas>
+        <header class="lab-header">
+          <div>
+            <span class="lab-kicker">UE5 Spark</span>
+            <h1>ARDY Rig Lab</h1>
+          </div>
+          <span id="connection-badge" class="connection-badge is-checking">
+            <span aria-hidden="true"></span>
+            <span id="connection-label">Checking v2</span>
+          </span>
+        </header>
+        <div class="viewport-help">Drag to orbit · right-drag to pan · scroll or pinch to zoom · F for fullscreen</div>
+        <button id="reset-view" class="reset-view" type="button">Reset view</button>
+      </section>
+
+      <aside class="lab-panel" aria-label="ARDY model and rigging controls">
+        <details class="panel-section character-panel" open>
+          <summary>
+            <span>Character model</span>
+            <span id="model-summary" class="summary-status">No model</span>
+          </summary>
+          <div class="detail-content">
+            <div id="model-diagnostic" class="diagnostic-card is-unrigged" role="status" aria-live="polite">
+              <span class="diagnostic-icon" aria-hidden="true">!</span>
+              <span>
+                <strong>No rigged character loaded</strong>
+                <small>Add a skinned GLB, GLTF, VRM, or FBX. Static meshes can be viewed, but ARDY cannot move them until they have a skeleton and skin weights.</small>
+              </span>
+            </div>
+
+            <div class="subsection-heading">
+              <span><small>Private library</small><strong>Add or open a model</strong></span>
+              <span id="model-status" class="inline-status">Waiting</span>
+            </div>
+            <label class="file-field" for="model-file-input">
+              <span>Model files</span>
+              <input
+                id="model-file-input"
+                type="file"
+                accept=".glb,.gltf,.vrm,.fbx,model/gltf-binary,model/gltf+json"
+                multiple
+              />
+              <small>GLB is recommended. Select a GLTF with its texture and binary sidecars when needed.</small>
+            </label>
+            <button id="model-upload" class="primary-action wide-action" type="button">Add model to this Spark</button>
+
+            <div class="field-with-actions">
+              <label for="saved-model-select">Saved model
+                <select id="saved-model-select">
+                  <option value="">Choose a saved model</option>
+                </select>
+              </label>
+              <div class="compact-actions">
+                <button id="model-load" type="button" disabled>Load</button>
+                <button id="model-remove" class="danger-action" type="button" disabled>Remove</button>
+              </div>
+            </div>
+
+            <div class="model-facts" aria-label="Loaded model details">
+              <span><small>Meshes</small><strong id="model-mesh-count">0</strong></span>
+              <span><small>Skeletons</small><strong id="model-skeleton-count">0</strong></span>
+              <span><small>Bones</small><strong id="model-bone-count">0</strong></span>
+            </div>
+
+            <div class="section-divider" role="presentation"></div>
+
+            <div class="subsection-heading">
+              <span><small>Rig source</small><strong>Skeleton & visibility</strong></span>
+            </div>
+            <label for="active-skeleton-select">Active skeleton
+              <select id="active-skeleton-select" disabled>
+                <option value="">Load a rigged model first</option>
+              </select>
+            </label>
+            <div class="visibility-grid character-visibility">
+              <label><input id="character-mesh-visible" type="checkbox" checked /> Character mesh</label>
+              <label><input id="character-skeleton-visible" type="checkbox" /> Skeleton helper</label>
+            </div>
+
+            <div class="section-divider" role="presentation"></div>
+
+            <div class="mapping-header">
+              <span>
+                <small>Core27 retarget map</small>
+                <strong>Bone mapping</strong>
+              </span>
+              <span id="mapping-count" class="coverage-count">0 / 27</span>
+            </div>
+            <progress id="mapping-coverage" class="mapping-coverage" max="27" value="0">0 of 27 joints mapped</progress>
+            <p class="field-help">Each ARDY joint must point to one bone in the active skeleton. Auto-map uses normalized humanoid bone names and can be corrected row by row.</p>
+            <div class="secondary-actions">
+              <button id="auto-map-character" class="accent-action" type="button" disabled>Auto-map bones</button>
+              <button id="reset-character-map" type="button" disabled>Clear mapping</button>
+            </div>
+            <div id="mapping-rows" class="mapping-rows" role="list" aria-label="Core27 character bone mappings">
+              <div class="mapping-empty">
+                <strong>27 mapping rows will appear here</strong>
+                <span>Load a skinned model to inspect its skeleton.</span>
+              </div>
+            </div>
+          </div>
+        </details>
+
+        <details class="panel-section character-calibration">
+          <summary>
+            <span>Character calibration</span>
+            <span class="summary-status">Per profile</span>
+          </summary>
+          <div class="detail-content">
+            <p class="section-intro">Fit the imported character to the room once. These controls do not modify the ARDY source skeleton.</p>
+            <div class="secondary-actions">
+              <button id="auto-fit-character" class="accent-action" type="button" disabled>Auto-fit height</button>
+              <button id="reset-character-transform" type="button" disabled>Reset transform</button>
+            </div>
+            <div class="field-grid four-up">
+              <label for="character-scale">Scale
+                <input id="character-scale" type="number" min="0.001" max="1000" step="0.01" value="1" />
+              </label>
+              <label for="character-yaw">Yaw°
+                <input id="character-yaw" type="number" min="-180" max="180" step="1" value="0" />
+              </label>
+              <label for="character-pitch">Pitch°
+                <input id="character-pitch" type="number" min="-180" max="180" step="1" value="0" />
+              </label>
+              <label for="character-roll">Roll°
+                <input id="character-roll" type="number" min="-180" max="180" step="1" value="0" />
+              </label>
+            </div>
+            <div class="field-grid three-up">
+              <label for="character-offset-x">X offset
+                <input id="character-offset-x" type="number" min="-100" max="100" step="0.01" value="0" />
+              </label>
+              <label for="character-offset-y">Y offset
+                <input id="character-offset-y" type="number" min="-100" max="100" step="0.01" value="0" />
+              </label>
+              <label for="character-offset-z">Z offset
+                <input id="character-offset-z" type="number" min="-100" max="100" step="0.01" value="0" />
+              </label>
+            </div>
+
+            <div class="section-divider" role="presentation"></div>
+
+            <div class="subsection-heading">
+              <span><small>Selected mapping</small><strong>Local rotation correction</strong></span>
+            </div>
+            <label for="character-joint-select">Core27 joint
+              <select id="character-joint-select" disabled>
+                <option value="">Select a mapped joint</option>
+              </select>
+            </label>
+            <label for="target-bone-select">Target bone
+              <select id="target-bone-select" disabled>
+                <option value="">Not mapped</option>
+              </select>
+            </label>
+            <div class="field-grid three-up">
+              <label for="rotation-offset-x">Local X°
+                <input id="rotation-offset-x" type="number" min="-180" max="180" step="1" value="0" disabled />
+              </label>
+              <label for="rotation-offset-y">Local Y°
+                <input id="rotation-offset-y" type="number" min="-180" max="180" step="1" value="0" disabled />
+              </label>
+              <label for="rotation-offset-z">Local Z°
+                <input id="rotation-offset-z" type="number" min="-180" max="180" step="1" value="0" disabled />
+              </label>
+            </div>
+            <button id="reset-rotation-offset" class="subtle-action" type="button" disabled>Reset selected rotation</button>
+
+            <label class="toggle-card" for="root-motion">
+              <input id="root-motion" type="checkbox" />
+              <span>
+                <strong>Apply root motion</strong>
+                <small>Off by default. When enabled, ARDY may move the character through the room using anchored hip translation.</small>
+              </span>
+            </label>
+          </div>
+        </details>
+
+        <details class="panel-section character-profile">
+          <summary>
+            <span>Rig profile</span>
+            <span id="profile-state" class="summary-status">Unsaved</span>
+          </summary>
+          <div class="detail-content">
+            <p class="section-intro">Save bone choices, orientation fixes, model placement, visibility, and root-motion preference as one reusable profile.</p>
+            <label for="profile-name">Profile name
+              <input id="profile-name" type="text" maxlength="80" placeholder="Example: Casual Girl · Core27" autocomplete="off" />
+            </label>
+            <div class="profile-actions">
+              <button id="save-profile" class="primary-action" type="button" disabled>Save profile</button>
+              <button id="reload-profile" type="button" disabled>Reload saved</button>
+              <button id="export-profile" type="button" disabled>Export JSON</button>
+              <label class="button-label" for="profile-import-input">
+                Import JSON
+                <input id="profile-import-input" type="file" accept=".json,application/json" />
+              </label>
+            </div>
+            <p id="profile-notice" class="field-help" role="status">Profiles stay in the private Rig Lab library on this Spark unless you export one.</p>
+          </div>
+        </details>
+
+        <section class="panel-section motion-panel">
+          <div class="section-heading">
+            <span><small>Live source</small><strong>Motion prompt</strong></span>
+            <span id="motion-state" class="state-pill">Reference pose</span>
+          </div>
+          <label class="field-label" for="motion-prompt">Tell ARDY how to move</label>
+          <textarea id="motion-prompt" maxlength="512" rows="3" placeholder="Example: stand up from the chair and stretch naturally"></textarea>
+          <div class="field-grid">
+            <label>Base behavior
+              <select id="behavior">
+                <option value="explain">Explain</option>
+                <option value="idle">Idle</option>
+                <option value="listen">Listen</option>
+                <option value="wave">Wave</option>
+                <option value="jog_in_place">Jog in place</option>
+                <option value="run_in_place">Run in place</option>
+                <option value="jumping_jacks">Jumping jacks</option>
+                <option value="stretch">Stretch</option>
+                <option value="dance_relaxed">Relaxed dance</option>
+              </select>
+            </label>
+            <label>Duration
+              <select id="duration">
+                <option value="2">2 seconds</option>
+                <option value="4" selected>4 seconds</option>
+                <option value="6">6 seconds</option>
+                <option value="10">10 seconds</option>
+              </select>
+            </label>
+          </div>
+          <label class="range-field" for="intensity">
+            <span>Intensity <output id="intensity-value">50%</output></span>
+            <input id="intensity" type="range" min="0" max="1" step="0.05" value="0.5" />
+          </label>
+          <div class="motion-actions">
+            <button id="run-once" class="primary-action" type="button">Run once</button>
+            <button id="run-loop" type="button">Loop</button>
+            <button id="stop-motion" type="button" disabled>Stop</button>
+          </div>
+          <p id="motion-notice" class="motion-notice" role="status">The neutral Core27 reference rig is visible. No generated motion is being simulated.</p>
+        </section>
+
+        <details class="panel-section source-overlay">
+          <summary>
+            <span>Source overlay</span>
+            <span class="summary-status">Diagnostic</span>
+          </summary>
+          <div class="detail-content">
+            <p class="section-intro">Adjust only the visible Core27 diagnostic source. Character retargeting uses the saved character profile above.</p>
+            <div class="field-grid three-up">
+              <label>Scale
+                <input id="rig-scale" type="number" min="0.5" max="1.5" step="0.01" value="1" />
+              </label>
+              <label>Yaw
+                <input id="rig-yaw" type="number" min="-180" max="180" step="1" value="0" />
+              </label>
+              <label class="check-field"><input id="mirror-x" type="checkbox" /> Mirror X</label>
+            </div>
+            <div class="field-grid three-up">
+              <label>X offset
+                <input id="rig-offset-x" type="number" min="-2" max="2" step="0.01" value="0" />
+              </label>
+              <label>Y offset
+                <input id="rig-offset-y" type="number" min="-2" max="2" step="0.01" value="0" />
+              </label>
+              <label>Z offset
+                <input id="rig-offset-z" type="number" min="-2" max="2" step="0.01" value="0" />
+              </label>
+            </div>
+            <label>Core27 joint
+              <select id="joint-select"></select>
+            </label>
+            <div class="field-grid three-up">
+              <label>Joint X cm
+                <input id="joint-offset-x" type="number" min="-20" max="20" step="0.5" value="0" />
+              </label>
+              <label>Joint Y cm
+                <input id="joint-offset-y" type="number" min="-20" max="20" step="0.5" value="0" />
+              </label>
+              <label>Joint Z cm
+                <input id="joint-offset-z" type="number" min="-20" max="20" step="0.5" value="0" />
+              </label>
+            </div>
+            <div class="secondary-actions">
+              <button id="reset-joint" type="button">Reset joint</button>
+              <button id="reset-rig" type="button">Reset all mapping</button>
+            </div>
+          </div>
+        </details>
+
+        <details class="panel-section">
+          <summary>Scene & visibility</summary>
+          <div class="detail-content visibility-grid">
+            <label><input data-component="proxy" type="checkbox" checked /> Proxy body</label>
+            <label><input data-component="skeleton" type="checkbox" checked /> Skeleton</label>
+            <label><input data-component="joints" type="checkbox" checked /> Joint markers</label>
+            <label><input data-component="floor" type="checkbox" checked /> Floor grid</label>
+            <label><input data-component="chair" type="checkbox" checked /> Chair blocks</label>
+            <label><input data-component="bed" type="checkbox" checked /> Bed blocks</label>
+          </div>
+        </details>
+
+        <footer class="lab-footer">
+          <strong>Diagnostic source rig</strong>
+          <span>Core27 · 20 FPS · ARDY +X left, +Y up, +Z forward · no avatar video</span>
+        </footer>
+      </aside>
+    </main>
+    <script type="module" src="/src/main.js"></script>
+  </body>
+</html>

@@ -1,0 +1,14 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=Unreal Editor 5.8 (Experimental)
+GenericName=Game Engine Editor
+Comment=Open the real UE 5.8 Editor through the experimental Spark FEX adapter
+Exec=@UNREAL_LAUNCHER@
+TryExec=@UNREAL_LAUNCHER@
+Icon=@UNREAL_ICON@
+Terminal=false
+Categories=Development;
+Keywords=Epic;Unreal;UE5;Editor;Experimental;
+StartupNotify=true
+StartupWMClass=UnrealEditor

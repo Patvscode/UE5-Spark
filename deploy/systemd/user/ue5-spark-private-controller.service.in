@@ -1,0 +1,20 @@
+[Unit]
+Description=UE5-Spark private companion controller
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=@PROJECT_ROOT@
+ExecStart=@PROJECT_ROOT@/scripts/run-private-controller.sh @MEDIA_ROOT@ @DIST_ROOT@ @LIVE_ROOT@ @CONFIG_WORKSPACE_ROOT@ @ASSET_PROJECT_ROOT@
+Restart=on-failure
+RestartSec=3s
+TimeoutStopSec=15s
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=@LIVE_ROOT@ @CONFIG_WORKSPACE_ROOT@
+
+[Install]
+WantedBy=default.target

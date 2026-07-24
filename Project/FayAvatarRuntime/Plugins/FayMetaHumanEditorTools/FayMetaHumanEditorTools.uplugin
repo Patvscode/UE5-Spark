@@ -1,0 +1,47 @@
+{
+  "FileVersion": 3,
+  "Version": 1,
+  "VersionName": "0.2.0",
+  "FriendlyName": "Fay MetaHuman Editor Tools",
+  "Description": "Opt-in editor automation for assembling a MetaHuman test character.",
+  "Category": "AI",
+  "CreatedBy": "UE5-Spark contributors",
+  "CanContainContent": false,
+  "EnabledByDefault": false,
+  "IsBetaVersion": true,
+  "Installed": false,
+  "Modules": [
+    {
+      "Name": "FayMetaHumanEditorTools",
+      "Type": "Editor",
+      "LoadingPhase": "Default"
+    }
+  ],
+  "Plugins": [
+    {
+      "Name": "MetaHumanCharacter",
+      "Enabled": true,
+      "TargetAllowList": [
+        "Editor"
+      ]
+    },
+    {
+      "Name": "IKRig",
+      "Enabled": true,
+      "TargetAllowList": [
+        "Editor"
+      ]
+    },
+    {
+      "Name": "FayBodyMotion",
+      "Enabled": true
+    },
+    {
+      "Name": "PythonScriptPlugin",
+      "Enabled": true,
+      "TargetAllowList": [
+        "Editor"
+      ]
+    }
+  ]
+}

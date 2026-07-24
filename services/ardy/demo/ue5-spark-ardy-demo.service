@@ -1,0 +1,20 @@
+[Unit]
+Description=UE5-Spark official ARDY interactive 3D motion lab
+After=network-online.target
+StartLimitIntervalSec=300
+StartLimitBurst=3
+
+[Service]
+Type=simple
+WorkingDirectory=%h/Workspace/02_Experiments/ue5-spark-cooker/UE5-Spark
+ExecStart=%h/Workspace/02_Experiments/ue5-spark-cooker/UE5-Spark/scripts/run-ardy-demo-container.sh %h/Workspace/02_Experiments/ue5-spark-cooker/models-private/ardy-v2-candidate %h/Workspace/02_Experiments/ue5-spark-cooker/models-private/.hf-text-encoder-cache
+ExecStop=-/usr/bin/docker stop --time 10 ue5-spark-ardy-demo
+Restart=on-failure
+RestartSec=5
+TimeoutStartSec=180
+TimeoutStopSec=20
+NoNewPrivileges=yes
+PrivateTmp=yes
+
+[Install]
+WantedBy=default.target

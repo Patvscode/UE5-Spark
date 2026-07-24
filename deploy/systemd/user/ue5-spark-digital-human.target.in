@@ -1,0 +1,9 @@
+[Unit]
+Description=UE5-Spark on-demand ARDY and Unreal companion stack
+Requires=ue5-spark-ardy.service
+Requires=ue5-spark-ardy-ready.service
+Requires=ue5-spark-avatar.service
+After=ue5-spark-ardy.service
+After=ue5-spark-ardy-ready.service
+After=ue5-spark-avatar.service
+StopWhenUnneeded=no

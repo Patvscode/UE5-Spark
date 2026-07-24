@@ -1,0 +1,33 @@
+{
+  "$schema": "./character-ai-control.schema.json",
+  "schemaVersion": 1,
+  "controlConfigId": "ue5-spark-local-ai-control-v1",
+  "defaultMode": "ai_motion",
+  "assetAwareNotice": "Asset-aware mode can share selected character or scene context with configured AI services. This controller-wide setting can be changed from any connected client.",
+  "modes": [
+    {
+      "id": "deterministic",
+      "label": "Deterministic",
+      "description": "Use quick presets and dependable fallback motion without free-text generation.",
+      "usesGenerativeMotion": false,
+      "acceptsCharacterAssetContext": false,
+      "requiresExplicitLocalOptIn": false
+    },
+    {
+      "id": "ai_motion",
+      "label": "AI motion",
+      "description": "Send the complete user movement description to ARDY without character or scene context.",
+      "usesGenerativeMotion": true,
+      "acceptsCharacterAssetContext": false,
+      "requiresExplicitLocalOptIn": false
+    },
+    {
+      "id": "asset_aware_ai",
+      "label": "Asset-aware AI",
+      "description": "Allow explicitly selected character or scene context after a controller-wide opt-in.",
+      "usesGenerativeMotion": true,
+      "acceptsCharacterAssetContext": true,
+      "requiresExplicitLocalOptIn": true
+    }
+  ]
+}

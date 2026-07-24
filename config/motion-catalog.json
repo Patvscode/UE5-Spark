@@ -1,0 +1,96 @@
+{
+  "schemaVersion": 1,
+  "catalogId": "ue5-spark-reviewed-motion-v1",
+  "items": {
+    "idle": {
+      "label": "Idle",
+      "aliases": ["idle", "stand naturally", "relax"],
+      "prompt": "A person stands naturally with subtle breathing and small relaxed weight shifts.",
+      "duration": 4.0,
+      "intensity": 0.4,
+      "rootMode": "locked",
+      "routeBehavior": "idle",
+      "rendererPackaged": true
+    },
+    "listen": {
+      "label": "Listen",
+      "aliases": ["listen", "listening pose", "listen to me"],
+      "prompt": "A person stands attentively and listens with calm, subtle conversational body movement.",
+      "duration": 3.0,
+      "intensity": 0.45,
+      "rootMode": "locked",
+      "routeBehavior": "listen",
+      "rendererPackaged": true
+    },
+    "explain": {
+      "label": "Explain",
+      "aliases": ["explain", "explain with your hands", "talk with your hands"],
+      "prompt": "A person explains something naturally using relaxed conversational hand and arm gestures.",
+      "duration": 5.0,
+      "intensity": 0.62,
+      "rootMode": "locked",
+      "routeBehavior": "explain",
+      "rendererPackaged": true
+    },
+    "wave": {
+      "label": "Wave",
+      "aliases": ["wave", "wave hello", "say hello", "greet me", "hi", "hello", "hey", "say hi"],
+      "prompt": "A person gives a natural friendly wave with the right hand while keeping the shoulder and torso relaxed.",
+      "duration": 2.4,
+      "intensity": 0.65,
+      "rootMode": "locked",
+      "routeBehavior": "wave",
+      "rendererPackaged": true
+    },
+    "jog_in_place": {
+      "label": "Jog in place",
+      "aliases": ["jog in place", "jogging in place"],
+      "prompt": "A person jogs naturally in place with coordinated arm swings, grounded footfalls, and no forward travel.",
+      "duration": 8.0,
+      "intensity": 0.58,
+      "rootMode": "locked",
+      "routeBehavior": "jog_in_place",
+      "rendererPackaged": true
+    },
+    "run_in_place": {
+      "label": "Run in place",
+      "aliases": ["run in place", "running in place"],
+      "prompt": "A person runs naturally in place with energetic coordinated arm and leg motion and no forward travel.",
+      "duration": 7.0,
+      "intensity": 0.76,
+      "rootMode": "locked",
+      "routeBehavior": "run_in_place",
+      "rendererPackaged": true
+    },
+    "jumping_jacks": {
+      "label": "Jumping jacks",
+      "aliases": ["jumping jacks", "jumping jack"],
+      "prompt": "A person performs controlled jumping jacks in place with synchronized arms and legs and stable balance.",
+      "duration": 8.0,
+      "intensity": 0.72,
+      "rootMode": "locked",
+      "routeBehavior": "jumping_jacks",
+      "rendererPackaged": true
+    },
+    "stretch": {
+      "label": "Stretch",
+      "aliases": ["stretch", "stretch your arms", "do a stretch"],
+      "prompt": "A person performs a relaxed standing full-body stretch with smooth arm, shoulder, and torso movement.",
+      "duration": 6.0,
+      "intensity": 0.48,
+      "rootMode": "locked",
+      "routeBehavior": "stretch",
+      "rendererPackaged": true
+    },
+    "dance_relaxed": {
+      "label": "Relaxed dance",
+      "aliases": ["dance", "dance casually", "relaxed dance"],
+      "prompt": "A person performs a relaxed casual dance in place with natural rhythm, loose shoulders, and coordinated steps.",
+      "duration": 8.0,
+      "intensity": 0.6,
+      "rootMode": "locked",
+      "routeBehavior": "dance_relaxed",
+      "rendererPackaged": true
+    }
+  }
+}

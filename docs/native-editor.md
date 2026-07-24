@@ -2,8 +2,9 @@
 
 ## Short answer
 
-The Spark can run the packaged Unreal application. It does not currently have a
-supported, complete native Linux ARM64 Unreal Editor/cooker workflow.
+The Spark can run the packaged Unreal application natively. It does not have a
+supported, complete **native ARM64** Editor workflow, but the x86-64 UE 5.8
+Editor and cooker now run on it experimentally through rootless FEX.
 
 Those are different targets:
 
@@ -33,20 +34,28 @@ Making the full Editor reliable on Spark would require an ongoing ARM64 port of
 those components and replacements for any binary-only dependency. It is a
 separate engine-porting project, not an avatar adapter.
 
-## Experimental alternatives
+## Working experimental alternative
 
-- FEX or QEMU can emulate an x86-64 userspace on ARM64 without replacing DGX OS,
-  but Unreal cooking is CPU-, filesystem-, process-, and memory-intensive. It
-  launches helpers such as ShaderCompileWorker, making emulation slow and
-  fragile.
-- A bounded FEX launch test is reasonable only after a compatible prebuilt
-  x86-64 Editor/cooker is available. It is not the reliability path for the
-  first MetaHuman.
+- Rootless FEX runs the x86-64 Editor and ShaderCompileWorker without replacing
+  DGX OS or installing a system `binfmt_misc` handler.
+- The x86 commandlet completed a LinuxArm64 cook on the Spark. Native ARM64
+  UnrealBuildTool, AutomationTool, and UnrealPak then built and packaged the
+  Game target. The complete Ada MetaHuman and StreamingADA dependency tree is
+  included in the verified sealed package.
+- Vulkan forwarding and a pinned NVIDIA ICD created a real X11 swapchain. The
+  graphical Editor rendered the Open World viewport for a bounded three-minute
+  stability test.
+- The tested FEX path requires conservative settings: two reported cores and
+  single-threaded Unreal rendering. The normal render/RHI thread split is not
+  stable in this configuration.
+- The resulting package is native ARM64 and has rendered Ada, played Fay speech,
+  and driven the exact `FayAudio` Live Link facial path on the Spark. This proves
+  the deployment workflow, not a native ARM64 Editor.
 
 Private engine-port experiments should remain in an Epic-authorized workspace.
 This public repository intentionally contains no Engine patches or source
 context.
 
-The project's `FayAvatarRuntimeEditor.Target.cs` is a normal Editor target for
-the supported **x86-64 builder**. Its presence does not opt the Editor into
-Linux ARM64 or claim native Spark support.
+The project's `FayAvatarRuntimeEditor.Target.cs` remains an **x86-64** Editor
+target. Its presence does not opt the Editor into LinuxArm64. See the
+[Spark FEX guide](spark-fex-cooker.md) for the isolated setup and launcher.

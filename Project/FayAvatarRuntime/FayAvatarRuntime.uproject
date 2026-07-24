@@ -15,6 +15,48 @@
     {
       "Name": "FayAvatarBridge",
       "Enabled": true
+    },
+    {
+      "Name": "FayArkitRuntime",
+      "Enabled": true
+    },
+    {
+      "Name": "FayMetaHumanRuntime",
+      "Enabled": true
+    },
+    {
+      "Name": "FayBodyMotion",
+      "Enabled": true
+    },
+    {
+      "Name": "FayWardrobe",
+      "Enabled": true
+    },
+    {
+      "Name": "AnimationData",
+      "Enabled": true,
+      "TargetAllowList": [
+        "Editor"
+      ]
+    },
+    {
+      "Name": "ControlRigSpline",
+      "Enabled": true
+    },
+    {
+      "Name": "MetaHumanCharacter",
+      "Enabled": true
+    },
+    {
+      "Name": "InterchangeAssets",
+      "Enabled": true
+    },
+    {
+      "Name": "FayMetaHumanEditorTools",
+      "Enabled": true,
+      "TargetAllowList": [
+        "Editor"
+      ]
     }
   ]
 }
