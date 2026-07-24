@@ -9,11 +9,26 @@ fail() {
     exit 1
 }
 
+stop_user_service_quickly() {
+    local service_name=$1
+    local service_state
+    systemctl --user stop --no-block "$service_name" >/dev/null 2>&1 || true
+    for _ in 1 2 3; do
+        service_state=$(systemctl --user is-active "$service_name" 2>/dev/null || true)
+        [[ $service_state == inactive || $service_state == failed ]] && return 0
+        sleep 1
+    done
+    # A manual stop job is already queued, so killing a slow model teardown
+    # here does not trigger Restart=on-failure.
+    systemctl --user kill --kill-whom=all --signal=SIGKILL \
+        "$service_name" >/dev/null 2>&1 || true
+}
+
 [[ $(uname -s) == Linux && $(uname -m) == aarch64 ]] || \
     fail 'run ARDY Blender on the Linux ARM64 DGX Spark'
 (( ${EUID:-$(id -u)} != 0 )) || fail 'run as the normal desktop user'
 
-for command_name in chmod docker hostname install pgrep readlink stat systemctl tee touch tr; do
+for command_name in chmod docker hostname install pgrep readlink sleep stat systemctl tee touch tr; do
     command -v "$command_name" >/dev/null 2>&1 || fail "missing command: $command_name"
 done
 
@@ -63,14 +78,16 @@ fi
 # Keep unrelated image generation out of the unified-memory budget whenever
 # Blender is open. Blender and the NVIDIA Viser lab are alternative interactive
 # front ends for the same large ARDY model, so they must not coexist either.
-systemctl --user stop "${lumina_services[@]}" >/dev/null 2>&1 || true
-systemctl --user stop "$viser_service" >/dev/null 2>&1 || true
+for lumina_service in "${lumina_services[@]}"; do
+    stop_user_service_quickly "$lumina_service"
+done
+stop_user_service_quickly "$viser_service"
 systemctl --user reset-failed "$viser_service" >/dev/null 2>&1 || true
 if [[ $start_motion == 1 ]]; then
     systemctl --user start "$ardy_service" || \
         fail 'the open-text ARDY service could not be started'
 else
-    systemctl --user stop "$ardy_service" >/dev/null 2>&1 || true
+    stop_user_service_quickly "$ardy_service"
 fi
 
 install -d -m 0700 \
