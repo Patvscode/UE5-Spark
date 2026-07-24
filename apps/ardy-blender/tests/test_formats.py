@@ -20,6 +20,24 @@ def test_coordinate_conversion_round_trips_without_reflection():
     np.testing.assert_allclose(formats.blender_points_to_ardy(blender), points)
 
 
+def test_local_rotation_is_not_changed_by_the_world_coordinate_conversion():
+    half_angle = np.sqrt(0.5)
+    local_y_rotation = formats.local_rotation_matrix_from_xyzw(
+        (0.0, half_angle, 0.0, half_angle)
+    )
+    np.testing.assert_allclose(
+        local_y_rotation,
+        ((0.0, 0.0, 1.0), (0.0, 1.0, 0.0), (-1.0, 0.0, 0.0)),
+        atol=1e-8,
+    )
+    converted_as_if_global = (
+        formats.ARDY_TO_BLENDER
+        @ local_y_rotation
+        @ formats.BLENDER_TO_ARDY
+    )
+    assert not np.allclose(local_y_rotation, converted_as_if_global)
+
+
 def test_sparse_weights_accumulate_duplicate_indices_and_normalise():
     dense = formats.dense_weights_from_sparse(
         np.asarray(((0, 1, 1), (1, 0, 1))),

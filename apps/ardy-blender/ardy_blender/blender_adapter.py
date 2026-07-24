@@ -74,20 +74,29 @@ def _preview_mapping(armature) -> dict[str, str]:
     return mapping
 
 
-def _ardy_rotation_to_blender(value) -> Matrix:
-    x_value, y_value, z_value, w_value = (float(component) for component in value)
-    source = Quaternion((w_value, x_value, y_value, z_value)).normalized()
-    conversion = Matrix(formats.ARDY_TO_BLENDER.tolist())
-    return conversion @ source.to_matrix() @ conversion.transposed()
+def _ardy_local_rotation(value) -> Matrix:
+    # A child-local rotation is invariant under the ARDY-world -> Blender-world
+    # placement used by the imported rigs. Applying the world conversion here
+    # incorrectly turns, for example, an ARDY local Y bend into a Blender local
+    # Z twist.
+    return Matrix(formats.local_rotation_matrix_from_xyzw(value).tolist())
 
 
 def _basis_rotation(armature, bone_name: str, source_rotation: Matrix) -> Quaternion:
-    # Blender evaluates pose-bone basis rotation after the target's current
-    # rest-local matrix. This matches the working Viser retarget relation:
+    # Native FBX rigs preserve ARDY's bone-local domain while changing only the
+    # world placement, so Blender evaluates the raw delta after the authored
+    # bind-local transform exactly like the working Viser relation:
     # target_global = parent_global @ target_bind_local @ source_local_delta.
-    # Keeping the delta direct also means an Edit-Mode rest correction is
-    # automatically reflected the next time a preview Action is generated.
-    _ = armature, bone_name
+    #
+    # NPZ rigs built by this add-on convert both sides of each bind matrix into
+    # Blender's coordinate domain, so their generated PoseBone channels retain
+    # that same conjugation.
+    _ = bone_name
+    if armature.get("ardy_source_kind") != "native-fbx":
+        conversion = Matrix(formats.ARDY_TO_BLENDER.tolist())
+        source_rotation = (
+            conversion @ source_rotation @ conversion.transposed()
+        )
     return source_rotation.to_quaternion().normalized()
 
 
@@ -127,6 +136,7 @@ def _create_preview_action(
     previous = armature.animation_data.action
     if previous is None or not previous.name.startswith(PREVIEW_ACTION_PREFIX):
         armature["ardy_previous_action"] = previous.name if previous is not None else ""
+        armature["ardy_previous_location"] = list(armature.location)
     armature.animation_data.action = action
 
     base_location = armature.location.copy()
@@ -143,7 +153,7 @@ def _create_preview_action(
             if pose_bone is None:
                 continue
             pose_bone.rotation_mode = "QUATERNION"
-            rotation = _ardy_rotation_to_blender(
+            rotation = _ardy_local_rotation(
                 frame["joints"][source_indices[source_name]]
             )
             pose_bone.rotation_quaternion = _basis_rotation(
@@ -908,8 +918,11 @@ class ARDY_OT_stop_preview(bpy.types.Operator):
 
 class ARDY_OT_restore_action(bpy.types.Operator):
     bl_idname = "ardy.restore_action"
-    bl_label = "Restore Previous Action"
-    bl_description = "Reconnect the Action that was active before the last ARDY preview"
+    bl_label = "Restore / Reset Pose"
+    bl_description = (
+        "Reconnect the previous Action, or clear generated pose rotations "
+        "when the rig had no Action"
+    )
     bl_options = {"REGISTER", "UNDO"}
 
     def execute(self, context):
@@ -920,8 +933,24 @@ class ARDY_OT_restore_action(bpy.types.Operator):
         previous_name = str(armature.get("ardy_previous_action") or "")
         previous = bpy.data.actions.get(previous_name) if previous_name else None
         armature.animation_data.action = previous
+        if previous is None:
+            try:
+                target_names = set(_preview_mapping(armature).values())
+            except formats.ArdyFormatError:
+                target_names = set()
+            for target_name in target_names:
+                pose_bone = armature.pose.bones.get(target_name)
+                if pose_bone is not None:
+                    pose_bone.matrix_basis = Matrix.Identity(4)
+            previous_location = armature.get("ardy_previous_location")
+            if previous_location is not None and len(previous_location) == 3:
+                armature.location = Vector(previous_location)
+        context.scene.frame_set(context.scene.frame_current)
+        context.view_layer.update()
         context.scene.ardy_preview_status = (
-            f"Restored {previous.name}" if previous is not None else "Restored no Action"
+            f"Restored {previous.name}"
+            if previous is not None
+            else "Restored neutral pose"
         )
         return {"FINISHED"}
 

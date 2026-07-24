@@ -84,8 +84,9 @@ tails. Use **Clear ARDY View** before judging placement.
 After each rest edit, return to Object or Pose Mode, keep the character mesh or
 armature selected, enter a prompt such as `squat twice and stand naturally`,
 and generate again. Each run creates a separate `ARDY Preview · ...` Action;
-**Restore Previous Action** returns to the Action that was active before the
-preview.
+**Restore / Reset Pose** returns to the Action that was active before the
+preview, or clears the generated Pose Mode transforms when there was no prior
+Action.
 
 ## Live ARDY preview
 

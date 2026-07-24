@@ -235,6 +235,25 @@ def blender_points_to_ardy(points: np.ndarray) -> np.ndarray:
     return np.asarray(points, dtype=np.float64) @ BLENDER_TO_ARDY.T
 
 
+def local_rotation_matrix_from_xyzw(value: Iterable[float]) -> np.ndarray:
+    """Return an ARDY local quaternion as a 3x3 matrix without a world-basis change."""
+    quaternion = np.asarray(tuple(value), dtype=np.float64)
+    if quaternion.shape != (4,) or not np.isfinite(quaternion).all():
+        raise ArdyFormatError("local joint rotation must contain four finite values")
+    length = float(np.linalg.norm(quaternion))
+    if length <= 1e-8:
+        raise ArdyFormatError("local joint rotation quaternion cannot be zero")
+    x, y, z, w = quaternion / length
+    return np.asarray(
+        (
+            (1 - 2 * (y * y + z * z), 2 * (x * y - z * w), 2 * (x * z + y * w)),
+            (2 * (x * y + z * w), 1 - 2 * (x * x + z * z), 2 * (y * z - x * w)),
+            (2 * (x * z - y * w), 2 * (y * z + x * w), 1 - 2 * (x * x + y * y)),
+        ),
+        dtype=np.float64,
+    )
+
+
 def load_core27_skin(path: str | Path) -> SkinPart:
     source = _real_file(path, "NVIDIA skin_standard.npz")
     try:
