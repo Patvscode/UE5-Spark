@@ -28,6 +28,17 @@ image_name=ue5-spark-blender:5.0.1
 container_name=ue5-spark-blender
 ardy_service=ue5-spark-ardy.service
 viser_service=ue5-spark-ardy-viser-lab.service
+lumina_services=(
+    lumina-mgpt-2.0.service
+    lumina-mgpt-2.0-omni.service
+)
+start_motion=${ARDY_BLENDER_START_MOTION:-1}
+project_basename=${ARDY_BLENDER_PROJECT_FILE:-ARDY-Rigging.blend}
+
+[[ $start_motion == 0 || $start_motion == 1 ]] || \
+    fail 'ARDY_BLENDER_START_MOTION must be 0 or 1'
+[[ $project_basename == "${project_basename##*/}" && $project_basename == *.blend ]] || \
+    fail 'ARDY_BLENDER_PROJECT_FILE must be a .blend filename without a path'
 
 [[ -d $casual_fbx_root && ! -L $casual_fbx_root ]] || \
     fail "Casual Girl FBX source is missing: $casual_fbx_root"
@@ -49,13 +60,18 @@ if docker container inspect "$container_name" >/dev/null 2>&1; then
     docker container rm "$container_name" >/dev/null
 fi
 
-# Blender and the NVIDIA Viser lab are alternative interactive front ends for
-# the same large ARDY model. Avoid keeping both GPU copies resident, then start
-# the project-owned open-text pose endpoint that the Blender add-on consumes.
+# Keep unrelated image generation out of the unified-memory budget whenever
+# Blender is open. Blender and the NVIDIA Viser lab are alternative interactive
+# front ends for the same large ARDY model, so they must not coexist either.
+systemctl --user stop "${lumina_services[@]}" >/dev/null 2>&1 || true
 systemctl --user stop "$viser_service" >/dev/null 2>&1 || true
 systemctl --user reset-failed "$viser_service" >/dev/null 2>&1 || true
-systemctl --user start "$ardy_service" || \
-    fail 'the open-text ARDY service could not be started'
+if [[ $start_motion == 1 ]]; then
+    systemctl --user start "$ardy_service" || \
+        fail 'the open-text ARDY service could not be started'
+else
+    systemctl --user stop "$ardy_service" >/dev/null 2>&1 || true
+fi
 
 install -d -m 0700 \
     "$private_root" \
@@ -96,7 +112,7 @@ for device_path in /dev/dri/renderD* /dev/dri/card*; do
     fi
 done
 
-project_file="$private_root/projects/ARDY-Rigging.blend"
+project_file="$private_root/projects/$project_basename"
 launcher_log="$private_root/launcher.log"
 touch "$launcher_log"
 chmod 0600 "$launcher_log"
@@ -134,7 +150,7 @@ docker run --rm \
     --env ARDY_CASUAL_GIRL_ROOT=/inputs/casual-runtime \
     --env ARDY_CASUAL_GIRL_MANIFEST_ROOT=/inputs/casual-runtime \
     --env ARDY_CASUAL_GIRL_FBX_ROOT=/inputs/casual-fbx \
-    --env ARDY_BLENDER_PROJECT=/work/projects/ARDY-Rigging.blend \
+    --env "ARDY_BLENDER_PROJECT=/work/projects/$project_basename" \
     --env ARDY_BLENDER_EXPORT_ROOT=/work/exports \
     --env ARDY_SERVICE_URL=http://127.0.0.1:8777 \
     --mount "type=bind,src=/tmp/.X11-unix,dst=/tmp/.X11-unix,readonly" \
