@@ -75,7 +75,10 @@ tails. Use **Clear ARDY View** before judging placement.
   character-forward, and +X character-left; scene units are metres.
 - Check both front and side orthographic views. `_l` and `_r` mean the
   character's left and right, not the viewer's. Enable X-axis mirror only after
-  confirming that the pair names and center line are correct.
+  confirming that the pair names and center line are correct. Bone roll/local
+  axes must mirror as well as head and tail positions; prefer Blender's
+  **Armature → Symmetrize** from one reviewed side over independently
+  eyeballing both sides.
 - Adjust the main deform chain first. ARDY drives pelvis, spine, clavicles,
   upper/lower arms, hands, thighs, calves, feet, and toe bases. Fingers, twist
   bones, breasts, IK helpers, and facial bones keep their authored pose during
@@ -84,6 +87,9 @@ tails. Use **Clear ARDY View** before judging placement.
 After each rest edit, return to Object or Pose Mode, keep the character mesh or
 armature selected, enter a prompt such as `squat twice and stand naturally`,
 and generate again. Each run creates a separate `ARDY Preview · ...` Action;
+**Reset to Initial Pose** stops playback, detaches the generated Action, and
+returns every pose bone to the currently edited rest rig. It does not undo
+Edit Mode rig-placement changes. It also works when pressed from Edit Mode.
 **Restore / Reset Pose** returns to the Action that was active before the
 preview, or clears the generated Pose Mode transforms when there was no prior
 Action.

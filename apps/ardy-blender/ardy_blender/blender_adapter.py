@@ -916,6 +916,41 @@ class ARDY_OT_stop_preview(bpy.types.Operator):
         return {"FINISHED"}
 
 
+class ARDY_OT_reset_pose(bpy.types.Operator):
+    bl_idname = "ardy.reset_pose"
+    bl_label = "Reset to Initial Pose"
+    bl_description = (
+        "Stop ARDY playback and return the selected character to its current "
+        "rest pose without changing any Edit Mode rig placement"
+    )
+    bl_options = {"REGISTER", "UNDO"}
+
+    def execute(self, context):
+        armature = _selected_armature(context)
+        if armature is None:
+            self.report({"ERROR"}, "Select the character rig first")
+            return {"CANCELLED"}
+        if context.screen is not None and context.screen.is_animation_playing:
+            bpy.ops.screen.animation_play()
+        context.view_layer.objects.active = armature
+        armature.select_set(True)
+        if armature.mode == "EDIT":
+            bpy.ops.object.mode_set(mode="POSE")
+        elif armature.mode == "OBJECT":
+            bpy.ops.object.mode_set(mode="POSE")
+        if armature.animation_data is not None:
+            armature.animation_data.action = None
+        for pose_bone in armature.pose.bones:
+            pose_bone.matrix_basis = Matrix.Identity(4)
+        previous_location = armature.get("ardy_previous_location")
+        if previous_location is not None and len(previous_location) == 3:
+            armature.location = Vector(previous_location)
+        context.scene.frame_set(1)
+        context.view_layer.update()
+        context.scene.ardy_preview_status = "Restored initial pose"
+        return {"FINISHED"}
+
+
 class ARDY_OT_restore_action(bpy.types.Operator):
     bl_idname = "ardy.restore_action"
     bl_label = "Restore / Reset Pose"
@@ -1030,6 +1065,11 @@ class ARDY_PT_character_adapter(bpy.types.Panel):
         row.prop(scene, "ardy_motion_intensity", text="Energy")
         box.prop(scene, "ardy_preview_in_place", text="Keep character in place")
         box.operator("ardy.generate_preview", icon="PLAY")
+        box.operator(
+            "ardy.reset_pose",
+            text="Reset to Initial Pose",
+            icon="LOOP_BACK",
+        )
         row = box.row(align=True)
         row.operator("ardy.stop_preview", icon="PAUSE")
         row.operator("ardy.restore_action", icon="LOOP_BACK")
@@ -1052,6 +1092,7 @@ CLASSES = (
     ARDY_OT_rig_guide,
     ARDY_OT_generate_preview,
     ARDY_OT_stop_preview,
+    ARDY_OT_reset_pose,
     ARDY_OT_restore_action,
     ARDY_OT_export_fbx,
     ARDY_OT_export_npz,
